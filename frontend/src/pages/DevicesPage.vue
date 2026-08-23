@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '@/api'
-import { usePolling } from '@/composables'
+import { usePolling, useRovingTabs } from '@/composables'
 import type { Device, Metric, Overview } from '@/types'
-import { ago, dateTime, deviceState, formatNumber, metricValueAny, statusRank } from '@/utils'
+import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
@@ -18,7 +18,8 @@ const detailTabs: Array<[DetailTab, string]> = [
 ]
 
 const selected = ref<Device>()
-const selectedTab = ref<DetailTab>('overview')
+const detailDeviceId = ref('')
+const { selected: selectedTab, select: selectDetailTab, move: moveDetailTab } = useRovingTabs(detailTabs, 'overview', 'device-tab-')
 const detailLoading = ref(false)
 const detailError = ref('')
 const query = ref('')
@@ -35,6 +36,7 @@ const filteredDevices = computed(() => (data.value?.devices || [])
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
 
 async function showDevice(id: string) {
+  detailDeviceId.value = id
   detailLoading.value = true
   detailError.value = ''
   selectedTab.value = 'overview'
@@ -49,6 +51,7 @@ async function showDevice(id: string) {
 
 function closeDetail() {
   selected.value = undefined
+  detailDeviceId.value = ''
   detailError.value = ''
 }
 function metrics(device: Device): Metric[] {
@@ -67,7 +70,7 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
 <template>
   <div v-if="selected || detailLoading || detailError">
     <button class="back-button" @click="closeDetail"><AppIcon name="arrow-left" :size="16" /> 返回设备清单</button>
-    <PageState :loading="detailLoading" :error="detailError" @retry="selected && showDevice(selected.id)">
+    <PageState :loading="detailLoading" :error="detailError" @retry="detailDeviceId && showDevice(detailDeviceId)">
       <template v-if="selected">
         <section class="device-hero">
           <div>
@@ -81,22 +84,34 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
           </div>
         </section>
 
-        <div class="tab-bar" role="tablist">
-          <button v-for="[key, label] in detailTabs" :key="key" :class="{ active: selectedTab === key }" role="tab" @click="selectedTab = key">{{ label }}</button>
+        <div class="tab-bar" role="tablist" aria-label="设备详情分类">
+          <button
+            v-for="[key, label] in detailTabs"
+            :id="`device-tab-${key}`"
+            :key="key"
+            :class="{ active: selectedTab === key }"
+            role="tab"
+            :aria-selected="selectedTab === key"
+            aria-controls="device-panel"
+            :tabindex="selectedTab === key ? 0 : -1"
+            @click="selectDetailTab(key)"
+            @keydown="moveDetailTab($event, key)"
+          >{{ label }}</button>
         </div>
 
-        <template v-if="selectedTab === 'overview'">
+        <div id="device-panel" role="tabpanel" :aria-labelledby="`device-tab-${selectedTab}`">
+        <div v-if="selectedTab === 'overview'">
           <div class="stats four detail-stats">
             <StatCard label="CPU" :value="metricValueAny(selected, ['system.cpu.usage'])" :hint="`Load ${metricValueAny(selected, ['system.load.1m'], 2)}`" />
             <StatCard label="内存" :value="metricValueAny(selected, ['system.memory.usage'])" hint="实时使用率" />
             <StatCard label="存储" :value="metricValueAny(selected, ['filesystem.root.usage', 'btrfs.usage'])" hint="根文件系统 / Pool" />
-            <StatCard label="Uptime" :value="metricValueAny(selected, ['system.uptime'], 0)" hint="运行时长（API 原始单位）" />
+            <StatCard label="Uptime" :value="metricValueAny(selected, ['system.uptime'], 0)" hint="运行时长" />
           </div>
           <div class="detail-layout">
             <section class="card">
               <div class="section-title"><div><h2>运行概况</h2><span class="muted">当前设备最新有效快照</span></div></div>
               <div class="metric-summary-grid">
-                <div><span>连接状态</span><StatusPill :status="selected.online ? selected.stale ? 'stale' : 'healthy' : 'offline'" /></div>
+                <div><span>连接状态</span><StatusPill :status="connectivityState(selected)" /></div>
                 <div><span>健康状态</span><StatusPill :status="selected.health || 'unknown'" /></div>
                 <div><span>注册状态</span><b>{{ selected.status || 'Unknown' }}</b></div>
                 <div><span>最后上报</span><b>{{ dateTime(selected.lastSeenAt) }}</b></div>
@@ -112,7 +127,7 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
               </dl>
             </section>
           </div>
-        </template>
+        </div>
 
         <section v-else-if="selectedTab === 'events'" class="card">
           <div class="section-title"><div><h2>设备事件</h2><span class="muted">告警与审计事件</span></div></div>
@@ -129,7 +144,7 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
               <tbody><tr v-for="point in categoryMetrics(selected, selectedTab)" :key="`${point.name}-${JSON.stringify(point.labels)}`">
                 <td><code>{{ point.name }}</code></td>
                 <td>{{ point.labels?.device || point.labels?.mount || point.labels?.app || point.labels?.sensor || '系统资源' }}</td>
-                <td><b>{{ formatNumber(point.value) }}{{ point.unit || '' }}</b></td>
+                <td><b>{{ formatMetricValue(point.value, point.unit) }}</b></td>
                 <td>{{ Object.entries(point.labels || {}).map(([key, value]) => `${key}=${value}`).join(', ') || '无标签' }}</td>
                 <td>{{ ago(point.collectedAt) }}<small>{{ dateTime(point.collectedAt) }}</small></td>
               </tr></tbody>
@@ -137,6 +152,7 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
           </div>
           <div v-else class="contract-empty"><b>Unknown</b><p>当前 Collector 尚未提供此分类的指标，不能据此判断为健康。</p></div>
         </section>
+        </div>
       </template>
     </PageState>
   </div>

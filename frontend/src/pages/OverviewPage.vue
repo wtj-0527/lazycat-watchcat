@@ -3,21 +3,23 @@ import { computed } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { Device, Overview } from '@/types'
-import { ago, deviceState, metric, metricValueAny, percent, statusRank } from '@/utils'
+import { ago, deviceState, formatMetricValue, metricValueAny, percent, statusRank, storageRiskStatus, storageUsageMetric } from '@/utils'
 import AlertRow from '@/components/AlertRow.vue'
 import PageState from '@/components/PageState.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
-const { data, loading, error, refresh } = usePolling(() => api<Overview>('/api/v1/overview'))
+const { data, loading, error, refresh } = usePolling(async () => {
+  const result = await api<Overview>('/api/v1/overview')
+  return { ...result, devices: result.devices || [], alerts: result.alerts || [] }
+})
 
 const orderedDevices = computed(() =>
   [...(data.value?.devices || [])].sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))),
 )
-const storageRisk = computed(() => (data.value?.devices || []).filter((device) => {
-  const point = metric(device, 'filesystem.root.usage') || metric(device, 'btrfs.usage')
-  return point != null && point.value >= 85
-}).length)
+const storageRisk = computed(() => (data.value?.devices || []).filter((device) =>
+  Object.values(device.latest || {}).flat().some((point) => storageRiskStatus(point)),
+).length)
 const incident = computed(() => {
   const offline = data.value?.stats.offline ?? 0
   const critical = data.value?.stats.critical ?? 0
@@ -30,7 +32,16 @@ const incident = computed(() => {
 const stat = (name: string) => data.value?.stats[name] ?? 'Unknown'
 
 function network(device: Device): string {
-  return metricValueAny(device, ['container.network.receive.bytes_total', 'system.network.receive.bytes_total'])
+  return metricValueAny(device, [
+    'container.network.receive.bytes_total',
+    'network.receive.bytes_total',
+    'network.interface.receive.bytes_total',
+  ])
+}
+
+function storageUsage(device: Device): string {
+  const point = storageUsageMetric(device)
+  return point ? formatMetricValue(point.value, point.unit) : '未知'
 }
 </script>
 
@@ -48,7 +59,7 @@ function network(device: Device): string {
       <StatCard label="离线" :value="stat('offline')" hint="需要检查" :tone="Number(stat('offline')) ? 'amber' : 'green'" />
       <StatCard label="Critical" :value="stat('critical')" hint="需要立即处理" :tone="Number(stat('critical')) ? 'red' : 'green'" />
       <StatCard label="Warning" :value="stat('warning')" hint="需要关注" :tone="Number(stat('warning')) ? 'amber' : 'green'" />
-      <StatCard label="存储风险" :value="storageRisk" hint="使用率 ≥ 85%" :tone="storageRisk ? 'amber' : 'green'" />
+      <StatCard label="存储风险" :value="storageRisk" hint="容量、温度或磁盘健康风险" :tone="storageRisk ? 'amber' : 'green'" />
     </div>
 
     <div class="overview-layout">
@@ -60,6 +71,7 @@ function network(device: Device): string {
           </div>
           <span class="filter-chip">所有设备</span>
         </div>
+        <p v-if="orderedDevices.length" class="matrix-scroll-hint">左右滑动查看完整矩阵</p>
         <div v-if="orderedDevices.length" class="table-scroll">
           <table class="fleet-table overview-matrix">
             <thead><tr><th>设备</th><th>CPU</th><th>内存</th><th>存储</th><th>磁盘</th><th>应用</th><th>网络</th><th>状态</th></tr></thead>
@@ -68,7 +80,7 @@ function network(device: Device): string {
                 <td class="device"><b>{{ device.name }}</b><small>未分组 · {{ ago(device.lastSeenAt) }}</small></td>
                 <td>{{ metricValueAny(device, ['system.cpu.usage', 'system.load.1m']) }}</td>
                 <td>{{ metricValueAny(device, ['system.memory.usage']) }}</td>
-                <td>{{ metricValueAny(device, ['filesystem.root.usage', 'btrfs.usage']) }}</td>
+                <td>{{ storageUsage(device) }}</td>
                 <td>{{ metricValueAny(device, ['disk.temperature', 'disk.nvme.media_errors'], 0) }}</td>
                 <td><span class="contract-gap">Contract gap</span></td>
                 <td>{{ network(device) }}</td>

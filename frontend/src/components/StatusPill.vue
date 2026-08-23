@@ -7,6 +7,7 @@ const label = computed(() => ({
   warning: 'Warning',
   healthy: 'Healthy',
   unknown: 'Unknown',
+  online: 'Online',
   stale: 'Stale',
   offline: 'Offline',
   revoked: 'Revoked',

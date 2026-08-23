@@ -41,6 +41,13 @@ func TestPersistentAlertStateMachine(t *testing.T) {
 	if err != nil || len(alerts) != 1 || alerts[0].Status != "firing" {
 		t.Fatalf("initial alerts=%+v err=%v", alerts, err)
 	}
+	if err := st.SetAlertState(ctx, signal.Fingerprint, "resolve", 0); err == nil {
+		t.Fatal("manual resolve must be rejected by the alert state machine")
+	}
+	alerts, err = st.ListAlerts(ctx, false)
+	if err != nil || len(alerts) != 1 || alerts[0].Status != "firing" {
+		t.Fatalf("manual resolve changed alert: alerts=%+v err=%v", alerts, err)
+	}
 	if err := st.SetAlertState(ctx, signal.Fingerprint, "acknowledge", 0); err != nil {
 		t.Fatal(err)
 	}

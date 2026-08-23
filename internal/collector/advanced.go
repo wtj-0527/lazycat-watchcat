@@ -118,12 +118,12 @@ type smartJSON struct {
 	PowerOnTime struct {
 		Hours float64 `json:"hours"`
 	} `json:"power_on_time"`
-	NVMe struct {
-		CriticalWarning float64 `json:"critical_warning"`
-		Temperature     float64 `json:"temperature"`
-		AvailableSpare  float64 `json:"available_spare"`
-		PercentageUsed  float64 `json:"percentage_used"`
-		MediaErrors     float64 `json:"media_errors"`
+	NVMe *struct {
+		CriticalWarning *float64 `json:"critical_warning"`
+		Temperature     *float64 `json:"temperature"`
+		AvailableSpare  *float64 `json:"available_spare"`
+		PercentageUsed  *float64 `json:"percentage_used"`
+		MediaErrors     *float64 `json:"media_errors"`
 	} `json:"nvme_smart_health_information_log"`
 	ATASmartAttributes struct {
 		Table []struct {
@@ -146,8 +146,8 @@ func parseSmart(raw []byte, device string, now time.Time) ([]protocol.MetricPoin
 		p = append(p, protocol.MetricPoint{Name: name, Value: value, Unit: unit, Labels: labels, CollectedAt: now})
 	}
 	temp := s.Temperature.Current
-	if temp == 0 && s.NVMe.Temperature > 0 {
-		temp = s.NVMe.Temperature
+	if temp == 0 && s.NVMe != nil && s.NVMe.Temperature != nil && *s.NVMe.Temperature > 0 {
+		temp = *s.NVMe.Temperature
 	}
 	if temp > 0 {
 		add("disk.temperature", temp, "celsius")
@@ -155,12 +155,20 @@ func parseSmart(raw []byte, device string, now time.Time) ([]protocol.MetricPoin
 	if s.PowerOnTime.Hours > 0 {
 		add("disk.power_on_hours", s.PowerOnTime.Hours, "hours")
 	}
-	if s.NVMe.AvailableSpare > 0 {
-		add("disk.nvme.available_spare", s.NVMe.AvailableSpare, "%")
+	if s.NVMe != nil {
+		if s.NVMe.AvailableSpare != nil {
+			add("disk.nvme.available_spare", *s.NVMe.AvailableSpare, "%")
+		}
+		if s.NVMe.PercentageUsed != nil {
+			add("disk.nvme.percentage_used", *s.NVMe.PercentageUsed, "%")
+		}
+		if s.NVMe.MediaErrors != nil {
+			add("disk.nvme.media_errors", *s.NVMe.MediaErrors, "count")
+		}
+		if s.NVMe.CriticalWarning != nil {
+			add("disk.nvme.critical_warning", *s.NVMe.CriticalWarning, "bitmask")
+		}
 	}
-	add("disk.nvme.percentage_used", s.NVMe.PercentageUsed, "%")
-	add("disk.nvme.media_errors", s.NVMe.MediaErrors, "count")
-	add("disk.nvme.critical_warning", s.NVMe.CriticalWarning, "bitmask")
 	for _, a := range s.ATASmartAttributes.Table {
 		if a.Name == "Reallocated_Sector_Ct" {
 			add("disk.ata.reallocated_sectors", a.Raw.Value, "count")

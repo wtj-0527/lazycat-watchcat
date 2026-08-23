@@ -142,6 +142,15 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 	if ackResponse.StatusCode != http.StatusOK {
 		t.Fatalf("ack status=%d", ackResponse.StatusCode)
 	}
+	resolveRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/alerts/"+alertList.Items[0].Fingerprint+"/resolve", nil)
+	resolveResponse, err := http.DefaultClient.Do(resolveRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolveResponse.Body.Close()
+	if resolveResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("manual resolve status=%d", resolveResponse.StatusCode)
+	}
 	inspectionResponse, err := http.Post(ts.URL+"/api/v1/inspections", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)

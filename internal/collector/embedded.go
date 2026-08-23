@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"runtime"
@@ -12,6 +13,13 @@ import (
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
+
+type capabilityEvidence struct {
+	halReachable     bool
+	dockerMapped     bool
+	dockerReachable  bool
+	dockerRestricted bool
+}
 
 type Embedded struct {
 	store      *store.Store
@@ -87,6 +95,7 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 		return
 	}
 	var warnings []string
+	evidence := capabilityEvidence{}
 	if e.hal != nil {
 		callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		points, halErr := e.hal.Collect(callCtx, now)
@@ -94,17 +103,23 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 		if halErr != nil {
 			warnings = append(warnings, "hal fan: "+halErr.Error())
 		} else {
+			evidence.halReachable = true
 			batch.Points = append(batch.Points, points...)
 		}
 	} else if includeAdvanced {
 		warnings = append(warnings, "hal fan: LazyCat HAL connection unavailable")
 	}
-	if e.docker.Available() {
+	evidence.dockerMapped = e.docker.Available()
+	if evidence.dockerMapped {
 		callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		points, dockerErr := e.docker.Collect(callCtx, now)
 		cancel()
 		batch.Points = append(batch.Points, points...)
+		if dockerErr == nil || len(points) > 0 {
+			evidence.dockerReachable = true
+		}
 		if dockerErr != nil {
+			evidence.dockerRestricted = permissionDenied(dockerErr)
 			warnings = append(warnings, "docker runtime: "+dockerErr.Error())
 		}
 	} else if includeAdvanced {
@@ -119,7 +134,7 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 		if len(warnings) > 0 {
 			e.logger.Warn("embedded collector partially degraded", "warnings", warnings)
 		}
-		e.recordCapabilities(ctx, now, batch.Points, warnings)
+		e.recordCapabilities(ctx, now, batch.Points, warnings, evidence)
 	}
 	if err := e.store.IngestMetrics(ctx, batch); err != nil {
 		e.logger.Warn("embedded collector metric ingest", "error", err)
@@ -130,20 +145,30 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 	}
 }
 
-func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points []protocol.MetricPoint, warnings []string) {
+func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points []protocol.MetricPoint, warnings []string, evidence capabilityEvidence) {
 	has := func(prefixes ...string) bool { return metricPrefixPresent(points, prefixes...) }
+	var nvmeDevices []string
+	for _, device := range e.advanced.SmartDevices {
+		if strings.HasPrefix(device, "/dev/nvme") {
+			nvmeDevices = append(nvmeDevices, device)
+		}
+	}
+	smartWarnings := warningsForTargets(warnings, "smart ", e.advanced.SmartDevices)
+	nvmeWarnings := warningsForTargets(warnings, "smart ", nvmeDevices)
+	btrfsWarnings := warningsForTargets(warnings, "btrfs ", e.advanced.BtrfsMounts)
 	items := []store.CapabilityStatus{
 		{Capability: "system.metrics", Status: "available", Detail: "读取宿主机共享 /proc 指标", CheckedAt: now},
 		capabilityFromConfig("system.metrics.gopsutil", true, has("system.cpu.usage") && has("system.load.5m"), warnings, "gopsutil 扩展指标不可用", now),
 		{Capability: "filesystem.lazycat_data", Status: "available", Detail: "校准路径 " + e.dataPath + "，对应 LazyCat 数据存储池", CheckedAt: now},
 		{Capability: "network.metrics", Status: statusOf(has("network.")), Detail: "读取网络命名空间累计流量", CheckedAt: now},
-		optionalCapability("system.temperature", has("system.temperature"), "读取 /sys 硬件温度传感器", "当前运行环境未暴露硬件温度传感器", now),
-		optionalCapability("system.fan", has("system.fan.rpm"), "LazyCat HAL GetFanRpm 只读接口", "LazyCat HAL 未返回风扇转速", now),
-		optionalCapability("container.runtime", has("container."), "LazyCat Docker socket，仅调用 List/Stats", "只读 LazyCat Docker socket 未授权或不可用", now),
+		optionalCapability("system.temperature", has("system.temperature"), "读取 /sys 硬件温度传感器", "当前运行环境未暴露硬件温度传感器", "unsupported", now),
+		accessCapability("system.fan", evidence.halReachable, true, false, warnings, "hal fan:", "LazyCat HAL GetFanRpm 只读接口", "LazyCat HAL 调用失败", now),
+		accessCapability("container.runtime", evidence.dockerReachable, evidence.dockerMapped, evidence.dockerRestricted, warnings, "docker runtime:", "LazyCat Docker socket，仅调用 List/Stats", "只读 LazyCat Docker socket 未授权或不可用", now),
 	}
 	items = append(items,
-		capabilityFromConfig("smart", len(e.advanced.SmartDevices) > 0, has("disk.temperature", "disk.power_on_hours", "disk.nvme.", "disk.ata."), warnings, "宿主机块设备未映射给应用；当前不生成 SMART 健康结论", now),
-		capabilityFromConfig("btrfs", len(e.advanced.BtrfsMounts) > 0, has("btrfs."), warnings, "宿主机 Btrfs 挂载未映射给应用；当前不生成 Btrfs 健康结论", now),
+		capabilityFromConfig("smart", len(e.advanced.SmartDevices) > 0, has("disk.temperature", "disk.power_on_hours", "disk.nvme.", "disk.ata."), smartWarnings, "宿主机块设备未映射给应用；当前不生成 SMART 健康结论", now),
+		capabilityFromConfig("nvme", len(nvmeDevices) > 0, has("disk.nvme."), nvmeWarnings, "宿主机 NVMe 设备未映射给应用；当前不生成 NVMe 健康结论", now),
+		capabilityFromConfig("btrfs", len(e.advanced.BtrfsMounts) > 0, has("btrfs."), btrfsWarnings, "宿主机 Btrfs 挂载未映射给应用；当前不生成 Btrfs 健康结论", now),
 	)
 	if e.advanced.LPKStatusFile != "" {
 		items = append(items, capabilityFromConfig("lpk.runtime.file", true, has("lpk."), warnings, "状态文件不可用", now))
@@ -171,30 +196,95 @@ func statusOf(ok bool) string {
 	if ok {
 		return "available"
 	}
-	return "unavailable"
+	return "error"
 }
 
-func optionalCapability(name string, available bool, detail, fallback string, now time.Time) store.CapabilityStatus {
+func optionalCapability(name string, available bool, detail, fallback, unavailableStatus string, now time.Time) store.CapabilityStatus {
 	if available {
 		return store.CapabilityStatus{Capability: name, Status: "available", Detail: detail, CheckedAt: now}
 	}
-	return store.CapabilityStatus{Capability: name, Status: "unavailable", Detail: fallback, CheckedAt: now}
+	return store.CapabilityStatus{Capability: name, Status: unavailableStatus, Detail: fallback, CheckedAt: now}
+}
+
+func accessCapability(name string, reachable, mapped, restricted bool, warnings []string, warningPrefix, detail, fallback string, now time.Time) store.CapabilityStatus {
+	item := store.CapabilityStatus{Capability: name, Status: "restricted", Detail: fallback, CheckedAt: now}
+	warningDetail := ""
+	for _, warning := range warnings {
+		if strings.HasPrefix(warning, warningPrefix) {
+			warningDetail = warning
+			break
+		}
+	}
+	if reachable {
+		item.Status, item.Detail = "available", detail
+		if warningDetail != "" {
+			item.Detail += "；部分采集失败：" + warningDetail
+		}
+		return item
+	}
+	if !mapped {
+		return item
+	}
+	if restricted {
+		if warningDetail != "" {
+			item.Detail = warningDetail
+		}
+		return item
+	}
+	item.Status = "error"
+	if warningDetail != "" {
+		item.Detail = warningDetail
+	}
+	return item
+}
+
+func permissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "permission denied") ||
+		strings.Contains(message, "operation not permitted") ||
+		strings.Contains(message, "unauthorized") ||
+		strings.Contains(message, "forbidden")
+}
+
+func warningsForTargets(warnings []string, prefix string, targets []string) []string {
+	var matched []string
+	for _, warning := range warnings {
+		for _, target := range targets {
+			if strings.HasPrefix(warning, prefix+target+": ") {
+				matched = append(matched, warning)
+				break
+			}
+		}
+	}
+	return matched
 }
 
 func capabilityFromConfig(name string, configured, available bool, warnings []string, fallback string, now time.Time) store.CapabilityStatus {
-	item := store.CapabilityStatus{Capability: name, Status: "unavailable", Detail: fallback, CheckedAt: now}
+	item := store.CapabilityStatus{Capability: name, Status: "restricted", Detail: fallback, CheckedAt: now}
+	if configured {
+		warningPrefix := strings.Split(name, ".")[0]
+		if name == "nvme" {
+			warningPrefix = "smart"
+		}
+		for _, warning := range warnings {
+			if strings.HasPrefix(warning, warningPrefix) {
+				item.Status, item.Detail = "error", warning
+				return item
+			}
+		}
+	}
 	if available {
 		item.Status, item.Detail = "available", "只读采集已验证"
 		return item
 	}
 	if configured {
-		item.Status = "degraded"
-		for _, warning := range warnings {
-			if strings.HasPrefix(warning, strings.Split(name, ".")[0]) {
-				item.Detail = warning
-				break
-			}
-		}
+		item.Status = "error"
 	}
 	return item
 }

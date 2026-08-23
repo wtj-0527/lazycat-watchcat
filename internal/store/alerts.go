@@ -205,8 +205,6 @@ func (s *Store) SetAlertState(ctx context.Context, fingerprint, action string, s
 			silenceFor = 24 * time.Hour
 		}
 		result, err = tx.ExecContext(ctx, `UPDATE alert_instances SET status='silenced',silenced_until=?,updated_at=? WHERE fingerprint=? AND status!='resolved'`, now.Add(silenceFor).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), fingerprint)
-	case "resolve":
-		result, err = tx.ExecContext(ctx, `UPDATE alert_instances SET status='resolved',resolved_at=?,updated_at=? WHERE fingerprint=? AND status!='resolved'`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), fingerprint)
 	default:
 		return errors.New("unsupported alert action")
 	}
@@ -216,7 +214,7 @@ func (s *Store) SetAlertState(ctx context.Context, fingerprint, action string, s
 	if n, _ := result.RowsAffected(); n != 1 {
 		return ErrAlertNotFound
 	}
-	if err := recordAlertTransition(ctx, tx, a, old, map[string]string{"acknowledge": "acknowledged", "silence": "silenced", "resolve": "resolved"}[action], "user-"+action, now, action == "resolve"); err != nil {
+	if err := recordAlertTransition(ctx, tx, a, old, map[string]string{"acknowledge": "acknowledged", "silence": "silenced"}[action], "user-"+action, now, false); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_log(action,subject_type,subject_id,metadata_json,created_at) VALUES(?,?,?,?,?)`, "alert."+action, "alert", fingerprint, "{}", now.Format(time.RFC3339Nano))

@@ -69,22 +69,25 @@ Firing → Acknowledged → Resolved
 
 ## 7. Current implementation compatibility
 
-当前 `frontend/src/types.ts` 的 `Health` 类型是：
+当前 `frontend/src/types.ts` 已将状态维度拆分为：
 
 ```text
-healthy | warning | critical | offline | revoked
+Health: healthy | warning | critical | unknown
+Connectivity: online | stale | offline
+Capability: available | restricted | unsupported | error | unknown
 ```
 
-兼容处理：
+当前实现处理：
 
-| 当前值 | 目标模型处理 |
+| 输入／场景 | 当前模型处理 |
 |---|---|
-| `healthy` | Health = Healthy；仍需连接新鲜度证据 |
-| `warning` | Health = Warning |
-| `critical` | Health = Critical |
-| `offline` | Connectivity = Offline；Health 不应沿用旧 Healthy |
-| `revoked` | 设备注册／访问生命周期状态，显示“已撤销”；不伪装成健康状态 |
+| 在线且证据新鲜、无规则命中 | Health = Healthy；Connectivity = Online |
+| 在线且命中告警规则 | Health = Warning／Critical；Connectivity = Online |
+| 心跳过期或设备撤销 | Health = Unknown；Connectivity = Stale／Offline；保留离线告警证据 |
+| 能力接口成功并返回有效数据 | Capability = Available |
+| 所需只读设备、挂载或权限未映射 | Capability = Restricted |
+| 当前硬件／系统没有该能力 | Capability = Unsupported |
+| 已配置能力但调用或解析失败 | Capability = Error |
+| 尚无足够证据分类 | Capability = Unknown |
 
-当前能力接口使用 `available`、`degraded`、`unavailable`。UI 可以保留后端原值，但应在原因信息足够时映射到目标 Capability；原因不足时显示 Unknown，不根据颜色猜测。
-
-本交付不要求在文档分支中修改 TypeScript 类型或 API Schema。实现团队扩展状态字段时需保证旧数据兼容。
+`StatusPill` 暂时保留 `degraded`、`unavailable` 的旧值文案与样式，仅用于兼容历史数据；新 Capability producer 不再产生这两个值。API 消费方不得根据旧颜色推断目标五态。

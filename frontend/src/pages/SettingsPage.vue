@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '@/api'
-import { usePolling } from '@/composables'
+import { usePolling, useRovingTabs } from '@/composables'
 import type { Backup, Capability, Stability } from '@/types'
 import { ago, backupType, bytes, dateTime, duration } from '@/utils'
 import PageState from '@/components/PageState.vue'
@@ -17,21 +17,34 @@ interface Operations { capabilities: Capability[]; schedule: { daily: { hour: nu
 interface DatabaseStatus { databaseSize: number; integrityOk: boolean; integrityError?: string; backupCount: number; latestBackup?: Backup }
 interface Payload { settings: Settings; operations: Operations; database: DatabaseStatus; backups: Backup[]; stability: Stability }
 interface PairingCode { code: string; expiresAt: string }
+interface RestoreResult { status: string; backup: string; message: string }
+interface OperationEvidence { status: 'success' | 'warning' | 'error'; message: string }
 type Tab = 'onboarding' | 'groups' | 'capabilities' | 'thresholds' | 'notifications' | 'maintenance' | 'retention' | 'audit'
 const tabs: Array<[Tab, string]> = [
   ['onboarding', '设备接入'], ['groups', '设备组与标签'], ['capabilities', 'Collector 能力'], ['thresholds', '告警阈值'],
   ['notifications', '通知渠道'], ['maintenance', '维护窗口'], ['retention', '数据保留'], ['audit', '用户与审计'],
 ]
 const emit = defineEmits<{ toast: [message: string] }>()
-const tab = ref<Tab>('onboarding')
+const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, 'onboarding', 'settings-tab-')
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
+const backupLoading = ref(false)
+const backupEvidence = ref<OperationEvidence>()
+const restoreEvidence = ref<OperationEvidence>()
+const stabilityLoading = ref(false)
+const stabilityEvidence = ref<OperationEvidence>()
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
   const [settings, operations, database, backups, stability] = await Promise.all([
     api<Settings>('/api/v1/settings'), api<Operations>('/api/v1/operations'), api<DatabaseStatus>('/api/v1/database/status'),
     api<{ items: Backup[] }>('/api/v1/backups'), api<Stability>('/api/v1/stability'),
   ])
-  return { settings, operations, database, backups: backups.items, stability }
+  return {
+    settings,
+    operations: { ...operations, capabilities: operations.capabilities || [] },
+    database,
+    backups: backups.items || [],
+    stability,
+  }
 })
 const localCapability = computed(() => data.value?.operations.capabilities.filter((item) => !item.capability.startsWith('remote.')) || [])
 
@@ -44,27 +57,85 @@ async function createPairingCode() {
   finally { pairingLoading.value = false }
 }
 async function createBackup() {
-  try { await api('/api/v1/backups', { method: 'POST' }); emit('toast', '在线备份已完成并校验'); await refresh() }
-  catch (reason) { emit('toast', reason instanceof Error ? reason.message : String(reason)) }
+  backupLoading.value = true
+  backupEvidence.value = undefined
+  try {
+    const created = await api<Backup>('/api/v1/backups', { method: 'POST' })
+    const refreshed = await refresh()
+    const verified = refreshed?.backups.find((item) => item.name === created.name)
+    if (created.verified && verified?.verified && verified.sha256 === created.sha256) {
+      backupEvidence.value = { status: 'success', message: `已回读验证 ${created.name} · SHA-256 ${created.sha256.slice(0, 16)}…` }
+      emit('toast', '在线备份已创建并回读验证')
+    } else {
+      backupEvidence.value = { status: 'warning', message: `备份 ${created.name} 已创建，但列表回读未确认校验结果` }
+      emit('toast', '备份已创建，回读验证尚未确认')
+    }
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    backupEvidence.value = { status: 'error', message }
+    emit('toast', message)
+  } finally {
+    backupLoading.value = false
+  }
 }
 async function restoreBackup(name: string) {
   if (!window.confirm('恢复将重启猫眼并造成短暂断连；替换前会再创建安全备份。确定继续？')) return
-  try { await api(`/api/v1/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' }); emit('toast', '恢复已校验，应用即将重启'); window.setTimeout(() => location.reload(), 4_000) }
-  catch (reason) { emit('toast', reason instanceof Error ? reason.message : String(reason)) }
+  restoreEvidence.value = undefined
+  try {
+    const result = await api<RestoreResult>(`/api/v1/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' })
+    if (result.status !== 'restart-scheduled' || result.backup !== name) throw new Error('恢复请求响应与目标备份不一致')
+    restoreEvidence.value = { status: 'success', message: `${result.backup} 已通过校验并排队；数据库将在重启阶段原子替换` }
+    emit('toast', '恢复请求已校验并排队，应用即将重启')
+    window.setTimeout(() => location.reload(), 4_000)
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    restoreEvidence.value = { status: 'error', message }
+    emit('toast', message)
+  }
 }
 async function resetStability() {
   if (!window.confirm('确定清零当前稳定性观测并重新计算 7 天周期？')) return
-  try { await api('/api/v1/stability/reset', { method: 'POST' }); emit('toast', '7 天稳定性观测已重新开始'); await refresh() }
-  catch (reason) { emit('toast', reason instanceof Error ? reason.message : String(reason)) }
+  stabilityLoading.value = true
+  stabilityEvidence.value = undefined
+  try {
+    const reset = await api<Stability>('/api/v1/stability/reset', { method: 'POST' })
+    const refreshed = await refresh()
+    if (refreshed?.stability.startedAt === reset.startedAt) {
+      stabilityEvidence.value = { status: 'success', message: `已回读确认新观测周期：${dateTime(reset.startedAt)} 开始，当前 ${reset.sampleCount} 次采样` }
+      emit('toast', '7 天稳定性观测已重置并回读确认')
+    } else {
+      stabilityEvidence.value = { status: 'warning', message: `重置 API 已返回新周期 ${dateTime(reset.startedAt)}，但状态回读尚未一致` }
+      emit('toast', '稳定性观测已重置，回读尚未确认')
+    }
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    stabilityEvidence.value = { status: 'error', message }
+    emit('toast', message)
+  } finally {
+    stabilityLoading.value = false
+  }
 }
 </script>
 
 <template>
   <PageState :loading="loading" :error="error" @retry="refresh">
     <div class="page-intro"><div><h2>设置</h2><p>管理 Collector 接入、能力、通知、数据保留与生产运维。</p></div></div>
-    <div class="settings-tabs" role="tablist">
-      <button v-for="[key, label] in tabs" :key="key" :class="{ active: tab === key }" @click="tab = key">{{ label }}</button>
+    <div class="settings-tabs" role="tablist" aria-label="设置分类">
+      <button
+        v-for="[key, label] in tabs"
+        :id="`settings-tab-${key}`"
+        :key="key"
+        :class="{ active: tab === key }"
+        role="tab"
+        :aria-selected="tab === key"
+        aria-controls="settings-panel"
+        :tabindex="tab === key ? 0 : -1"
+        @click="selectTab(key)"
+        @keydown="moveTab($event, key)"
+      >{{ label }}</button>
     </div>
+
+    <div v-if="data" id="settings-panel" role="tabpanel" :aria-labelledby="`settings-tab-${tab}`">
 
     <template v-if="data && tab === 'onboarding'">
       <div class="onboarding-layout">
@@ -117,14 +188,16 @@ async function resetStability() {
       </div>
       <div class="operations-layout">
         <section class="card">
-          <div class="section-title"><div><h2>数据库保护</h2><span class="muted">在线备份、完整性检查和恢复</span></div><button class="primary-button" @click="createBackup">立即备份</button></div>
+          <div class="section-title"><div><h2>数据库保护</h2><span class="muted">在线备份、完整性检查和恢复</span></div><button class="primary-button" :disabled="backupLoading" @click="createBackup">{{ backupLoading ? '备份中…' : '立即备份' }}</button></div>
           <div class="database-status"><StatusPill :status="data.database.integrityOk ? 'healthy' : 'critical'" /><b>{{ data.database.integrityOk ? 'SQLite 完整性检查通过' : data.database.integrityError }}</b><span>{{ bytes(data.database.databaseSize) }}</span></div>
+          <p v-if="backupEvidence" class="operation-evidence" :class="backupEvidence.status" role="status">{{ backupEvidence.message }}</p>
+          <p v-if="restoreEvidence" class="operation-evidence" :class="restoreEvidence.status" role="status">{{ restoreEvidence.message }}</p>
           <div class="backup-list"><div v-for="backup in data.backups.slice(0, 8)" :key="backup.name" class="backup-row"><div><b>{{ backupType(backup.type) }} · v{{ backup.appVersion }}</b><p>{{ dateTime(backup.createdAt) }} · {{ bytes(backup.size) }}</p><code>SHA-256 {{ backup.sha256.slice(0, 16) }}…</code></div><div><StatusPill :status="backup.verified ? 'healthy' : 'critical'" /><button class="tiny danger-button" :disabled="!backup.verified" @click="restoreBackup(backup.name)">恢复</button></div></div><div v-if="!data.backups.length" class="inline-empty">尚无备份。版本升级时会自动创建升级前备份。</div></div>
         </section>
         <aside class="card">
           <div class="section-title compact"><div><h2>7 天稳定性观测</h2><span class="muted">长期生产验证</span></div></div>
           <dl class="definition-list"><div><dt>开始时间</dt><dd>{{ dateTime(data.stability.startedAt) }}</dd></div><div><dt>目标完成</dt><dd>{{ dateTime(data.stability.targetEndAt) }}</dd></div><div><dt>采样 / 失败</dt><dd>{{ data.stability.sampleCount }} / {{ data.stability.failureCount }}</dd></div><div><dt>数据库延迟</dt><dd>{{ data.stability.databaseLatencyMs }} ms</dd></div><div><dt>指标新鲜度</dt><dd>{{ data.stability.metricFreshnessSeconds == null ? 'Unknown' : `${data.stability.metricFreshnessSeconds} 秒` }}</dd></div></dl>
-          <p :class="data.stability.qualified ? 'green' : 'amber'">{{ data.stability.qualified ? '已满足连续 7 天无失败资格' : `观测进行中，剩余约 ${duration(data.stability.remainingSeconds)}` }}</p><button class="secondary-button" @click="resetStability">重新开始 7 天观测</button>
+          <p :class="data.stability.qualified ? 'green' : 'amber'">{{ data.stability.qualified ? '已满足连续 7 天无失败资格' : `观测进行中，剩余约 ${duration(data.stability.remainingSeconds)}` }}</p><p v-if="stabilityEvidence" class="operation-evidence" :class="stabilityEvidence.status" role="status">{{ stabilityEvidence.message }}</p><button class="secondary-button" :disabled="stabilityLoading" @click="resetStability">{{ stabilityLoading ? '重置中…' : '重新开始 7 天观测' }}</button>
         </aside>
       </div>
     </template>
@@ -133,5 +206,6 @@ async function resetStability() {
       <div class="section-title"><div><h2>用户与审计</h2><span class="muted">Single-user production boundary</span></div></div>
       <div class="settings-grid"><div><span>用户模式</span><b>单用户</b><StatusPill status="available" /></div><div><span>审计保留</span><b>{{ data.settings.auditRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>巡检保留</span><b>{{ data.settings.inspectionRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>审计浏览器</span><b>Contract gap</b><StatusPill status="unknown" /></div></div>
     </section>
+    </div>
   </PageState>
 </template>

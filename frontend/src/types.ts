@@ -1,4 +1,6 @@
-export type Health = 'healthy' | 'warning' | 'critical' | 'unknown' | 'offline' | 'revoked'
+export type Health = 'healthy' | 'warning' | 'critical' | 'unknown'
+export type Connectivity = 'online' | 'stale' | 'offline'
+export type CapabilityStatus = 'available' | 'restricted' | 'unsupported' | 'error' | 'unknown'
 
 export interface Metric {
   deviceId?: string
@@ -103,7 +105,7 @@ export interface Stability {
 
 export interface Capability {
   capability: string
-  status: string
+  status: CapabilityStatus
   detail: string
   checkedAt: string
 }

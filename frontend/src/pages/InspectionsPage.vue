@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { Inspection } from '@/types'
-import { ago, dateTime, signed } from '@/utils'
+import { ago, dateTime, inspectionState, signed } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -14,21 +14,29 @@ const running = ref(false)
 const selected = ref<Inspection>()
 const detailLoading = ref(false)
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
-  const list = await api<{ items: Inspection[] }>('/api/v1/inspections')
-  const detail = list.items[0] ? await api<Inspection>(`/api/v1/inspections/${encodeURIComponent(list.items[0].id)}`) : undefined
-  if (!selected.value && detail) selected.value = detail
-  return { items: list.items, detail }
+  const list = await api<{ items: Inspection[] | null }>('/api/v1/inspections')
+  const items = list.items || []
+  const detail = items[0] ? await api<Inspection>(`/api/v1/inspections/${encodeURIComponent(items[0].id)}`) : undefined
+  return { items, detail }
 })
 const latest = computed(() => selected.value || data.value?.detail || data.value?.items[0])
 const reportChecks = computed(() => latest.value?.report?.checks || {})
+const connectivityCheckState = computed(() => {
+  const online = reportChecks.value.online
+  const devices = reportChecks.value.devices
+  if (typeof online !== 'number' || typeof devices !== 'number' || devices === 0) return 'unknown'
+  return online === devices ? 'healthy' : 'warning'
+})
 
 async function start() {
   running.value = true
   try {
     const created = await api<Inspection>('/api/v1/inspections', { method: 'POST' })
-    selected.value = await api<Inspection>(`/api/v1/inspections/${encodeURIComponent(created.id)}`)
+    const readback = await api<Inspection>(`/api/v1/inspections/${encodeURIComponent(created.id)}`)
+    selected.value = readback
     emit('toast', '正式巡检已完成、保存并回读报告')
-    await refresh()
+    const refreshed = await refresh()
+    if (refreshed?.detail?.id === readback.id) selected.value = undefined
   } catch (reason) {
     emit('toast', reason instanceof Error ? reason.message : String(reason))
   } finally {
@@ -57,7 +65,7 @@ async function selectReport(item: Inspection) {
     <template v-if="latest">
       <section class="inspection-hero card">
         <div>
-          <div class="inspection-title"><h2>巡检报告 #{{ latest.id.slice(0, 8) }}</h2><StatusPill :status="latest.status === 'completed' ? 'healthy' : latest.status" /></div>
+          <div class="inspection-title"><h2>巡检报告 #{{ latest.id.slice(0, 8) }}</h2><StatusPill :status="inspectionState(latest)" /></div>
           <p>执行时间 {{ dateTime(latest.startedAt) }} · {{ latest.triggerType === 'manual' ? '手动巡检' : latest.triggerType }}</p>
           <small>证据 SHA-256：<code>{{ latest.evidenceSha256 }}</code></small>
         </div>
@@ -74,8 +82,8 @@ async function selectReport(item: Inspection) {
       <div class="inspection-layout">
         <section class="card inspection-results">
           <div class="section-title"><div><h2>分类检查结果</h2><span class="muted">来自已保存报告，不使用模拟检查项</span></div></div>
-          <div class="check-row"><div><b>设备连接</b><span>在线设备与设备总数</span></div><strong>{{ reportChecks.online ?? 'Unknown' }} / {{ reportChecks.devices ?? latest.deviceCount }}</strong><StatusPill :status="reportChecks.online === reportChecks.devices ? 'healthy' : 'warning'" /></div>
-          <div class="check-row"><div><b>健康规则</b><span>Collector 阈值判断</span></div><strong>{{ reportChecks.healthy ?? latest.healthyCount }} 通过</strong><StatusPill :status="latest.criticalCount ? 'critical' : latest.warningCount ? 'warning' : 'healthy'" /></div>
+          <div class="check-row"><div><b>设备连接</b><span>在线设备与设备总数</span></div><strong>{{ reportChecks.online ?? 'Unknown' }} / {{ reportChecks.devices ?? latest.deviceCount }}</strong><StatusPill :status="connectivityCheckState" /></div>
+          <div class="check-row"><div><b>健康规则</b><span>Collector 阈值判断</span></div><strong>{{ reportChecks.healthy ?? latest.healthyCount }} 通过</strong><StatusPill :status="inspectionState(latest)" /></div>
           <div class="check-row"><div><b>存储与 SMART</b><span>报告内设备原始指标可追溯</span></div><strong>{{ latest.report?.devices ? '已包含快照' : 'Unknown' }}</strong><StatusPill :status="latest.report?.devices ? 'available' : 'unknown'" /></div>
           <div class="check-row"><div><b>应用与容器</b><span>独立分类结果</span></div><strong>Contract gap</strong><StatusPill status="unknown" /></div>
           <div class="check-row"><div><b>通知投递</b><span>巡检报告未包含通知回执</span></div><strong>Contract gap</strong><StatusPill status="unknown" /></div>
@@ -99,8 +107,8 @@ async function selectReport(item: Inspection) {
       <div class="section-title"><div><h2>巡检历史</h2><span class="muted">每日 03:00、每周日 04:00 自动运行；失败最多重试 3 次</span></div></div>
       <div v-if="data?.items.length" class="table-scroll">
         <table class="fleet-table"><thead><tr><th>报告</th><th>时间 / 类型</th><th>设备</th><th>健康</th><th>Warning</th><th>Critical</th><th>证据</th></tr></thead>
-          <tbody><tr v-for="item in data.items" :key="item.id" class="device-row" tabindex="0" @click="selectReport(item)" @keydown.enter="selectReport(item)">
-            <td><b>#{{ item.id.slice(0, 8) }}</b><small>{{ item.status }}</small></td>
+          <tbody><tr v-for="item in data.items" :key="item.id" class="device-row" @click="selectReport(item)">
+            <td><button class="row-link" @click.stop="selectReport(item)">#{{ item.id.slice(0, 8) }}</button><small>{{ item.status }}</small></td>
             <td>{{ dateTime(item.startedAt) }}<small>{{ item.triggerType }}</small></td>
             <td>{{ item.deviceCount }}</td><td class="green">{{ item.healthyCount }}</td><td class="amber">{{ item.warningCount }}</td><td class="red">{{ item.criticalCount }}</td>
             <td><code>{{ item.evidenceSha256.slice(0, 16) }}…</code></td>

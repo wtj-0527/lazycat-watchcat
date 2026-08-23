@@ -111,7 +111,7 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			runtimeError = err.Error()
 			_ = s.store.SetCapabilityStatuses(r.Context(), s.localDeviceID, []store.CapabilityStatus{{
-				DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "degraded",
+				DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "error",
 				Detail: "LazyCat Package Manager API: " + err.Error(), CheckedAt: time.Now().UTC(),
 			}})
 		} else {
@@ -292,6 +292,10 @@ func (s *Server) alertsView(w http.ResponseWriter, r *http.Request) {
 func (s *Server) alertAction(w http.ResponseWriter, r *http.Request) {
 	fingerprint := r.PathValue("fingerprint")
 	action := strings.TrimPrefix(r.URL.Path[strings.LastIndex(r.URL.Path, "/"):], "/")
+	if action == "resolve" {
+		problem(w, http.StatusConflict, "alert_resolution_automatic", "告警仅在规则不再成立时自动恢复；请先处理原因并等待下一次规则评估")
+		return
+	}
 	var req struct {
 		DurationMinutes int `json:"durationMinutes"`
 	}
@@ -317,15 +321,28 @@ func (s *Server) inspectionView(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取巡检状态")
 		return
 	}
-	checks := map[string]int{"devices": len(devices), "online": 0, "healthy": 0, "warning": 0, "critical": 0}
-	for _, d := range devices {
-		if d.Online {
-			checks["online"]++
-		}
-		checks[d.Health]++
-	}
+	checks := inspectionChecks(devices)
 	writeJSON(w, 200, map[string]any{"generatedAt": time.Now().UTC(), "source": "live-snapshot", "checks": checks, "devices": devices})
 }
+
+func inspectionChecks(devices []deviceView) map[string]int {
+	checks := map[string]int{"devices": len(devices), "online": 0, "healthy": 0, "warning": 0, "critical": 0}
+	for _, device := range devices {
+		if device.Online && !device.Stale {
+			checks["online"]++
+		}
+		switch {
+		case device.Health == "critical":
+			checks["critical"]++
+		case !device.Online || device.Stale || device.Health == "warning":
+			checks["warning"]++
+		case device.Health == "healthy":
+			checks["healthy"]++
+		}
+	}
+	return checks
+}
+
 func (s *Server) startInspection(w http.ResponseWriter, r *http.Request) {
 	item, err := s.RunInspection(r.Context(), "manual")
 	if err != nil {
@@ -344,13 +361,7 @@ func (s *Server) RunInspection(ctx context.Context, trigger string) (store.Inspe
 	if err := s.store.ReconcileAlerts(ctx, alertSignals(derived)); err != nil {
 		return store.Inspection{}, fmt.Errorf("无法更新告警状态")
 	}
-	checks := map[string]int{"devices": len(devices), "online": 0, "healthy": 0, "warning": 0, "critical": 0}
-	for _, d := range devices {
-		if d.Online {
-			checks["online"]++
-		}
-		checks[d.Health]++
-	}
+	checks := inspectionChecks(devices)
 	report := map[string]any{
 		"schemaVersion":  1,
 		"generatedAt":    time.Now().UTC(),
@@ -508,21 +519,48 @@ func buildDeviceViews(devices []protocol.Device, metrics []store.LatestMetric) [
 		latest := byDevice[d.ID]
 		online := d.Status != "revoked" && now.Sub(d.LastSeenAt) <= 90*time.Second
 		stale := d.Status != "revoked" && now.Sub(d.LastSeenAt) > 60*time.Second
-		view := deviceView{Device: d, Online: online, Stale: stale, Latest: latest, Health: "healthy"}
-		if !online {
-			view.Health = "warning"
-		}
-		for _, a := range deriveDeviceAlerts(view) {
-			if a.Severity == "critical" {
-				view.Health = "critical"
-				break
+		view := deviceView{Device: d, Online: online, Stale: stale, Latest: latest, Health: "unknown"}
+		if online && hasFreshHealthEvidence(latest, now) {
+			view.Health = "healthy"
+			for _, a := range deriveDeviceAlerts(view) {
+				if a.Severity == "critical" {
+					view.Health = "critical"
+					break
+				}
+				view.Health = "warning"
 			}
-			view.Health = "warning"
 		}
 		out = append(out, view)
 	}
 	return out
 }
+
+func hasFreshHealthEvidence(latest map[string][]store.LatestMetric, now time.Time) bool {
+	for name, metrics := range latest {
+		if !isHealthMetric(name) {
+			continue
+		}
+		for _, metric := range metrics {
+			if now.Sub(metric.CollectedAt) <= 10*time.Minute {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isHealthMetric(name string) bool {
+	switch name {
+	case "system.cpu.usage", "filesystem.root.usage", "btrfs.usage", "system.memory.usage",
+		"system.temperature", "container.memory.usage_percent", "disk.temperature",
+		"disk.nvme.media_errors", "disk.nvme.critical_warning", "disk.ata.reallocated_sectors",
+		"lpk.application.healthy":
+		return true
+	default:
+		return false
+	}
+}
+
 func deriveAlerts(devices []deviceView) []alertView {
 	var out []alertView
 	for _, d := range devices {

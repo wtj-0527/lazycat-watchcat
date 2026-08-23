@@ -18,15 +18,16 @@ const healthy = computed(() => data.value?.items.reduce((sum, item) => sum + ite
 const paused = computed(() => data.value?.items.reduce((sum, item) => sum + item.paused, 0) ?? 0)
 const errors = computed(() => data.value?.items.reduce((sum, item) => sum + item.unhealthy, 0) ?? 0)
 const versionDrift = computed(() => data.value?.items.filter((item) => Object.keys(item.versions).length > 1).length ?? 0)
+const appStatus = (item: ApplicationItem) => item.unhealthy > 0 ? 'critical' : item.paused > 0 ? 'warning' : item.healthy > 0 ? 'healthy' : 'unknown'
 const filtered = computed(() => (data.value?.items || []).filter((item) => {
   const matchesQuery = `${item.title} ${item.id}`.toLowerCase().includes(query.value.trim().toLowerCase())
+  const status = appStatus(item)
   const matchesStatus = statusFilter.value === 'all'
-    || (statusFilter.value === 'healthy' && item.unhealthy === 0 && item.paused === 0)
-    || (statusFilter.value === 'degraded' && item.paused > 0)
-    || (statusFilter.value === 'critical' && item.unhealthy > 0)
+    || (statusFilter.value === 'healthy' && status === 'healthy')
+    || (statusFilter.value === 'degraded' && status === 'warning')
+    || (statusFilter.value === 'critical' && status === 'critical')
   return matchesQuery && matchesStatus
 }))
-const appStatus = (item: ApplicationItem) => item.unhealthy > 0 ? 'critical' : item.paused > 0 ? 'warning' : item.healthy > 0 ? 'healthy' : 'unknown'
 const statusLabel = (status: string) => ({ running: '运行中', paused: '已暂停', starting: '启动中', stopping: '停止中', error: '异常' } as Record<string, string>)[status] || status || 'Unknown'
 </script>
 

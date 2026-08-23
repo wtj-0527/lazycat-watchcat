@@ -4,7 +4,7 @@ import { ago, deviceState, metricValueAny } from '@/utils'
 import StatusPill from './StatusPill.vue'
 
 defineProps<{ items: Device[]; clickable?: boolean }>()
-const emit = defineEmits<{ select: [id: string] }>()
+defineEmits<{ select: [id: string] }>()
 </script>
 
 <template>
@@ -18,13 +18,11 @@ const emit = defineEmits<{ select: [id: string] }>()
         v-for="device in items"
         :key="device.id"
         :class="{ 'device-row': clickable }"
-        @click="clickable && emit('select', device.id)"
-        @keydown.enter="clickable && emit('select', device.id)"
-        @keydown.space.prevent="clickable && emit('select', device.id)"
-        :tabindex="clickable ? 0 : undefined"
+        @click="clickable && $emit('select', device.id)"
       >
         <td class="device">
-          <b>{{ device.name }}</b>
+          <button v-if="clickable" class="row-link" @click.stop="$emit('select', device.id)">{{ device.name }}</button>
+          <b v-else>{{ device.name }}</b>
           <small>{{ device.hostname || '主机名未知' }}</small>
         </td>
         <td><span class="contract-gap">未分组</span></td>

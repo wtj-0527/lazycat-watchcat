@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type { Alert } from '@/types'
-import { ago, formatNumber } from '@/utils'
+import { ago, formatMetricValue } from '@/utils'
 import StatusPill from './StatusPill.vue'
 
-defineProps<{ alert: Alert; actionable?: boolean }>()
+defineProps<{ alert: Alert; actionable?: boolean; actionLoading?: boolean }>()
 const emit = defineEmits<{ action: [fingerprint: string, action: string] }>()
 const states: Record<string, string> = { firing: '触发中', acknowledged: '已确认', silenced: '已静默', resolved: '已恢复' }
 </script>
@@ -17,14 +17,12 @@ const states: Record<string, string> = { firing: '触发中', acknowledged: '已
       <div class="alert-meta">
         <span>{{ states[alert.status] || alert.status || '触发中' }}</span>
         <span>最近 {{ ago(alert.lastSeenAt || alert.observedAt || alert.collectedAt) }}</span>
-        <span v-if="alert.unit">当前 {{ formatNumber(alert.value) }}{{ alert.unit }}</span>
-        <span v-else>当前值未知</span>
+        <span v-if="alert.unit">当前 {{ formatMetricValue(alert.value, alert.unit) }}</span>
       </div>
-      <div class="contract-note">判断依据与推荐操作：当前 API 未提供（Contract gap）</div>
+      <div class="contract-note">证据：{{ alert.message }}<template v-if="alert.unit"> · {{ formatMetricValue(alert.value, alert.unit) }}</template> · {{ ago(alert.lastSeenAt || alert.observedAt || alert.collectedAt) }}；规则阈值与推荐操作当前 API 未提供（Contract gap）</div>
       <span v-if="actionable && alert.status !== 'resolved'" class="alert-actions">
-        <button class="tiny secondary-button" @click="emit('action', alert.fingerprint, 'acknowledge')">确认告警</button>
-        <button class="tiny secondary-button" @click="emit('action', alert.fingerprint, 'silence')">静默 24 小时</button>
-        <button class="tiny danger-button" @click="emit('action', alert.fingerprint, 'resolve')">标记解决</button>
+        <button class="tiny secondary-button" :disabled="actionLoading" @click="emit('action', alert.fingerprint, 'acknowledge')">{{ actionLoading ? '处理中…' : '确认告警' }}</button>
+        <button class="tiny secondary-button" :disabled="actionLoading" @click="emit('action', alert.fingerprint, 'silence')">静默 24 小时</button>
       </span>
     </div>
   </div>

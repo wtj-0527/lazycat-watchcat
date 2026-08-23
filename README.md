@@ -27,4 +27,4 @@
 - 单一 LPK、单一应用进程，不使用 `privileged`、host PID、host network 或宿主机目录写挂载
 - `PERM_LZC_DOCKER_ADMIN` 仅用于让 LazyCat Runtime 映射 Docker socket；猫眼客户端只允许固定 GET 路径
 - 不申请 `PERM_OTHER_APP_DATA_ADMIN`，不读取其他应用的数据目录
-- SMART 和 Btrfs 在没有安全只读数据源时继续报告为 `unavailable`
+- SMART、NVMe 和 Btrfs 未获得所需只读设备／挂载映射时报告为 `restricted`；已配置但采集或解析失败时报告为 `error`
