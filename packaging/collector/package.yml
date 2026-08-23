@@ -1,0 +1,9 @@
+package: community.lazycat.app.maoyan.collector
+version: 1.0.0
+name: 猫眼 Collector
+description: 猫眼只读设备指标采集器
+min_os_version: 1.5.2
+locales:
+  zh:
+    name: 猫眼 Collector
+    description: 猫眼只读设备指标采集器，不提供任意 Shell

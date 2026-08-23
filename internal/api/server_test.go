@@ -2,13 +2,17 @@ package api
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
@@ -19,7 +23,11 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	ts := httptest.NewServer(New(st, "../../web", 10*time.Minute).Handler())
+	ca, err := pki.LoadOrCreate(filepath.Join(t.TempDir(), "pki"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(New(st, ca, "../../web", 10*time.Minute).Handler())
 	defer ts.Close()
 	resp, err := http.Post(ts.URL+"/api/v1/pairing-codes", "application/json", nil)
 	if err != nil {
@@ -41,6 +49,9 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 	var paired protocol.PairCollectorResponse
 	if err := json.NewDecoder(resp.Body).Decode(&paired); err != nil {
 		t.Fatal(err)
+	}
+	if paired.CertificatePEM == "" || paired.PrivateKeyPEM == "" || paired.CACertificatePEM == "" {
+		t.Fatal("pairing response did not include mTLS identity")
 	}
 	resp.Body.Close()
 	resp, err = http.Post(ts.URL+"/api/v1/collectors/pair", "application/json", bytes.NewReader(body))
@@ -72,15 +83,19 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 		Unit:        "%",
 		CollectedAt: time.Now().UTC(),
 	}}})
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/metrics/batch", bytes.NewReader(metricBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+paired.Token)
-	resp, err = http.DefaultClient.Do(req)
+	block, _ := pem.Decode([]byte(paired.CertificatePEM))
+	if block == nil {
+		t.Fatal("invalid client certificate PEM")
+	}
+	clientCert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("metric status=%d", resp.StatusCode)
+	mtlsRequest := httptest.NewRequest(http.MethodPost, "/api/v1/metrics/batch", bytes.NewReader(metricBody))
+	mtlsRequest.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert}}
+	mtlsRecorder := httptest.NewRecorder()
+	New(st, ca, "../../web", 10*time.Minute).CollectorHandler().ServeHTTP(mtlsRecorder, mtlsRequest)
+	if mtlsRecorder.Code != http.StatusAccepted {
+		t.Fatalf("mTLS metric status=%d body=%s", mtlsRecorder.Code, mtlsRecorder.Body.String())
 	}
-	resp.Body.Close()
 }

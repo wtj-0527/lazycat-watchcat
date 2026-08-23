@@ -3,14 +3,17 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 type Config struct {
-	Addr       string
-	DataDir    string
-	WebDir     string
-	PairingTTL time.Duration
+	Addr           string
+	CollectorAddr  string
+	CollectorHosts []string
+	DataDir        string
+	WebDir         string
+	PairingTTL     time.Duration
 }
 
 func Load() Config {
@@ -19,11 +22,23 @@ func Load() Config {
 		dataDir = "data"
 	}
 	return Config{
-		Addr:       getenv("MAOYAN_ADDR", ":8080"),
-		DataDir:    dataDir,
-		WebDir:     getenv("MAOYAN_WEB_DIR", defaultWebDir()),
-		PairingTTL: 10 * time.Minute,
+		Addr:           getenv("MAOYAN_ADDR", ":8080"),
+		CollectorAddr:  getenv("MAOYAN_COLLECTOR_ADDR", ":8443"),
+		CollectorHosts: splitHosts(getenv("MAOYAN_COLLECTOR_HOSTS", "maoyan-hub,localhost,127.0.0.1")),
+		DataDir:        dataDir,
+		WebDir:         getenv("MAOYAN_WEB_DIR", defaultWebDir()),
+		PairingTTL:     10 * time.Minute,
 	}
+}
+
+func splitHosts(value string) []string {
+	var hosts []string
+	for _, host := range strings.Split(value, ",") {
+		if host = strings.TrimSpace(host); host != "" {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
 }
 
 func (c Config) DatabasePath() string { return filepath.Join(c.DataDir, "maoyan.db") }

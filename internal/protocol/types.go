@@ -19,8 +19,13 @@ type PairCollectorRequest struct {
 }
 
 type PairCollectorResponse struct {
-	DeviceID string `json:"deviceId"`
-	Token    string `json:"token"`
+	DeviceID             string    `json:"deviceId"`
+	Token                string    `json:"token"`
+	CertificatePEM       string    `json:"certificatePem"`
+	PrivateKeyPEM        string    `json:"privateKeyPem"`
+	CACertificatePEM     string    `json:"caCertificatePem"`
+	CertificateSerial    string    `json:"certificateSerial"`
+	CertificateExpiresAt time.Time `json:"certificateExpiresAt"`
 }
 
 type Device struct {

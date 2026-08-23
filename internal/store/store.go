@@ -67,6 +67,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration: %w", err)
 		}
 	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE devices ADD COLUMN certificate_serial TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration certificate_serial: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE devices ADD COLUMN certificate_expires_at TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration certificate_expires_at: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE devices ADD COLUMN revoked_at TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration revoked_at: %w", err)
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, datetime('now'))`)
 	return nil
 }
 
@@ -154,6 +164,26 @@ func (s *Store) AuthenticateDevice(ctx context.Context, deviceID, token string) 
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM devices WHERE id=? AND token_hash=?`, deviceID, hash(token)).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("invalid device credentials")
+	}
+	return err
+}
+
+func (s *Store) SetCertificate(ctx context.Context, deviceID, serial string, expiresAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE devices SET certificate_serial=?,certificate_expires_at=? WHERE id=? AND revoked_at IS NULL`, serial, expiresAt.UTC().Format(time.RFC3339Nano), deviceID)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return errors.New("device not found or revoked")
+	}
+	return nil
+}
+
+func (s *Store) CertificateAllowed(ctx context.Context, deviceID, serial string) error {
+	var found string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM devices WHERE id=? AND certificate_serial=? AND revoked_at IS NULL`, deviceID, serial).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("certificate revoked or unknown")
 	}
 	return err
 }

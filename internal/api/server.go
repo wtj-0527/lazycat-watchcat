@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"math"
@@ -10,28 +11,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
 
 type Server struct {
 	store      *store.Store
+	ca         *pki.Authority
 	webDir     string
 	pairingTTL time.Duration
 	mux        *http.ServeMux
 }
 
-func New(st *store.Store, webDir string, pairingTTL time.Duration) *Server {
-	s := &Server{store: st, webDir: webDir, pairingTTL: pairingTTL, mux: http.NewServeMux()}
+func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
+	s := &Server{store: st, ca: ca, webDir: webDir, pairingTTL: pairingTTL, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
 func (s *Server) Handler() http.Handler { return securityHeaders(s.mux) }
+func (s *Server) CollectorHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/health", s.health)
+	mux.HandleFunc("POST /api/v1/metrics/batch", s.ingestMetricsMTLS)
+	return securityHeaders(mux)
+}
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	s.mux.HandleFunc("POST /api/v1/pairing-codes", s.createPairingCode)
 	s.mux.HandleFunc("POST /api/v1/collectors/pair", s.pairCollector)
-	s.mux.HandleFunc("POST /api/v1/metrics/batch", s.ingestMetrics)
 	s.mux.HandleFunc("GET /api/v1/devices", s.listDevices)
 	s.mux.HandleFunc("/", s.static)
 }
@@ -61,6 +69,20 @@ func (s *Server) pairCollector(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, "pairing_failed", err.Error())
 		return
 	}
+	identity, err := s.ca.IssueClient(res.DeviceID, req.Hostname, 365*24*time.Hour)
+	if err != nil {
+		problem(w, 500, "certificate_issue_failed", "无法签发 Collector 证书")
+		return
+	}
+	if err := s.store.SetCertificate(r.Context(), res.DeviceID, identity.Serial, identity.ExpiresAt); err != nil {
+		problem(w, 500, "certificate_store_failed", "无法保存 Collector 证书状态")
+		return
+	}
+	res.CertificatePEM = identity.CertificatePEM
+	res.PrivateKeyPEM = identity.PrivateKeyPEM
+	res.CACertificatePEM = identity.CACertificatePEM
+	res.CertificateSerial = identity.Serial
+	res.CertificateExpiresAt = identity.ExpiresAt
 	writeJSON(w, 201, res)
 }
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +95,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 	var batch protocol.MetricBatch
-	if err := decodeJSON(r, &batch); err != nil || batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 {
+	if err := decodeJSON(r, &batch); err != nil || !validBatch(batch) {
 		problem(w, 400, "invalid_batch", "deviceId 和 1–1000 个指标点必填")
 		return
 	}
@@ -86,18 +108,53 @@ func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 		problem(w, 401, "unauthorized", "设备凭据无效")
 		return
 	}
-	now := time.Now().UTC()
-	for _, point := range batch.Points {
-		if point.Name == "" || len(point.Name) > 128 || math.IsNaN(point.Value) || math.IsInf(point.Value, 0) || point.CollectedAt.IsZero() || point.CollectedAt.Before(now.Add(-31*24*time.Hour)) || point.CollectedAt.After(now.Add(5*time.Minute)) {
-			problem(w, 400, "invalid_metric", "指标名称、值或采集时间无效")
-			return
-		}
+	if err := s.store.IngestMetrics(r.Context(), batch); err != nil {
+		problem(w, 500, "ingest_failed", "指标写入失败")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
+}
+
+func (s *Server) ingestMetricsMTLS(w http.ResponseWriter, r *http.Request) {
+	var batch protocol.MetricBatch
+	if err := decodeJSON(r, &batch); err != nil || !validBatch(batch) {
+		problem(w, 400, "invalid_batch", "指标批次无效")
+		return
+	}
+	cert := peerCertificate(r)
+	if cert == nil || cert.Subject.CommonName != batch.DeviceID {
+		problem(w, 401, "invalid_client_certificate", "Collector 证书与设备不匹配")
+		return
+	}
+	if err := s.store.CertificateAllowed(r.Context(), batch.DeviceID, cert.SerialNumber.Text(16)); err != nil {
+		problem(w, 401, "revoked_client_certificate", "Collector 证书未知或已吊销")
+		return
 	}
 	if err := s.store.IngestMetrics(r.Context(), batch); err != nil {
 		problem(w, 500, "ingest_failed", "指标写入失败")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
+}
+
+func validBatch(batch protocol.MetricBatch) bool {
+	if batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 {
+		return false
+	}
+	now := time.Now().UTC()
+	for _, point := range batch.Points {
+		if point.Name == "" || len(point.Name) > 128 || math.IsNaN(point.Value) || math.IsInf(point.Value, 0) || point.CollectedAt.IsZero() || point.CollectedAt.Before(now.Add(-31*24*time.Hour)) || point.CollectedAt.After(now.Add(5*time.Minute)) {
+			return false
+		}
+	}
+	return true
+}
+
+func peerCertificate(r *http.Request) *x509.Certificate {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return nil
+	}
+	return r.TLS.PeerCertificates[0]
 }
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
