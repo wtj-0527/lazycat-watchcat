@@ -48,6 +48,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/applications", s.applications)
 	s.mux.HandleFunc("GET /api/v1/storage", s.storageView)
 	s.mux.HandleFunc("GET /api/v1/alerts", s.alertsView)
+	s.mux.HandleFunc("POST /api/v1/alerts/{fingerprint}/acknowledge", s.alertAction)
+	s.mux.HandleFunc("POST /api/v1/alerts/{fingerprint}/silence", s.alertAction)
+	s.mux.HandleFunc("POST /api/v1/alerts/{fingerprint}/resolve", s.alertAction)
+	s.mux.HandleFunc("GET /api/v1/inspections", s.listInspections)
+	s.mux.HandleFunc("POST /api/v1/inspections", s.startInspection)
+	s.mux.HandleFunc("GET /api/v1/inspections/{id}", s.inspectionDetail)
 	s.mux.HandleFunc("GET /api/v1/inspections/live", s.inspectionView)
 	s.mux.HandleFunc("GET /api/v1/settings", s.settingsView)
 	s.mux.HandleFunc("POST /api/v1/devices/{id}/revoke", s.revokeDevice)
@@ -134,6 +140,7 @@ func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "ingest_failed", "指标写入失败")
 		return
 	}
+	_ = s.SyncAlerts(r.Context())
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
 }
 
@@ -156,6 +163,7 @@ func (s *Server) ingestMetricsMTLS(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "ingest_failed", "指标写入失败")
 		return
 	}
+	_ = s.SyncAlerts(r.Context())
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
 }
 

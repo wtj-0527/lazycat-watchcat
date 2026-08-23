@@ -61,6 +61,82 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS device_certificates (serial TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, expires_at TEXT NOT NULL, valid_until TEXT, revoked_at TEXT, created_at TEXT NOT NULL);`,
 		`CREATE INDEX IF NOT EXISTS idx_device_certificates_device ON device_certificates(device_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_device_name_time ON metrics(device_id,name,collected_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_metrics_received_at ON metrics(received_at);`,
+		`CREATE TABLE IF NOT EXISTS alert_instances (
+			fingerprint TEXT PRIMARY KEY,
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			device_name TEXT NOT NULL,
+			severity TEXT NOT NULL,
+			status TEXT NOT NULL,
+			resource TEXT NOT NULL,
+			message TEXT NOT NULL,
+			value REAL NOT NULL DEFAULT 0,
+			unit TEXT NOT NULL DEFAULT '',
+			first_seen_at TEXT NOT NULL,
+			last_seen_at TEXT NOT NULL,
+			acknowledged_at TEXT,
+			silenced_until TEXT,
+			resolved_at TEXT,
+			occurrence_count INTEGER NOT NULL DEFAULT 1,
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_instances_status_severity ON alert_instances(status,severity,last_seen_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS alert_transitions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			fingerprint TEXT NOT NULL,
+			from_status TEXT NOT NULL DEFAULT '',
+			to_status TEXT NOT NULL,
+			severity TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_transitions_fingerprint_time ON alert_transitions(fingerprint,created_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS notification_outbox (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			dedupe_key TEXT NOT NULL UNIQUE,
+			alert_fingerprint TEXT NOT NULL,
+			transition TEXT NOT NULL,
+			title TEXT NOT NULL,
+			body TEXT NOT NULL,
+			deeplink TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at TEXT NOT NULL,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			sent_at TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending ON notification_outbox(status,next_attempt_at);`,
+		`CREATE TABLE IF NOT EXISTS inspections (
+			id TEXT PRIMARY KEY,
+			status TEXT NOT NULL,
+			trigger_type TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			completed_at TEXT,
+			device_count INTEGER NOT NULL DEFAULT 0,
+			healthy_count INTEGER NOT NULL DEFAULT 0,
+			warning_count INTEGER NOT NULL DEFAULT 0,
+			critical_count INTEGER NOT NULL DEFAULT 0,
+			report_json TEXT NOT NULL DEFAULT '{}',
+			evidence_sha256 TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_inspections_started ON inspections(started_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS metric_rollups_hourly (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			labels_json TEXT NOT NULL,
+			bucket_start TEXT NOT NULL,
+			min_value REAL NOT NULL,
+			max_value REAL NOT NULL,
+			avg_value REAL NOT NULL,
+			p95_value REAL NOT NULL,
+			sample_count INTEGER NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,name,labels_json,bucket_start)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_rollups_lookup ON metric_rollups_hourly(device_id,name,bucket_start DESC);`,
+		`CREATE TABLE IF NOT EXISTS retention_state (name TEXT PRIMARY KEY, value TEXT NOT NULL);`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, datetime('now'));`,
 	}
@@ -79,6 +155,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("migration revoked_at: %w", err)
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, datetime('now'))`)
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, datetime('now'))`)
 	return nil
 }
 

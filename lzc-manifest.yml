@@ -1,5 +1,6 @@
 application:
   subdomain: maoyan
+  background_task: true
   multi_instance: false
   environment:
     - MAOYAN_DATA_DIR=/lzcapp/var/data

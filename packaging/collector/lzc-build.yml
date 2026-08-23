@@ -1,9 +1,0 @@
-manifest: ./lzc-manifest.yml
-icon: ../../icon.png
-buildscript: |
-  set -eu
-  rm -rf dist/content
-  mkdir -p dist/content
-  cd ../..
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o packaging/collector/dist/content/maoyan-collector ./cmd/maoyan-collector
-contentdir: ./dist/content

@@ -1,6 +1,10 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -37,7 +41,8 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取实时状态")
 		return
 	}
-	alerts := deriveAlerts(devices)
+	_ = s.store.ReconcileAlerts(r.Context(), alertSignals(deriveAlerts(devices)))
+	alerts, _ := s.store.ListAlerts(r.Context(), false)
 	stats := map[string]int{"devices": len(devices), "online": 0, "offline": 0, "critical": 0, "warning": 0, "healthy": 0}
 	for _, d := range devices {
 		if d.Online {
@@ -158,8 +163,38 @@ func (s *Server) alertsView(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取告警状态")
 		return
 	}
-	alerts := deriveAlerts(devices)
+	if err := s.store.ReconcileAlerts(r.Context(), alertSignals(deriveAlerts(devices))); err != nil {
+		problem(w, 500, "internal_error", "无法更新告警状态")
+		return
+	}
+	alerts, err := s.store.ListAlerts(r.Context(), r.URL.Query().Get("includeResolved") == "true")
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取持久化告警")
+		return
+	}
 	writeJSON(w, 200, map[string]any{"items": alerts, "count": len(alerts), "updatedAt": time.Now().UTC()})
+}
+func (s *Server) alertAction(w http.ResponseWriter, r *http.Request) {
+	fingerprint := r.PathValue("fingerprint")
+	action := strings.TrimPrefix(r.URL.Path[strings.LastIndex(r.URL.Path, "/"):], "/")
+	var req struct {
+		DurationMinutes int `json:"durationMinutes"`
+	}
+	if r.ContentLength > 0 {
+		if err := decodeJSON(r, &req); err != nil {
+			problem(w, 400, "invalid_request", "请求体无效")
+			return
+		}
+	}
+	if err := s.store.SetAlertState(r.Context(), fingerprint, action, time.Duration(req.DurationMinutes)*time.Minute); err != nil {
+		if err == store.ErrAlertNotFound {
+			problem(w, 404, "alert_not_found", "告警不存在或状态不可变更")
+		} else {
+			problem(w, 400, "alert_action_failed", err.Error())
+		}
+		return
+	}
+	writeJSON(w, 200, map[string]any{"fingerprint": fingerprint, "status": action})
 }
 func (s *Server) inspectionView(w http.ResponseWriter, r *http.Request) {
 	devices, _, err := s.snapshot(r)
@@ -176,8 +211,87 @@ func (s *Server) inspectionView(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"generatedAt": time.Now().UTC(), "source": "live-snapshot", "checks": checks, "devices": devices})
 }
+func (s *Server) startInspection(w http.ResponseWriter, r *http.Request) {
+	devices, metrics, err := s.snapshot(r)
+	if err != nil {
+		problem(w, 500, "inspection_failed", "无法读取巡检数据")
+		return
+	}
+	derived := deriveAlerts(devices)
+	if err := s.store.ReconcileAlerts(r.Context(), alertSignals(derived)); err != nil {
+		problem(w, 500, "inspection_failed", "无法更新告警状态")
+		return
+	}
+	checks := map[string]int{"devices": len(devices), "online": 0, "healthy": 0, "warning": 0, "critical": 0}
+	for _, d := range devices {
+		if d.Online {
+			checks["online"]++
+		}
+		checks[d.Health]++
+	}
+	report := map[string]any{
+		"schemaVersion":  1,
+		"generatedAt":    time.Now().UTC(),
+		"source":         "collector-snapshot",
+		"checks":         checks,
+		"devices":        devices,
+		"alerts":         derived,
+		"latestMetricAt": latestTimestamp(metrics),
+	}
+	item, err := s.store.SaveInspection(r.Context(), "manual", report, len(devices), checks["healthy"], checks["warning"], checks["critical"])
+	if err != nil {
+		problem(w, 500, "inspection_failed", "无法保存巡检报告")
+		return
+	}
+	writeJSON(w, 201, item)
+}
+func (s *Server) listInspections(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListInspections(r.Context(), 50)
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取巡检记录")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "count": len(items)})
+}
+func (s *Server) inspectionDetail(w http.ResponseWriter, r *http.Request) {
+	item, err := s.store.InspectionByID(r.Context(), r.PathValue("id"))
+	if store.IsInspectionNotFound(err) {
+		problem(w, 404, "inspection_not_found", "巡检记录不存在")
+		return
+	}
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取巡检报告")
+		return
+	}
+	writeJSON(w, 200, item)
+}
 func (s *Server) settingsView(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"singleUser": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": 30, "rollupRetentionDays": 365, "notificationChannel": "lazycat", "certificateRotationDaysBeforeExpiry": 30})
+	stats, _ := s.store.RetentionStats(r.Context())
+	writeJSON(w, 200, map[string]any{"singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": 30, "rollupRetentionDays": 365, "auditRetentionDays": 180, "inspectionRetentionDays": 365, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
+}
+
+func (s *Server) SyncAlerts(ctx context.Context) error {
+	devices, err := s.store.ListDevices(ctx)
+	if err != nil {
+		return err
+	}
+	metrics, err := s.store.ListLatestMetrics(ctx)
+	if err != nil {
+		return err
+	}
+	return s.store.ReconcileAlerts(ctx, alertSignals(deriveAlerts(buildDeviceViews(devices, metrics))))
+}
+
+func alertSignals(alerts []alertView) []store.AlertSignal {
+	out := make([]store.AlertSignal, 0, len(alerts))
+	for _, a := range alerts {
+		out = append(out, store.AlertSignal{
+			Fingerprint: a.Fingerprint, DeviceID: a.DeviceID, DeviceName: a.DeviceName,
+			Severity: a.Severity, Resource: a.Resource, Message: a.Message,
+			Value: a.Value, Unit: a.Unit, ObservedAt: a.CollectedAt,
+		})
+	}
+	return out
 }
 func (s *Server) snapshot(r *http.Request) ([]deviceView, []store.LatestMetric, error) {
 	devices, err := s.store.ListDevices(r.Context())
@@ -255,7 +369,9 @@ func deriveDeviceAlerts(d deviceView) []alertView {
 			if resource == "" {
 				resource = name
 			}
-			out = append(out, alertView{Fingerprint: fmt.Sprintf("%s:%s:%v", d.ID, name, m.Labels), DeviceID: d.ID, DeviceName: d.Name, Severity: severity, Resource: resource, Message: msg, Value: m.Value, Unit: m.Unit, CollectedAt: m.CollectedAt})
+			labels, _ := json.Marshal(m.Labels)
+			sum := sha256.Sum256([]byte(d.ID + "\x00" + name + "\x00" + string(labels)))
+			out = append(out, alertView{Fingerprint: hex.EncodeToString(sum[:]), DeviceID: d.ID, DeviceName: d.Name, Severity: severity, Resource: resource, Message: msg, Value: m.Value, Unit: m.Unit, CollectedAt: m.CollectedAt})
 		}
 	}
 	return out

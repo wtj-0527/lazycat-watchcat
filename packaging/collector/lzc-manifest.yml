@@ -1,8 +1,0 @@
-application:
-  subdomain: maoyan-collector
-  background_task: true
-  multi_instance: false
-  environment:
-    - MAOYAN_COLLECTOR_DATA_DIR=/lzcapp/var/data
-  routes:
-    - /=exec://8090,/lzcapp/pkg/content/maoyan-collector

@@ -82,6 +82,12 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 		Value:       32.5,
 		Unit:        "%",
 		CollectedAt: time.Now().UTC(),
+	}, {
+		Name:        "filesystem.root.usage",
+		Value:       96,
+		Unit:        "%",
+		Labels:      map[string]string{"mount": "/"},
+		CollectedAt: time.Now().UTC(),
 	}}})
 	block, _ := pem.Decode([]byte(paired.CertificatePEM))
 	if block == nil {
@@ -112,6 +118,41 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 	overviewResponse.Body.Close()
 	if overview.Stats["devices"] != 1 || len(overview.Devices) != 1 {
 		t.Fatalf("overview=%+v", overview)
+	}
+	alertResponse, err := http.Get(ts.URL + "/api/v1/alerts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var alertList struct {
+		Items []store.Alert `json:"items"`
+	}
+	if err := json.NewDecoder(alertResponse.Body).Decode(&alertList); err != nil {
+		t.Fatal(err)
+	}
+	alertResponse.Body.Close()
+	if len(alertList.Items) != 1 || alertList.Items[0].Status != "firing" || alertList.Items[0].Severity != "critical" {
+		t.Fatalf("alerts=%+v", alertList.Items)
+	}
+	ackRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/alerts/"+alertList.Items[0].Fingerprint+"/acknowledge", nil)
+	ackResponse, err := http.DefaultClient.Do(ackRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ackResponse.Body.Close()
+	if ackResponse.StatusCode != http.StatusOK {
+		t.Fatalf("ack status=%d", ackResponse.StatusCode)
+	}
+	inspectionResponse, err := http.Post(ts.URL+"/api/v1/inspections", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inspection store.Inspection
+	if err := json.NewDecoder(inspectionResponse.Body).Decode(&inspection); err != nil {
+		t.Fatal(err)
+	}
+	inspectionResponse.Body.Close()
+	if inspectionResponse.StatusCode != http.StatusCreated || inspection.Status != "completed" || len(inspection.EvidenceSHA256) != 64 {
+		t.Fatalf("inspection=%+v status=%d", inspection, inspectionResponse.StatusCode)
 	}
 
 	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/certificate/rotate", nil)

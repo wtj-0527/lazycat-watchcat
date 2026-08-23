@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/wtj-0527/lazycat-maoyan/internal/api"
+	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
 	"github.com/wtj-0527/lazycat-maoyan/internal/config"
+	"github.com/wtj-0527/lazycat-maoyan/internal/notify"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
@@ -27,6 +31,37 @@ func main() {
 		os.Exit(1)
 	}
 	handlers := api.New(st, ca, cfg.WebDir, cfg.PairingTTL)
+	embedded, err := collector.NewEmbedded(context.Background(), st, logger, handlers.SyncAlerts)
+	if err != nil {
+		logger.Error("start embedded collector", "error", err)
+		os.Exit(1)
+	}
+	go embedded.Run(context.Background())
+	notifier := notify.NewLazyCat(st, logger)
+	go func() {
+		alertTicker := time.NewTicker(30 * time.Second)
+		retentionTicker := time.NewTicker(time.Hour)
+		defer alertTicker.Stop()
+		defer retentionTicker.Stop()
+		_ = handlers.SyncAlerts(context.Background())
+		notifier.ProcessPending(context.Background(), 20)
+		for {
+			select {
+			case <-alertTicker.C:
+				if err := handlers.SyncAlerts(context.Background()); err != nil {
+					logger.Warn("sync alerts", "error", err)
+				}
+				notifier.ProcessPending(context.Background(), 20)
+			case now := <-retentionTicker.C:
+				result, err := st.RunRetention(context.Background(), now)
+				if err != nil {
+					logger.Warn("retention worker", "error", err)
+				} else {
+					logger.Info("retention worker completed", "rollups", result.RollupBuckets, "rawDeleted", result.RawDeleted)
+				}
+			}
+		}
+	}()
 	identity, err := ca.EnsureServerIdentity(cfg.DataDir+"/pki", cfg.CollectorHosts)
 	if err != nil {
 		logger.Error("create collector server identity", "error", err)

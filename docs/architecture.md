@@ -1,7 +1,7 @@
 # 生产架构
 
 ```text
-┌─────────────────────── LazyCat Hub LPK ───────────────────────┐
+┌──────────────────────── 猫眼单一 LPK ─────────────────────────┐
 │ Web UI ── HTTPS API ── Hub Service                            │
 │                         ├─ Device/Pairing/Certificate Service │
 │                         ├─ Metrics Ingest & Query              │
@@ -10,13 +10,17 @@
 │                         └─ Retention/Backup/Audit              │
 │                                  │                             │
 │                         SQLite metadata + time-series store    │
+│                                                               │
+│ Embedded Collector ── 本机只读指标 ───────────────────────────│
 └──────────────────────────────────┬─────────────────────────────┘
                                    │ mTLS / private network
                 ┌──────────────────┼──────────────────┐
                 ▼                  ▼                  ▼
-        Collector LPK       Collector LPK       Collector LPK
+        远端 Collector      远端 Collector      远端 Collector
         local buffer        local buffer        local buffer
 ```
+
+默认交付和 nasw 安装只包含一个“猫眼”LPK。本机 Collector 与 Hub 同进程生命周期启动并自动注册；远端 Collector 协议仅作为未来多设备扩展接口，不再作为当前独立 LPK 交付。
 
 ## 安全边界
 
