@@ -240,9 +240,17 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	}
 	path := filepath.Join(s.webDir, filepath.Clean(r.URL.Path))
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		http.ServeFile(w, r, path)
 		return
 	}
+	// The SPA shell references content-hashed assets. Never let the gateway or
+	// browser pin an old index across an LPK upgrade.
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	http.ServeFile(w, r, filepath.Join(s.webDir, "index.html"))
 }
 func decodeJSON(r *http.Request, v any) error {
