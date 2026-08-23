@@ -1,5 +1,8 @@
 application:
   subdomain: maoyan
-  multi_instance: true
+  multi_instance: false
+  environment:
+    - MAOYAN_DATA_DIR=/lzcapp/var/data
+    - MAOYAN_WEB_DIR=/lzcapp/pkg/content/web
   routes:
     - /=exec://8080,/lzcapp/pkg/content/maoyan
