@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+dist/
+*.lpk
+*.lpk.sha256
+.env
+.env.*
+!.env.example
