@@ -23,6 +23,41 @@ export function metricValue(device: Device, name: string, digits = 1): string {
   return point ? `${formatNumber(point.value, digits)}${point.unit || ''}` : '—'
 }
 
+export function metricValueAny(device: Device, names: string[], digits = 1): string {
+  for (const name of names) {
+    const value = metricValue(device, name, digits)
+    if (value !== '—') return value
+  }
+  return '未知'
+}
+
+export function deviceState(device: Device): string {
+  if (device.status === 'revoked') return 'revoked'
+  if (!device.online) return 'offline'
+  if (device.stale) return 'stale'
+  return device.health || 'unknown'
+}
+
+export function statusRank(status: string): number {
+  return ({ critical: 0, offline: 1, warning: 2, stale: 3, unknown: 4, healthy: 5 } as Record<string, number>)[status] ?? 4
+}
+
+export function percent(part: number, total: number): string {
+  return total > 0 ? `${formatNumber(part / total * 100)}%` : '未知'
+}
+
+export function dateTime(value?: string): string {
+  if (!value) return '未知'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString()
+}
+
+export function metricLabel(point?: Metric): string {
+  if (!point) return '未知'
+  const labels = point.labels || {}
+  return labels.device || labels.mount || labels.sensor || labels.app || '系统资源'
+}
+
 export function bytes(value: number): string {
   if (value < 1024) return `${value} B`
   if (value < 1024 ** 2) return `${formatNumber(value / 1024)} KiB`

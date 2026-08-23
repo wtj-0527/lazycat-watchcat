@@ -34,9 +34,16 @@
 - [tokens.json](tokens.json)：机器可读的颜色、字体、间距、圆角和布局 Token
 - [assets/](assets/)：批准使用的 Logo 资源
 
-## 实现边界
+## 实现状态
 
-本次交付只新增文档和 Logo 资产，不修改前端、后端、构建、LPK 配置或根目录 `icon.png`。
+设计交接最初只包含文档和 Logo 资产，未修改运行前端；这也是 1.7.0 与 Penpot
+不一致的根因。自 1.8.0 起，运行中的 Vue 前端已按本目录和 Penpot Board 重构：
+
+- App Shell、Logo、导航、状态组件和设计 Token 已落入生产代码。
+- Overview、Devices、Device Detail、Applications、Storage、Alerts、
+  Inspections 和 Settings 已按 Fleet-first 信息层级重构。
+- 所有数值继续来自真实 API；契约缺口明确显示 `Unknown` 或 `Contract gap`。
+- 不使用 Penpot 示例数值补齐生产页面。
 
 当前不作为 V1 设计完成项：
 

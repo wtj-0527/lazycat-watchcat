@@ -8,11 +8,12 @@ import StoragePage from '@/pages/StoragePage.vue'
 import AlertsPage from '@/pages/AlertsPage.vue'
 import InspectionsPage from '@/pages/InspectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
+import AppIcon from '@/components/AppIcon.vue'
 
 type Page = 'overview' | 'devices' | 'apps' | 'storage' | 'alerts' | 'inspections' | 'settings'
-const navs: Array<[Page, string, string]> = [
-  ['overview', '⌂', '总览'], ['devices', '▦', '设备'], ['apps', '◇', '应用'],
-  ['storage', '▤', '存储健康'], ['alerts', '!', '告警'], ['inspections', '✓', '巡检'], ['settings', '⚙', '设置'],
+const navs: Array<[Page, string]> = [
+  ['overview', '总览'], ['devices', '设备'], ['apps', '应用'],
+  ['storage', '存储健康'], ['alerts', '告警'], ['inspections', '巡检'], ['settings', '设置'],
 ]
 const titles: Record<Page, [string, string]> = {
   overview: ['Fleet Overview', '全部设备 · 实时健康与风险'],
@@ -67,18 +68,32 @@ onBeforeUnmount(() => {
 
 <template>
   <aside class="sidebar">
-    <div class="brand"><div class="logo">🐱</div><div><b>猫眼</b><small>Fleet Monitoring</small><span id="app-version">v{{ version }}</span></div></div>
-    <nav>
-      <button v-for="[key, icon, label] in navs" :key="key" class="nav-item" :class="{ active: page === key }" @click="navigate(key)">
-        <span>{{ icon }}</span>{{ label }}
+    <div class="brand">
+      <img class="brand-logo" src="/cat-eye-logo-64.png" alt="猫眼 Logo">
+      <div><b>猫眼</b><small>Fleet Monitoring</small></div>
+    </div>
+    <nav aria-label="主导航">
+      <button v-for="[key, label] in navs" :key="key" class="nav-item" :class="{ active: page === key }" :aria-current="page === key ? 'page' : undefined" @click="navigate(key)">
+        <AppIcon :name="key" /> <span>{{ label }}</span>
       </button>
     </nav>
-    <div class="hub"><i /><div><b>Monitor Hub</b><small>单 LPK · Vue 3</small></div></div>
+    <div class="sidebar-footer">
+      <div class="hub">
+        <i />
+        <div><b>Monitor Hub</b><small>在线 · 单一 LPK</small></div>
+      </div>
+      <span id="app-version">版本 v{{ version }}</span>
+    </div>
   </aside>
-  <main>
-    <header>
-      <div><h1>{{ heading[0] }}</h1><p>{{ heading[1] }}</p></div>
-      <div class="actions"><button class="ghost">最近 24 小时⌄</button><button @click="navigate('inspections')">开始巡检</button></div>
+  <main class="app-main">
+    <header class="topbar">
+      <div class="topbar-title"><h1>{{ heading[0] }}</h1><p>{{ heading[1] }}</p></div>
+      <div class="actions">
+        <button class="time-range" disabled title="当前 API 尚未支持全局时间范围查询">
+          最近 24 小时 <AppIcon name="chevron-down" :size="15" />
+        </button>
+        <button class="primary-button" @click="navigate('inspections')">开始巡检</button>
+      </div>
     </header>
     <section id="content">
       <component :is="pageComponent" :key="page" @toast="toast" />

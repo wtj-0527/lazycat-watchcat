@@ -18,3 +18,22 @@ describe('format helpers', () => {
     vi.useRealTimers()
   })
 })
+
+import type { Device } from './types'
+import { deviceState, metricValueAny } from './utils'
+
+const baseDevice: Device = {
+  id: 'd1', name: 'device', hostname: 'device', osVersion: '', collectorVersion: '', status: 'active',
+  lastSeenAt: new Date().toISOString(), online: true, stale: false, health: 'healthy', latest: {},
+}
+
+describe('production state helpers', () => {
+  it('does not present offline or stale devices as healthy', () => {
+    expect(deviceState({ ...baseDevice, online: false })).toBe('offline')
+    expect(deviceState({ ...baseDevice, stale: true })).toBe('stale')
+  })
+
+  it('uses an explicit unknown value when no metric exists', () => {
+    expect(metricValueAny(baseDevice, ['missing.metric'])).toBe('未知')
+  })
+})

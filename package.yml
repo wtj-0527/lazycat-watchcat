@@ -1,5 +1,5 @@
 package: community.lazycat.app.maoyan
-version: 1.7.0
+version: 1.8.0
 name: 猫眼
 description: LazyCat Fleet Monitoring，集中查看设备、应用、存储与告警健康状态
 min_os_version: 1.5.2

@@ -1,4 +1,4 @@
-export type Health = 'healthy' | 'warning' | 'critical' | 'offline' | 'revoked'
+export type Health = 'healthy' | 'warning' | 'critical' | 'unknown' | 'offline' | 'revoked'
 
 export interface Metric {
   deviceId?: string
@@ -26,6 +26,7 @@ export interface Device {
 
 export interface Alert {
   fingerprint: string
+  deviceId?: string
   deviceName: string
   severity: Health
   resource: string
@@ -55,6 +56,17 @@ export interface Inspection {
   warningCount: number
   criticalCount: number
   evidenceSha256: string
+  completedAt?: string
+  error?: string
+  report?: {
+    schemaVersion?: number
+    generatedAt?: string
+    source?: string
+    latestMetricAt?: string
+    checks?: Record<string, number>
+    devices?: Device[]
+    alerts?: Alert[]
+  }
   changeSummary?: {
     warningDelta?: number
     criticalDelta?: number
@@ -94,4 +106,40 @@ export interface Capability {
   status: string
   detail: string
   checkedAt: string
+}
+
+export interface ApplicationDevice {
+  deviceId: string
+  deviceName: string
+  deployId: string
+  healthy: boolean
+  status: string
+  installStatus: string
+  version: string
+  domain: string
+  builtin: boolean
+  collectedAt: string
+}
+
+export interface ApplicationItem {
+  id: string
+  title: string
+  instances: number
+  healthy: number
+  unhealthy: number
+  paused: number
+  versions: Record<string, number>
+  statusCounts: Record<string, number>
+  devices: ApplicationDevice[]
+  resources: {
+    containers: number
+    cpuPercent: number
+    memoryUsage: number
+    memoryLimit: number
+    networkReceive: number
+    networkTransmit: number
+    blockRead: number
+    blockWrite: number
+    updatedAt?: string
+  }
 }

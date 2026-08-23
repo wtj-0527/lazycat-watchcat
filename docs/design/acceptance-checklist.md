@@ -2,19 +2,19 @@
 
 ## Scope and assets
 
-- [ ] 改动仅位于 `docs/design/`；未修改运行代码、LPK 配置、版本号或根目录 `icon.png`。
+- [x] 运行前端已按设计交接实现；生产数值仍来自真实 API。
 - [ ] `assets/cat-eye-logo.png` 是批准的 512 × 512 原始 PNG。
-- [ ] `assets/cat-eye-logo-64.png` 是 64 × 64 UI PNG。
-- [ ] Logo 以正方形比例显示，不拉伸、不裁剪主体、不重新着色、不叠加 emoji。
-- [ ] Penpot 和实现中的品牌文案均为“猫眼 / Fleet Monitoring”。
+- [x] `assets/cat-eye-logo-64.png` 是 64 × 64 UI PNG。
+- [x] Logo 以正方形比例显示，不拉伸、不裁剪主体、不重新着色、不叠加 emoji。
+- [x] Penpot 和实现中的品牌文案均为“猫眼 / Fleet Monitoring”。
 
 ## App shell
 
-- [ ] Desktop Sidebar 宽 224 px，Topbar 高 72 px。
+- [x] Desktop Sidebar 宽 224 px，Topbar 高 72 px。
 - [ ] Sidebar、Topbar 和内容区的层级与 Board 一致。
 - [ ] 当前导航项同时具有背景、图标和文字状态。
-- [ ] 主内容在 1440 × 1024 基线下无水平溢出。
-- [ ] Focus indicator 清晰可见，键盘可以访问全部按钮和可点击行。
+- [x] 主内容不产生页面级水平溢出；宽表只在卡片内部滚动。
+- [x] Focus indicator 清晰可见，键盘可以访问按钮和可点击设备／报告行。
 
 ## Data states
 
@@ -94,4 +94,4 @@ git diff --check
 git status --short
 ```
 
-最终 `git status --short` 应只列出 `docs/design/`。
+实现交付会同时修改 `frontend/`、构建后的 `web/`、版本文件和本目录文档。

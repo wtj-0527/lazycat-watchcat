@@ -14,7 +14,7 @@
 | `07 · Storage Health / Fleet` | Fleet 存储健康 | `#storage` | 文件系统、温度和 NVMe Media Errors |
 | `08 · Alerts / Triage` | 告警处置 | `#alerts` | 活动告警、确认和静默 |
 | `09 · Inspections / Report` | 巡检与证据 | `#inspections` | 手动巡检、历史和 SHA-256 摘要 |
-| `10 · Settings / Device Onboarding` | 设备接入目标态 | `#settings` | 当前页面主要是备份、稳定性、能力和生产参数；Onboarding 仍是设计目标态 |
+| `10 · Settings / Device Onboarding` | 设备接入与生产运维 | `#settings` | 设备接入、能力、通知、维护、保留和审计使用 Tab；一次性配对码调用真实 API |
 
 ## 全局框架
 
