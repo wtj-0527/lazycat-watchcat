@@ -146,6 +146,20 @@ func (s *Store) migrate(ctx context.Context) error {
 			checked_at TEXT NOT NULL,
 			PRIMARY KEY(device_id,capability)
 		);`,
+		`CREATE TABLE IF NOT EXISTS application_runtime_state (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			deploy_id TEXT NOT NULL,
+			app_id TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			version TEXT NOT NULL DEFAULT '',
+			install_status TEXT NOT NULL,
+			instance_status TEXT NOT NULL,
+			domain TEXT NOT NULL DEFAULT '',
+			builtin INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,deploy_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_application_runtime_app ON application_runtime_state(app_id,instance_status);`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, datetime('now'));`,
 	}
@@ -169,6 +183,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("migration inspection change summary: %w", err)
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, datetime('now'))`)
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, datetime('now'))`)
 	return nil
 }
 

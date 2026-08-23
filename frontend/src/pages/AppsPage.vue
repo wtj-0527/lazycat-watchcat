@@ -6,26 +6,39 @@ import { formatNumber } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import StatCard from '@/components/StatCard.vue'
 
-interface AppItem { id: string; instances: number; healthy: number; unhealthy: number; versions: Record<string, number> }
-const { data, loading, error } = usePolling(() => api<{ items: AppItem[] }>('/api/v1/applications'))
+interface AppItem {
+  id: string
+  title: string
+  instances: number
+  healthy: number
+  unhealthy: number
+  paused: number
+  versions: Record<string, number>
+  statusCounts: Record<string, number>
+}
+const { data, loading, error } = usePolling(() => api<{ items: AppItem[]; source: string; stale: boolean }>('/api/v1/applications'))
 const instances = computed(() => data.value?.items.reduce((sum, item) => sum + item.instances, 0) ?? 0)
 const healthy = computed(() => data.value?.items.reduce((sum, item) => sum + item.healthy, 0) ?? 0)
+const paused = computed(() => data.value?.items.reduce((sum, item) => sum + item.paused, 0) ?? 0)
+const errors = computed(() => data.value?.items.reduce((sum, item) => sum + item.unhealthy, 0) ?? 0)
+const statusLabel = (status: string) => ({ running: '运行中', paused: '已暂停', starting: '启动中', stopping: '停止中', error: '异常' } as Record<string, string>)[status] || status
 </script>
 
 <template>
-  <PageState :loading="loading" :error="error" :empty="data?.items.length === 0" empty-title="尚无应用数据" empty-text="Collector 尚未获得 LazyCat Runtime 应用状态，或设备还未上报。">
+  <PageState :loading="loading" :error="error" :empty="data?.items.length === 0" empty-title="尚无应用数据" empty-text="LazyCat Package Manager 尚未返回当前用户的应用状态。">
     <div class="stats four">
-      <StatCard label="LPK 应用" :value="data?.items.length ?? 0" hint="已发现" />
-      <StatCard label="设备实例" :value="instances" hint="实时采集" />
-      <StatCard label="运行正常" :value="healthy" :hint="instances ? `${formatNumber(healthy / instances * 100)}%` : '无数据'" tone="green" />
-      <StatCard label="异常" :value="instances - healthy" hint="需要关注" :tone="instances - healthy ? 'amber' : 'green'" />
+      <StatCard label="LPK 应用" :value="data?.items.length ?? 0" hint="已安装" />
+      <StatCard label="运行中" :value="healthy" :hint="instances ? `${formatNumber(healthy / instances * 100)}%` : '无数据'" tone="green" />
+      <StatCard label="已暂停" :value="paused" hint="非异常状态" tone="amber" />
+      <StatCard label="异常" :value="errors" hint="需要关注" :tone="errors ? 'red' : 'green'" />
     </div>
     <div class="card">
-      <h2>应用矩阵</h2>
-      <table><thead><tr><th>应用</th><th>实例</th><th>正常</th><th>异常</th><th>版本</th></tr></thead>
+      <div class="section-title"><div><h2>应用矩阵</h2><span class="muted">来源：LazyCat Package Manager API<span v-if="data?.stale"> · 当前显示最近一次成功快照</span></span></div></div>
+      <table><thead><tr><th>应用</th><th>状态</th><th>实例</th><th>版本</th></tr></thead>
         <tbody><tr v-for="item in data?.items" :key="item.id">
-          <td><b>{{ item.id }}</b></td><td>{{ item.instances }}</td><td class="green">{{ item.healthy }}</td>
-          <td :class="{ red: item.unhealthy }">{{ item.unhealthy }}</td>
+          <td class="device"><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></td>
+          <td><span v-for="([status, count]) in Object.entries(item.statusCounts)" :key="status" class="pill runtime-status" :class="status">{{ statusLabel(status) }} × {{ count }}</span></td>
+          <td>{{ item.instances }}</td>
           <td>{{ Object.entries(item.versions).map(([version, count]) => `${version || '未知'} × ${count}`).join(' · ') }}</td>
         </tr></tbody>
       </table>

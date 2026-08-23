@@ -92,52 +92,99 @@ func (s *Server) metricHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"deviceId": id, "name": name, "items": samples})
 }
 func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
-	devices, metrics, err := s.snapshot(r)
+	runtimeError := ""
+	if s.runtimeApps != nil && s.localDeviceID != "" {
+		uid := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
+		items, err := s.runtimeApps.Query(r.Context(), uid)
+		if err != nil {
+			runtimeError = err.Error()
+			_ = s.store.SetCapabilityStatuses(r.Context(), s.localDeviceID, []store.CapabilityStatus{{
+				DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "degraded",
+				Detail: "LazyCat Package Manager API: " + err.Error(), CheckedAt: time.Now().UTC(),
+			}})
+		} else {
+			stored := make([]store.RuntimeApplication, 0, len(items))
+			for _, item := range items {
+				stored = append(stored, store.RuntimeApplication{
+					DeviceID: s.localDeviceID, DeployID: item.DeployID, AppID: item.AppID,
+					Title: item.Title, Version: item.Version, InstallStatus: item.InstallStatus,
+					InstanceStatus: item.InstanceStatus, Domain: item.Domain, Builtin: item.Builtin,
+				})
+			}
+			if err := s.store.ReplaceRuntimeApplications(r.Context(), s.localDeviceID, stored); err != nil {
+				runtimeError = err.Error()
+			} else {
+				_ = s.store.SetCapabilityStatuses(r.Context(), s.localDeviceID, []store.CapabilityStatus{{
+					DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "available",
+					Detail: fmt.Sprintf("官方 Package Manager API，已同步 %d 个应用实例", len(stored)), CheckedAt: time.Now().UTC(),
+				}})
+			}
+		}
+	}
+	states, err := s.store.ListRuntimeApplications(r.Context())
 	if err != nil {
 		problem(w, 500, "internal_error", "无法读取应用状态")
 		return
 	}
+	if len(states) == 0 && runtimeError != "" {
+		problem(w, http.StatusServiceUnavailable, "runtime_unavailable", "无法读取 LazyCat Package Manager："+runtimeError)
+		return
+	}
+	devices, err := s.store.ListDevices(r.Context())
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取设备状态")
+		return
+	}
 	names := map[string]string{}
-	for _, d := range devices {
-		names[d.ID] = d.Name
+	for _, device := range devices {
+		names[device.ID] = device.Name
 	}
 	type app struct {
-		ID        string           `json:"id"`
-		Versions  map[string]int   `json:"versions"`
-		Instances int              `json:"instances"`
-		Healthy   int              `json:"healthy"`
-		Unhealthy int              `json:"unhealthy"`
-		Devices   []map[string]any `json:"devices"`
+		ID           string           `json:"id"`
+		Title        string           `json:"title"`
+		Versions     map[string]int   `json:"versions"`
+		StatusCounts map[string]int   `json:"statusCounts"`
+		Instances    int              `json:"instances"`
+		Healthy      int              `json:"healthy"`
+		Unhealthy    int              `json:"unhealthy"`
+		Paused       int              `json:"paused"`
+		Devices      []map[string]any `json:"devices"`
 	}
 	apps := map[string]*app{}
-	for _, m := range metrics {
-		if m.Name != "lpk.application.healthy" {
-			continue
-		}
-		id := m.Labels["app"]
-		if id == "" {
-			continue
-		}
-		a := apps[id]
+	var updatedAt time.Time
+	for _, state := range states {
+		a := apps[state.AppID]
 		if a == nil {
-			a = &app{ID: id, Versions: map[string]int{}}
-			apps[id] = a
+			a = &app{ID: state.AppID, Title: state.Title, Versions: map[string]int{}, StatusCounts: map[string]int{}}
+			apps[state.AppID] = a
 		}
 		a.Instances++
-		if m.Value >= 1 {
+		a.Versions[state.Version]++
+		a.StatusCounts[state.InstanceStatus]++
+		switch state.InstanceStatus {
+		case "running":
 			a.Healthy++
-		} else {
+		case "paused":
+			a.Paused++
+		case "error":
 			a.Unhealthy++
 		}
-		a.Versions[m.Labels["version"]]++
-		a.Devices = append(a.Devices, map[string]any{"deviceId": m.DeviceID, "deviceName": names[m.DeviceID], "healthy": m.Value >= 1, "status": m.Labels["status"], "version": m.Labels["version"], "collectedAt": m.CollectedAt})
+		a.Devices = append(a.Devices, map[string]any{
+			"deviceId": state.DeviceID, "deviceName": names[state.DeviceID], "deployId": state.DeployID,
+			"healthy": state.InstanceStatus == "running", "status": state.InstanceStatus,
+			"installStatus": state.InstallStatus, "version": state.Version, "domain": state.Domain,
+			"builtin": state.Builtin, "collectedAt": state.UpdatedAt,
+		})
+		if state.UpdatedAt.After(updatedAt) {
+			updatedAt = state.UpdatedAt
+		}
 	}
 	out := make([]*app, 0, len(apps))
 	for _, a := range apps {
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	writeJSON(w, 200, map[string]any{"items": out, "count": len(out), "updatedAt": latestTimestamp(metrics)})
+	writeJSON(w, 200, map[string]any{"items": out, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
 }
 func (s *Server) storageView(w http.ResponseWriter, r *http.Request) {
 	devices, metrics, err := s.snapshot(r)

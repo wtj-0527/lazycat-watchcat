@@ -22,6 +22,8 @@ type Embedded struct {
 	syncAlerts func(context.Context) error
 }
 
+func (e *Embedded) DeviceID() string { return e.deviceID }
+
 func NewEmbedded(ctx context.Context, st *store.Store, logger *slog.Logger, syncAlerts func(context.Context) error) (*Embedded, error) {
 	hostname := envValue("LAZYCAT_BOX_NAME", "")
 	if hostname == "" {
@@ -101,8 +103,10 @@ func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points
 	items = append(items,
 		capabilityFromConfig("smart", len(e.advanced.SmartDevices) > 0, has("disk."), warnings, "宿主机块设备未映射给应用；当前不生成 SMART 健康结论", now),
 		capabilityFromConfig("btrfs", len(e.advanced.BtrfsMounts) > 0, has("btrfs."), warnings, "宿主机 Btrfs 挂载未映射给应用；当前不生成 Btrfs 健康结论", now),
-		capabilityFromConfig("lpk.runtime", e.advanced.LPKStatusFile != "", has("lpk."), warnings, "LazyCat Runtime 未提供只读状态源；当前不生成应用健康结论", now),
 	)
+	if e.advanced.LPKStatusFile != "" {
+		items = append(items, capabilityFromConfig("lpk.runtime.file", true, has("lpk."), warnings, "状态文件不可用", now))
+	}
 	for i := range items {
 		items[i].DeviceID = e.deviceID
 	}

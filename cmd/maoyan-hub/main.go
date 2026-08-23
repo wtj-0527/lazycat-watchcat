@@ -17,6 +17,7 @@ import (
 	"github.com/wtj-0527/lazycat-maoyan/internal/config"
 	"github.com/wtj-0527/lazycat-maoyan/internal/notify"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
+	"github.com/wtj-0527/lazycat-maoyan/internal/runtimeapps"
 	"github.com/wtj-0527/lazycat-maoyan/internal/scheduler"
 	"github.com/wtj-0527/lazycat-maoyan/internal/stability"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
@@ -62,6 +63,15 @@ func main() {
 	if err != nil {
 		logger.Error("start embedded collector", "error", err)
 		os.Exit(1)
+	}
+	runtimeCtx, runtimeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	runtimeSource, runtimeErr := runtimeapps.New(runtimeCtx)
+	runtimeCancel()
+	if runtimeErr != nil {
+		logger.Warn("connect LazyCat package manager", "error", runtimeErr)
+	} else {
+		defer runtimeSource.Close()
+		handlers.ConfigureRuntimeApps(runtimeSource, embedded.DeviceID())
 	}
 	go embedded.Run(context.Background())
 	notifier := notify.NewLazyCat(st, logger)

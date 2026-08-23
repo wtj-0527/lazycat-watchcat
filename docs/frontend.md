@@ -22,3 +22,7 @@ npm --prefix frontend run build
 
 LPK 构建脚本会先执行确定性前端安装与生产构建，再编译 Go Hub。SPA 入口不缓存，
 内容哈希资源使用长期不可变缓存，避免 LPK 升级后浏览器继续运行旧版前端。
+
+“应用”页面由后端使用官方 LzcSDK `PackageManager.QueryApplication` 查询。后端只转发
+LazyCat 网关提供的当前用户身份，不接受前端传入任意用户 ID；成功结果写入
+`application_runtime_state`，Package Manager 短暂不可用时显示最近一次成功快照。

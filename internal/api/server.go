@@ -15,19 +15,22 @@ import (
 	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-maoyan/internal/runtimeapps"
 	"github.com/wtj-0527/lazycat-maoyan/internal/stability"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
 
 type Server struct {
-	store      *store.Store
-	ca         *pki.Authority
-	webDir     string
-	pairingTTL time.Duration
-	mux        *http.ServeMux
-	backup     *backup.Manager
-	stability  *stability.Monitor
-	restart    func()
+	store         *store.Store
+	ca            *pki.Authority
+	webDir        string
+	pairingTTL    time.Duration
+	mux           *http.ServeMux
+	backup        *backup.Manager
+	stability     *stability.Monitor
+	restart       func()
+	runtimeApps   *runtimeapps.Source
+	localDeviceID string
 }
 
 func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
@@ -37,6 +40,9 @@ func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Dura
 }
 func (s *Server) ConfigureOperations(manager *backup.Manager, monitor *stability.Monitor, restart func()) {
 	s.backup, s.stability, s.restart = manager, monitor, restart
+}
+func (s *Server) ConfigureRuntimeApps(source *runtimeapps.Source, localDeviceID string) {
+	s.runtimeApps, s.localDeviceID = source, localDeviceID
 }
 func (s *Server) Handler() http.Handler { return securityHeaders(s.mux) }
 func (s *Server) CollectorHandler() http.Handler {
