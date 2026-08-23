@@ -98,6 +98,21 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 	if mtlsRecorder.Code != http.StatusAccepted {
 		t.Fatalf("mTLS metric status=%d body=%s", mtlsRecorder.Code, mtlsRecorder.Body.String())
 	}
+	overviewResponse, err := http.Get(ts.URL + "/api/v1/overview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overview struct {
+		Stats   map[string]int `json:"stats"`
+		Devices []deviceView   `json:"devices"`
+	}
+	if err := json.NewDecoder(overviewResponse.Body).Decode(&overview); err != nil {
+		t.Fatal(err)
+	}
+	overviewResponse.Body.Close()
+	if overview.Stats["devices"] != 1 || len(overview.Devices) != 1 {
+		t.Fatalf("overview=%+v", overview)
+	}
 
 	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/certificate/rotate", nil)
 	rotateRequest.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert}}
