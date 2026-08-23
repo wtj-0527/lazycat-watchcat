@@ -11,8 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wtj-0527/lazycat-maoyan/internal/backup"
+	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-maoyan/internal/stability"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
 
@@ -22,12 +25,18 @@ type Server struct {
 	webDir     string
 	pairingTTL time.Duration
 	mux        *http.ServeMux
+	backup     *backup.Manager
+	stability  *stability.Monitor
+	restart    func()
 }
 
 func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
 	s := &Server{store: st, ca: ca, webDir: webDir, pairingTTL: pairingTTL, mux: http.NewServeMux()}
 	s.routes()
 	return s
+}
+func (s *Server) ConfigureOperations(manager *backup.Manager, monitor *stability.Monitor, restart func()) {
+	s.backup, s.stability, s.restart = manager, monitor, restart
 }
 func (s *Server) Handler() http.Handler { return securityHeaders(s.mux) }
 func (s *Server) CollectorHandler() http.Handler {
@@ -57,11 +66,18 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/inspections/live", s.inspectionView)
 	s.mux.HandleFunc("GET /api/v1/settings", s.settingsView)
 	s.mux.HandleFunc("GET /api/v1/operations", s.operationsView)
+	s.mux.HandleFunc("GET /api/v1/version", s.versionView)
+	s.mux.HandleFunc("GET /api/v1/backups", s.listBackups)
+	s.mux.HandleFunc("POST /api/v1/backups", s.createBackup)
+	s.mux.HandleFunc("POST /api/v1/backups/{name}/restore", s.restoreBackup)
+	s.mux.HandleFunc("GET /api/v1/database/status", s.databaseStatus)
+	s.mux.HandleFunc("GET /api/v1/stability", s.stabilityStatus)
+	s.mux.HandleFunc("POST /api/v1/stability/reset", s.resetStability)
 	s.mux.HandleFunc("POST /api/v1/devices/{id}/revoke", s.revokeDevice)
 	s.mux.HandleFunc("/", s.static)
 }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "protocolVersion": protocol.Version, "time": time.Now().UTC()})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "appVersion": buildinfo.Version, "protocolVersion": protocol.Version, "time": time.Now().UTC()})
 }
 func (s *Server) createPairingCode(w http.ResponseWriter, r *http.Request) {
 	code, expires, err := s.store.CreatePairingCode(r.Context(), s.pairingTTL)

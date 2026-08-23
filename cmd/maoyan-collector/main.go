@@ -9,10 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
 	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
 )
-
-const version = "1.3.1"
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -23,7 +22,7 @@ func main() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"` + status.Load().(string) + `","version":"` + version + `"}`))
+			_, _ = w.Write([]byte(`{"status":"` + status.Load().(string) + `","version":"` + buildinfo.Version + `"}`))
 		})
 		if err := http.ListenAndServe(healthAddr, mux); err != nil {
 			logger.Error("health server stopped", "error", err)
@@ -48,7 +47,7 @@ func main() {
 			select {}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		creds, err = collector.Pair(ctx, http.DefaultClient, hub, code, name, hostname, version)
+		creds, err = collector.Pair(ctx, http.DefaultClient, hub, code, name, hostname, buildinfo.Version)
 		cancel()
 		if err != nil {
 			logger.Error("pair collector", "error", err)

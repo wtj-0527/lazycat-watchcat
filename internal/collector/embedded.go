@@ -8,11 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
-
-const EmbeddedVersion = "1.3.1"
 
 type Embedded struct {
 	store      *store.Store
@@ -29,7 +28,7 @@ func NewEmbedded(ctx context.Context, st *store.Store, logger *slog.Logger, sync
 		hostname, _ = os.Hostname()
 	}
 	name := envValue("MAOYAN_LOCAL_DEVICE_NAME", hostname)
-	deviceID, err := st.EnsureLocalDevice(ctx, name, hostname, runtime.GOOS+"/"+runtime.GOARCH, EmbeddedVersion, []string{
+	deviceID, err := st.EnsureLocalDevice(ctx, name, hostname, runtime.GOOS+"/"+runtime.GOARCH, buildinfo.Version, []string{
 		"collector.embedded", "host.metrics", "filesystem.metrics", "advanced.whitelist",
 	})
 	if err != nil {

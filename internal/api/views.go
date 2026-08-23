@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
@@ -278,7 +279,7 @@ func (s *Server) inspectionDetail(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) settingsView(w http.ResponseWriter, r *http.Request) {
 	stats, _ := s.store.RetentionStats(r.Context())
-	writeJSON(w, 200, map[string]any{"singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": 30, "rollupRetentionDays": 365, "auditRetentionDays": 180, "inspectionRetentionDays": 365, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
+	writeJSON(w, 200, map[string]any{"appVersion": buildinfo.Version, "singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": 30, "rollupRetentionDays": 365, "auditRetentionDays": 180, "inspectionRetentionDays": 365, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
 }
 func (s *Server) operationsView(w http.ResponseWriter, r *http.Request) {
 	capabilities, err := s.store.ListCapabilityStatuses(r.Context())
