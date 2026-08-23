@@ -36,6 +36,18 @@ type alertView struct {
 	CollectedAt time.Time `json:"collectedAt"`
 }
 
+type applicationResourceView struct {
+	Containers  int       `json:"containers"`
+	CPUPercent  float64   `json:"cpuPercent"`
+	MemoryUsage float64   `json:"memoryUsage"`
+	MemoryLimit float64   `json:"memoryLimit"`
+	NetworkRX   float64   `json:"networkReceive"`
+	NetworkTX   float64   `json:"networkTransmit"`
+	BlockRead   float64   `json:"blockRead"`
+	BlockWrite  float64   `json:"blockWrite"`
+	UpdatedAt   time.Time `json:"updatedAt,omitempty"`
+}
+
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	devices, metrics, err := s.snapshot(r)
 	if err != nil {
@@ -140,22 +152,29 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		names[device.ID] = device.Name
 	}
 	type app struct {
-		ID           string           `json:"id"`
-		Title        string           `json:"title"`
-		Versions     map[string]int   `json:"versions"`
-		StatusCounts map[string]int   `json:"statusCounts"`
-		Instances    int              `json:"instances"`
-		Healthy      int              `json:"healthy"`
-		Unhealthy    int              `json:"unhealthy"`
-		Paused       int              `json:"paused"`
-		Devices      []map[string]any `json:"devices"`
+		ID           string                  `json:"id"`
+		Title        string                  `json:"title"`
+		Versions     map[string]int          `json:"versions"`
+		StatusCounts map[string]int          `json:"statusCounts"`
+		Instances    int                     `json:"instances"`
+		Healthy      int                     `json:"healthy"`
+		Unhealthy    int                     `json:"unhealthy"`
+		Paused       int                     `json:"paused"`
+		Devices      []map[string]any        `json:"devices"`
+		Resources    applicationResourceView `json:"resources"`
 	}
 	apps := map[string]*app{}
+	resources := map[string]applicationResourceView{}
+	if s.localDeviceID != "" {
+		if metrics, metricErr := s.store.LatestMetricsForDevice(r.Context(), s.localDeviceID); metricErr == nil {
+			resources = aggregateApplicationResources(metrics, time.Now().UTC())
+		}
+	}
 	var updatedAt time.Time
 	for _, state := range states {
 		a := apps[state.AppID]
 		if a == nil {
-			a = &app{ID: state.AppID, Title: state.Title, Versions: map[string]int{}, StatusCounts: map[string]int{}}
+			a = &app{ID: state.AppID, Title: state.Title, Versions: map[string]int{}, StatusCounts: map[string]int{}, Resources: resources[state.AppID]}
 			apps[state.AppID] = a
 		}
 		a.Instances++
@@ -185,6 +204,54 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	writeJSON(w, 200, map[string]any{"items": out, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
+}
+
+func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) map[string]applicationResourceView {
+	out := map[string]applicationResourceView{}
+	containers := map[string]map[string]struct{}{}
+	for _, metric := range metrics {
+		if now.Sub(metric.CollectedAt) > 2*time.Minute {
+			continue
+		}
+		appID := metric.Labels["app"]
+		if appID == "" || !strings.HasPrefix(metric.Name, "container.") {
+			continue
+		}
+		item := out[appID]
+		switch metric.Name {
+		case "container.running":
+			if metric.Value >= 1 {
+				if containers[appID] == nil {
+					containers[appID] = map[string]struct{}{}
+				}
+				containers[appID][metric.Labels["container"]] = struct{}{}
+			}
+		case "container.cpu.usage":
+			item.CPUPercent += metric.Value
+		case "container.memory.usage":
+			item.MemoryUsage += metric.Value
+		case "container.memory.limit":
+			item.MemoryLimit += metric.Value
+		case "container.network.receive.bytes_total":
+			item.NetworkRX += metric.Value
+		case "container.network.transmit.bytes_total":
+			item.NetworkTX += metric.Value
+		case "container.block.read.bytes_total":
+			item.BlockRead += metric.Value
+		case "container.block.write.bytes_total":
+			item.BlockWrite += metric.Value
+		}
+		if metric.CollectedAt.After(item.UpdatedAt) {
+			item.UpdatedAt = metric.CollectedAt
+		}
+		out[appID] = item
+	}
+	for appID, set := range containers {
+		item := out[appID]
+		item.Containers = len(set)
+		out[appID] = item
+	}
+	return out
 }
 func (s *Server) storageView(w http.ResponseWriter, r *http.Request) {
 	devices, metrics, err := s.snapshot(r)
@@ -489,6 +556,9 @@ func deriveDeviceAlerts(d deviceView) []alertView {
 				resource = m.Labels["app"]
 			}
 			if resource == "" {
+				resource = m.Labels["sensor"]
+			}
+			if resource == "" {
 				resource = name
 			}
 			labels, _ := json.Marshal(m.Labels)
@@ -500,6 +570,13 @@ func deriveDeviceAlerts(d deviceView) []alertView {
 }
 func metricAlert(name string, value float64, unit string, labels map[string]string) (string, string) {
 	switch name {
+	case "system.cpu.usage":
+		if value >= 95 {
+			return "critical", fmt.Sprintf("CPU 使用率 %.1f%%", value)
+		}
+		if value >= 85 {
+			return "warning", fmt.Sprintf("CPU 使用率 %.1f%%", value)
+		}
 	case "filesystem.root.usage", "btrfs.usage":
 		if value >= 95 {
 			return "critical", fmt.Sprintf("存储使用率 %.1f%%", value)
@@ -513,6 +590,48 @@ func metricAlert(name string, value float64, unit string, labels map[string]stri
 		}
 		if value >= 90 {
 			return "warning", fmt.Sprintf("内存使用率 %.1f%%", value)
+		}
+	case "system.temperature":
+		sensor := strings.ToLower(labels["sensor"])
+		switch {
+		case strings.HasPrefix(sensor, "coretemp_core_"), strings.HasPrefix(sensor, "nvme_sensor_"):
+			// Per-core and NVMe sub-sensors are intentionally retained as raw
+			// telemetry but are too bursty or vendor-specific for paging.
+			return "", ""
+		case strings.HasPrefix(sensor, "coretemp_package"):
+			if value >= 100 {
+				return "critical", fmt.Sprintf("CPU 封装温度 %.0f°C", value)
+			}
+			return "", ""
+		case strings.HasPrefix(sensor, "nvme_composite"):
+			if value >= 90 {
+				return "critical", fmt.Sprintf("NVMe 综合温度 %.0f°C", value)
+			}
+			if value >= 85 {
+				return "warning", fmt.Sprintf("NVMe 综合温度 %.0f°C", value)
+			}
+			return "", ""
+		case strings.HasPrefix(sensor, "spd5118"):
+			if value >= 85 {
+				return "critical", fmt.Sprintf("内存温度 %.0f°C", value)
+			}
+			if value >= 55 {
+				return "warning", fmt.Sprintf("内存温度 %.0f°C", value)
+			}
+			return "", ""
+		}
+		if value >= 90 {
+			return "critical", fmt.Sprintf("系统温度 %.0f°C", value)
+		}
+		if value >= 80 {
+			return "warning", fmt.Sprintf("系统温度 %.0f°C", value)
+		}
+	case "container.memory.usage_percent":
+		if value >= 95 {
+			return "critical", fmt.Sprintf("容器内存使用率 %.1f%%", value)
+		}
+		if value >= 90 {
+			return "warning", fmt.Sprintf("容器内存使用率 %.1f%%", value)
 		}
 	case "disk.temperature":
 		if value >= 80 {

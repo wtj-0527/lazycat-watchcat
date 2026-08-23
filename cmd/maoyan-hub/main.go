@@ -64,6 +64,7 @@ func main() {
 		logger.Error("start embedded collector", "error", err)
 		os.Exit(1)
 	}
+	defer embedded.Close()
 	runtimeCtx, runtimeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	runtimeSource, runtimeErr := runtimeapps.New(runtimeCtx)
 	runtimeCancel()

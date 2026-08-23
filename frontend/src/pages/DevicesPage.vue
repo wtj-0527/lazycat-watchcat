@@ -41,7 +41,7 @@ function metrics(device: Device): Metric[] {
           <StatusPill :status="selected.online ? selected.health : 'offline'" />
         </div>
         <div class="stats four">
-          <StatCard label="负载" :value="metricValue(selected, 'system.load.1m', 2)" hint="1 分钟" />
+          <StatCard label="CPU" :value="metricValue(selected, 'system.cpu.usage')" :hint="`负载 ${metricValue(selected, 'system.load.1m', 2)}`" />
           <StatCard label="内存" :value="metricValue(selected, 'system.memory.usage')" hint="实时" />
           <StatCard label="根文件系统" :value="metricValue(selected, 'filesystem.root.usage')" hint="实时" />
           <StatCard label="Uptime" :value="metricValue(selected, 'system.uptime', 0)" hint="秒" />

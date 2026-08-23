@@ -7,3 +7,6 @@ application:
     - MAOYAN_WEB_DIR=/lzcapp/pkg/content/web
   routes:
     - /=exec://8080,/lzcapp/pkg/content/maoyan
+ext_config:
+  permissions:
+    - PERM_LZC_DOCKER_ADMIN

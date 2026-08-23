@@ -115,6 +115,9 @@ func CollectWithFilesystem(deviceID string, now time.Time, filesystemPath string
 	if up, err := readUptime(); err == nil {
 		points = append(points, protocol.MetricPoint{Name: "system.uptime", Value: up, Unit: "seconds", CollectedAt: now})
 	}
+	hostCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	points = append(points, collectHostMetrics(hostCtx, now)...)
+	cancel()
 	return protocol.MetricBatch{DeviceID: deviceID, Points: points}, nil
 }
 func readLoad() (float64, error) {

@@ -12,14 +12,25 @@
 ## 当前白名单指标
 
 - `system.cpu.cores`
+- `system.cpu.usage`
 - `system.load.1m`
+- `system.load.5m`
+- `system.load.15m`
 - `system.memory.usage`
 - `system.memory.available`
+- `system.swap.usage`
+- `system.swap.used`
+- `system.swap.total`
 - `filesystem.root.usage`
 - `filesystem.root.available`
 - `system.uptime`
 - `network.receive.bytes_total`
 - `network.transmit.bytes_total`
+- 块设备累计读写字节与操作次数
+- 逐接口网络流量、错误和丢包
+- 可见硬件温度传感器
+- LazyCat HAL 风扇转速
+- LazyCat 容器 CPU、内存、网络和块 IO，并按应用 ID 聚合
 - NVMe 温度、寿命、备用空间、Media Errors 和 Critical Warning
 - ATA Reallocated Sector Count
 - Btrfs 容量和使用率
@@ -28,6 +39,13 @@
 SMART 和 Btrfs 采集仅调用固定程序与固定参数，不经过 Shell。设备路径仅接受
 `/dev/sdX` 和 `/dev/nvmeXnY` 格式，挂载路径必须是绝对路径。缺少工具或权限时，
 Collector 会报告能力降级，但不会影响基础指标上报。
+
+内置 Collector 的容器采集器只连接 `/lzcapp/run/lzc-docker/docker.sock`，并且代码仅允许：
+
+- `GET /containers/json`
+- `GET /containers/{id}/stats?stream=false`
+
+不实现 Docker 写操作，也不开放任意 Docker API 代理。
 
 ## 离线队列
 
@@ -49,6 +67,7 @@ Collector 会报告能力降级，但不会影响基础指标上报。
 | `MAOYAN_SMART_DEVICES` | SMART 白名单设备，逗号分隔 |
 | `MAOYAN_BTRFS_MOUNTS` | Btrfs 白名单挂载点，逗号分隔 |
 | `MAOYAN_LPK_STATUS_FILE` | LazyCat Runtime 提供的只读应用状态 JSON 文件 |
+| `MAOYAN_DOCKER_SOCKET` | LazyCat Docker socket，默认 `/lzcapp/run/lzc-docker/docker.sock` |
 
 首次配对成功后，证书、私钥和设备令牌会以 `0600` 权限保存。后续启动不再需要配对码。
 

@@ -17,6 +17,37 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+func TestAggregateApplicationResourcesIgnoresStaleContainers(t *testing.T) {
+	now := time.Now().UTC()
+	metrics := []store.LatestMetric{
+		{Name: "container.running", Value: 1, Labels: map[string]string{"app": "app.one", "container": "a"}, CollectedAt: now},
+		{Name: "container.running", Value: 1, Labels: map[string]string{"app": "app.one", "container": "b"}, CollectedAt: now},
+		{Name: "container.cpu.usage", Value: 12.5, Labels: map[string]string{"app": "app.one", "container": "a"}, CollectedAt: now},
+		{Name: "container.cpu.usage", Value: 7.5, Labels: map[string]string{"app": "app.one", "container": "b"}, CollectedAt: now},
+		{Name: "container.memory.usage", Value: 1024, Labels: map[string]string{"app": "app.one", "container": "a"}, CollectedAt: now},
+		{Name: "container.memory.usage", Value: 9999, Labels: map[string]string{"app": "app.one", "container": "old"}, CollectedAt: now.Add(-3 * time.Minute)},
+	}
+	item := aggregateApplicationResources(metrics, now)["app.one"]
+	if item.Containers != 2 || item.CPUPercent != 20 || item.MemoryUsage != 1024 {
+		t.Fatalf("item=%+v", item)
+	}
+}
+
+func TestTemperatureAlertsUseStableSensorClasses(t *testing.T) {
+	if severity, _ := metricAlert("system.temperature", 99, "celsius", map[string]string{"sensor": "coretemp_core_0"}); severity != "" {
+		t.Fatalf("per-core spike should remain telemetry only, severity=%q", severity)
+	}
+	if severity, _ := metricAlert("system.temperature", 99, "celsius", map[string]string{"sensor": "coretemp_package_id_0"}); severity != "" {
+		t.Fatalf("CPU package below its hardware limit should not page, severity=%q", severity)
+	}
+	if severity, _ := metricAlert("system.temperature", 100, "celsius", map[string]string{"sensor": "coretemp_package_id_0"}); severity != "critical" {
+		t.Fatalf("CPU package at its hardware limit should be critical, severity=%q", severity)
+	}
+	if severity, _ := metricAlert("system.temperature", 86, "celsius", map[string]string{"sensor": "nvme_composite"}); severity != "warning" {
+		t.Fatalf("NVMe composite threshold mismatch, severity=%q", severity)
+	}
+}
+
 type fakeRuntimePackageManager struct {
 	uid string
 }

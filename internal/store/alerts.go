@@ -34,6 +34,8 @@ type Alert struct {
 
 var ErrAlertNotFound = errors.New("alert not found")
 
+const notificationCooldown = 10 * time.Minute
+
 func (s *Store) ReconcileAlerts(ctx context.Context, signals []AlertSignal) error {
 	now := time.Now().UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -134,8 +136,17 @@ func recordAlertTransition(ctx context.Context, tx *sql.Tx, a AlertSignal, from,
 		title = "猫眼告警已恢复"
 		body = fmt.Sprintf("%s · %s：%s", a.DeviceName, a.Resource, a.Message)
 	}
+	var recent int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE alert_fingerprint=? AND transition=? AND created_at>=?`,
+		a.Fingerprint, transition, now.Add(-notificationCooldown).Format(time.RFC3339Nano)).Scan(&recent)
+	if err != nil {
+		return err
+	}
+	if recent > 0 {
+		return nil
+	}
 	dedupe := fmt.Sprintf("%s:%s:%d", a.Fingerprint, transition, now.UTC().UnixNano())
-	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_outbox(dedupe_key,alert_fingerprint,transition,title,body,deeplink,next_attempt_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_outbox(dedupe_key,alert_fingerprint,transition,title,body,deeplink,next_attempt_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		dedupe, a.Fingerprint, transition, title, body, "lzc://community.lazycat.app.maoyan/alerts", now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }

@@ -73,7 +73,7 @@ func TestPersistentAlertStateMachine(t *testing.T) {
 	if err := st.db.QueryRow(`SELECT COUNT(*) FROM notification_outbox WHERE alert_fingerprint=?`, signal.Fingerprint).Scan(&outboxCount); err != nil {
 		t.Fatal(err)
 	}
-	if transitionCount != 4 || outboxCount != 3 {
+	if transitionCount != 4 || outboxCount != 2 {
 		t.Fatalf("transitions=%d outbox=%d", transitionCount, outboxCount)
 	}
 }

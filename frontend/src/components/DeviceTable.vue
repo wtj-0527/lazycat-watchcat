@@ -23,7 +23,7 @@ const emit = defineEmits<{ select: [id: string] }>()
           <b>{{ device.name }}</b>
           <small>{{ device.hostname }} · {{ device.osVersion || '系统版本未知' }}</small>
         </td>
-        <td>{{ metricValue(device, 'system.load.1m', 2) }}</td>
+        <td>{{ metricValue(device, 'system.cpu.usage') !== '—' ? metricValue(device, 'system.cpu.usage') : metricValue(device, 'system.load.1m', 2) }}</td>
         <td>{{ metricValue(device, 'system.memory.usage') }}</td>
         <td>{{ metricValue(device, 'filesystem.root.usage') }}</td>
         <td>{{ ago(device.lastSeenAt) }}<template v-if="device.stale"> · 数据过期</template></td>
