@@ -137,6 +137,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_metric_rollups_lookup ON metric_rollups_hourly(device_id,name,bucket_start DESC);`,
 		`CREATE TABLE IF NOT EXISTS retention_state (name TEXT PRIMARY KEY, value TEXT NOT NULL);`,
+		`CREATE TABLE IF NOT EXISTS system_state (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+		`CREATE TABLE IF NOT EXISTS collector_capabilities (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			capability TEXT NOT NULL,
+			status TEXT NOT NULL,
+			detail TEXT NOT NULL DEFAULT '',
+			checked_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,capability)
+		);`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, datetime('now'));`,
 	}
@@ -156,6 +165,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, datetime('now'))`)
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, datetime('now'))`)
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE inspections ADD COLUMN change_summary_json TEXT NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration inspection change summary: %w", err)
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, datetime('now'))`)
 	return nil
 }
 

@@ -99,4 +99,16 @@ func (s *Store) MetricHistory(ctx context.Context, deviceID, name string, since 
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) LatestMetricTimestamp(ctx context.Context) (time.Time, error) {
+	var value sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(collected_at) FROM metrics`).Scan(&value); err != nil {
+		return time.Time{}, err
+	}
+	if !value.Valid {
+		return time.Time{}, nil
+	}
+	return parseTime(value.String), nil
+}
+
 func IsNotFound(err error) bool { return err == sql.ErrNoRows }

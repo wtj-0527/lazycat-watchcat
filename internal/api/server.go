@@ -56,6 +56,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/inspections/{id}", s.inspectionDetail)
 	s.mux.HandleFunc("GET /api/v1/inspections/live", s.inspectionView)
 	s.mux.HandleFunc("GET /api/v1/settings", s.settingsView)
+	s.mux.HandleFunc("GET /api/v1/operations", s.operationsView)
 	s.mux.HandleFunc("POST /api/v1/devices/{id}/revoke", s.revokeDevice)
 	s.mux.HandleFunc("/", s.static)
 }

@@ -109,7 +109,7 @@ func TestInspectionEvidenceAndRetentionRollupAreIdempotent(t *testing.T) {
 		t.Fatalf("first=%+v second=%+v count=%d samples=%d values=%v/%v/%v/%v", first, second, count, samples, min, max, avg, p95)
 	}
 	report := map[string]any{"devices": 1, "checks": []string{"online", "storage"}}
-	inspection, err := st.SaveInspection(ctx, "manual", report, 1, 1, 0, 0)
+	inspection, err := st.SaveInspection(ctx, "manual", report, map[string]any{"baseline": false}, 1, 1, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

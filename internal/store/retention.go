@@ -118,6 +118,7 @@ func (s *Store) RunRetention(ctx context.Context, now time.Time) (RetentionResul
 	if err := tx.Commit(); err != nil {
 		return RetentionResult{}, err
 	}
+	_ = s.SetSystemState(ctx, "last_retention", map[string]any{"completedAt": now, "result": result})
 	return result, nil
 }
 

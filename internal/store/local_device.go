@@ -53,3 +53,8 @@ func (s *Store) IsEmbeddedDevice(ctx context.Context, id string) (bool, error) {
 	}
 	return false, nil
 }
+
+func (s *Store) RemoveLegacyEmbeddedFilesystemSeries(ctx context.Context, deviceID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM metrics WHERE device_id=? AND name IN ('filesystem.root.usage','filesystem.root.available') AND labels_json IN ('null','{}')`, deviceID)
+	return err
+}

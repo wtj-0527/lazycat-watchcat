@@ -212,15 +212,22 @@ func (s *Server) inspectionView(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"generatedAt": time.Now().UTC(), "source": "live-snapshot", "checks": checks, "devices": devices})
 }
 func (s *Server) startInspection(w http.ResponseWriter, r *http.Request) {
-	devices, metrics, err := s.snapshot(r)
+	item, err := s.RunInspection(r.Context(), "manual")
 	if err != nil {
-		problem(w, 500, "inspection_failed", "无法读取巡检数据")
+		problem(w, 500, "inspection_failed", err.Error())
 		return
 	}
+	writeJSON(w, 201, item)
+}
+
+func (s *Server) RunInspection(ctx context.Context, trigger string) (store.Inspection, error) {
+	devices, metrics, err := s.snapshotContext(ctx)
+	if err != nil {
+		return store.Inspection{}, fmt.Errorf("无法读取巡检数据")
+	}
 	derived := deriveAlerts(devices)
-	if err := s.store.ReconcileAlerts(r.Context(), alertSignals(derived)); err != nil {
-		problem(w, 500, "inspection_failed", "无法更新告警状态")
-		return
+	if err := s.store.ReconcileAlerts(ctx, alertSignals(derived)); err != nil {
+		return store.Inspection{}, fmt.Errorf("无法更新告警状态")
 	}
 	checks := map[string]int{"devices": len(devices), "online": 0, "healthy": 0, "warning": 0, "critical": 0}
 	for _, d := range devices {
@@ -238,12 +245,16 @@ func (s *Server) startInspection(w http.ResponseWriter, r *http.Request) {
 		"alerts":         derived,
 		"latestMetricAt": latestTimestamp(metrics),
 	}
-	item, err := s.store.SaveInspection(r.Context(), "manual", report, len(devices), checks["healthy"], checks["warning"], checks["critical"])
+	change := inspectionChange(s.store, ctx, derived, checks)
+	report["change"] = change
+	item, err := s.store.SaveInspection(ctx, trigger, report, change, len(devices), checks["healthy"], checks["warning"], checks["critical"])
 	if err != nil {
-		problem(w, 500, "inspection_failed", "无法保存巡检报告")
-		return
+		return store.Inspection{}, fmt.Errorf("无法保存巡检报告")
 	}
-	writeJSON(w, 201, item)
+	if checks["critical"] > 0 {
+		_ = s.store.QueueNotification(ctx, "inspection:"+item.ID, "猫眼巡检发现 Critical", fmt.Sprintf("%d 台设备存在 Critical，%d 台 Warning", checks["critical"], checks["warning"]), "lzc://community.lazycat.app.maoyan/inspections")
+	}
+	return item, nil
 }
 func (s *Server) listInspections(w http.ResponseWriter, r *http.Request) {
 	items, err := s.store.ListInspections(r.Context(), 50)
@@ -268,6 +279,27 @@ func (s *Server) inspectionDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) settingsView(w http.ResponseWriter, r *http.Request) {
 	stats, _ := s.store.RetentionStats(r.Context())
 	writeJSON(w, 200, map[string]any{"singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": 30, "rollupRetentionDays": 365, "auditRetentionDays": 180, "inspectionRetentionDays": 365, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
+}
+func (s *Server) operationsView(w http.ResponseWriter, r *http.Request) {
+	capabilities, err := s.store.ListCapabilityStatuses(r.Context())
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取采集能力状态")
+		return
+	}
+	states, err := s.store.ListSystemStates(r.Context())
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取运维状态")
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"capabilities": capabilities,
+		"states":       states,
+		"schedule": map[string]any{
+			"daily":    map[string]any{"enabled": true, "hour": 3},
+			"weekly":   map[string]any{"enabled": true, "weekday": "Sunday", "hour": 4},
+			"timezone": time.Now().Format("MST (UTCZ07:00)"),
+		},
+	})
 }
 
 func (s *Server) SyncAlerts(ctx context.Context) error {
@@ -294,15 +326,57 @@ func alertSignals(alerts []alertView) []store.AlertSignal {
 	return out
 }
 func (s *Server) snapshot(r *http.Request) ([]deviceView, []store.LatestMetric, error) {
-	devices, err := s.store.ListDevices(r.Context())
+	return s.snapshotContext(r.Context())
+}
+func (s *Server) snapshotContext(ctx context.Context) ([]deviceView, []store.LatestMetric, error) {
+	devices, err := s.store.ListDevices(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	metrics, err := s.store.ListLatestMetrics(r.Context())
+	metrics, err := s.store.ListLatestMetrics(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	return buildDeviceViews(devices, metrics), metrics, nil
+}
+
+func inspectionChange(st *store.Store, ctx context.Context, current []alertView, checks map[string]int) map[string]any {
+	change := map[string]any{"baseline": false, "newAlerts": []string{}, "resolvedAlerts": []string{}, "warningDelta": 0, "criticalDelta": 0}
+	previous, err := st.LatestInspection(ctx)
+	if err != nil {
+		return change
+	}
+	change["baseline"] = true
+	change["warningDelta"] = checks["warning"] - previous.WarningCount
+	change["criticalDelta"] = checks["critical"] - previous.CriticalCount
+	var old struct {
+		Alerts []struct {
+			Fingerprint string `json:"fingerprint"`
+		} `json:"alerts"`
+	}
+	_ = json.Unmarshal(previous.Report, &old)
+	oldSet, currentSet := map[string]bool{}, map[string]bool{}
+	for _, alert := range old.Alerts {
+		oldSet[alert.Fingerprint] = true
+	}
+	for _, alert := range current {
+		currentSet[alert.Fingerprint] = true
+	}
+	var newAlerts, resolvedAlerts []string
+	for fingerprint := range currentSet {
+		if !oldSet[fingerprint] {
+			newAlerts = append(newAlerts, fingerprint)
+		}
+	}
+	for fingerprint := range oldSet {
+		if !currentSet[fingerprint] {
+			resolvedAlerts = append(resolvedAlerts, fingerprint)
+		}
+	}
+	sort.Strings(newAlerts)
+	sort.Strings(resolvedAlerts)
+	change["newAlerts"], change["resolvedAlerts"] = newAlerts, resolvedAlerts
+	return change
 }
 
 func buildDeviceViews(devices []protocol.Device, metrics []store.LatestMetric) []deviceView {
@@ -356,7 +430,7 @@ func deriveDeviceAlerts(d deviceView) []alertView {
 	for name, list := range d.Latest {
 		for _, m := range list {
 			severity, msg := metricAlert(name, m.Value, m.Unit, m.Labels)
-			if severity == "" {
+			if severity == "" || time.Since(m.CollectedAt) > 10*time.Minute {
 				continue
 			}
 			resource := m.Labels["device"]

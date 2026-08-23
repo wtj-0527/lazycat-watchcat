@@ -12,7 +12,7 @@ import (
 	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
 )
 
-const version = "1.2.0"
+const version = "1.3.1"
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))

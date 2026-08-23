@@ -13,6 +13,7 @@ import (
 	"github.com/wtj-0527/lazycat-maoyan/internal/config"
 	"github.com/wtj-0527/lazycat-maoyan/internal/notify"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
+	"github.com/wtj-0527/lazycat-maoyan/internal/scheduler"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
 
@@ -38,6 +39,8 @@ func main() {
 	}
 	go embedded.Run(context.Background())
 	notifier := notify.NewLazyCat(st, logger)
+	inspectionScheduler := scheduler.NewInspectionScheduler(handlers, st, logger)
+	go inspectionScheduler.Run(context.Background())
 	go func() {
 		alertTicker := time.NewTicker(30 * time.Second)
 		retentionTicker := time.NewTicker(time.Hour)

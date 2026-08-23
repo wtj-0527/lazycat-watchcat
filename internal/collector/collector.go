@@ -95,6 +95,10 @@ func (q *Queue) save(items []protocol.MetricBatch) error {
 }
 
 func Collect(deviceID string, now time.Time) (protocol.MetricBatch, error) {
+	return CollectWithFilesystem(deviceID, now, "/", map[string]string{"mount": "/"})
+}
+
+func CollectWithFilesystem(deviceID string, now time.Time, filesystemPath string, labels map[string]string) (protocol.MetricBatch, error) {
 	points := []protocol.MetricPoint{{Name: "system.cpu.cores", Value: float64(runtime.NumCPU()), Unit: "count", CollectedAt: now}}
 	if load, err := readLoad(); err == nil {
 		points = append(points, protocol.MetricPoint{Name: "system.load.1m", Value: load, CollectedAt: now})
@@ -104,9 +108,9 @@ func Collect(deviceID string, now time.Time) (protocol.MetricBatch, error) {
 		points = append(points, protocol.MetricPoint{Name: "system.memory.usage", Value: used, Unit: "%", CollectedAt: now}, protocol.MetricPoint{Name: "system.memory.available", Value: float64(avail), Unit: "bytes", CollectedAt: now})
 	}
 	var fs syscall.Statfs_t
-	if err := syscall.Statfs("/", &fs); err == nil && fs.Blocks > 0 {
+	if err := syscall.Statfs(filesystemPath, &fs); err == nil && fs.Blocks > 0 {
 		used := float64(fs.Blocks-fs.Bavail) / float64(fs.Blocks) * 100
-		points = append(points, protocol.MetricPoint{Name: "filesystem.root.usage", Value: used, Unit: "%", CollectedAt: now}, protocol.MetricPoint{Name: "filesystem.root.available", Value: float64(fs.Bavail) * float64(fs.Bsize), Unit: "bytes", CollectedAt: now})
+		points = append(points, protocol.MetricPoint{Name: "filesystem.root.usage", Value: used, Unit: "%", Labels: labels, CollectedAt: now}, protocol.MetricPoint{Name: "filesystem.root.available", Value: float64(fs.Bavail) * float64(fs.Bsize), Unit: "bytes", Labels: labels, CollectedAt: now})
 	}
 	if up, err := readUptime(); err == nil {
 		points = append(points, protocol.MetricPoint{Name: "system.uptime", Value: up, Unit: "seconds", CollectedAt: now})

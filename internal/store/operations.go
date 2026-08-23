@@ -1,0 +1,109 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+)
+
+type CapabilityStatus struct {
+	DeviceID   string    `json:"deviceId"`
+	Capability string    `json:"capability"`
+	Status     string    `json:"status"`
+	Detail     string    `json:"detail"`
+	CheckedAt  time.Time `json:"checkedAt"`
+}
+
+func (s *Store) SetCapabilityStatuses(ctx context.Context, deviceID string, items []CapabilityStatus) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, item := range items {
+		if item.CheckedAt.IsZero() {
+			item.CheckedAt = time.Now().UTC()
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO collector_capabilities(device_id,capability,status,detail,checked_at) VALUES(?,?,?,?,?)
+			ON CONFLICT(device_id,capability) DO UPDATE SET status=excluded.status,detail=excluded.detail,checked_at=excluded.checked_at`,
+			deviceID, item.Capability, item.Status, item.Detail, item.CheckedAt.Format(time.RFC3339Nano))
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ListCapabilityStatuses(ctx context.Context) ([]CapabilityStatus, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,capability,status,detail,checked_at FROM collector_capabilities ORDER BY device_id,capability`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CapabilityStatus
+	for rows.Next() {
+		var item CapabilityStatus
+		var checked string
+		if err := rows.Scan(&item.DeviceID, &item.Capability, &item.Status, &item.Detail, &checked); err != nil {
+			return nil, err
+		}
+		item.CheckedAt = parseTime(checked)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetSystemState(ctx context.Context, name string, value any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO system_state(name,value,updated_at) VALUES(?,?,?)
+		ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`,
+		name, string(raw), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) GetSystemState(ctx context.Context, name string, dest any) (bool, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM system_state WHERE name=?`, name).Scan(&raw)
+	if IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, json.Unmarshal([]byte(raw), dest)
+}
+
+type SystemStateItem struct {
+	Name      string          `json:"name"`
+	Value     json.RawMessage `json:"value"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+func (s *Store) ListSystemStates(ctx context.Context) ([]SystemStateItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name,value,updated_at FROM system_state ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SystemStateItem
+	for rows.Next() {
+		var item SystemStateItem
+		var raw, updated string
+		if err := rows.Scan(&item.Name, &raw, &updated); err != nil {
+			return nil, err
+		}
+		item.Value, item.UpdatedAt = json.RawMessage(raw), parseTime(updated)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) QueueNotification(ctx context.Context, dedupeKey, title, body, deeplink string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notification_outbox(dedupe_key,alert_fingerprint,transition,title,body,deeplink,next_attempt_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		dedupeKey, "system", "inspection", title, body, deeplink, now, now)
+	return err
+}
