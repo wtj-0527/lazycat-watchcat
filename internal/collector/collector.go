@@ -240,3 +240,28 @@ func NewMTLSClient(creds Credentials) (*http.Client, error) {
 	}
 	return &http.Client{Transport: transport, Timeout: 15 * time.Second}, nil
 }
+
+func RotateCertificate(ctx context.Context, client *http.Client, collectorURL string, current Credentials) (Credentials, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(collectorURL, "/")+"/api/v1/certificate/rotate", nil)
+	if err != nil {
+		return Credentials{}, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return Credentials{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return Credentials{}, fmt.Errorf("certificate rotation failed: %s: %s", resp.Status, string(body))
+	}
+	var rotated protocol.PairCollectorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rotated); err != nil {
+		return Credentials{}, err
+	}
+	current.CertificatePEM = rotated.CertificatePEM
+	current.PrivateKeyPEM = rotated.PrivateKeyPEM
+	current.CACertificatePEM = rotated.CACertificatePEM
+	current.CertificateExpiresAt = rotated.CertificateExpiresAt
+	return current, nil
+}

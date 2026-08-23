@@ -66,8 +66,29 @@ func main() {
 		logger.Error("create mTLS client", "error", err)
 		os.Exit(1)
 	}
+	if time.Until(creds.CertificateExpiresAt) < 30*24*time.Hour {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		rotated, rotateErr := collector.RotateCertificate(ctx, metricClient, collectorURL, creds)
+		cancel()
+		if rotateErr != nil {
+			logger.Warn("certificate rotation deferred", "error", rotateErr)
+		} else if saveErr := collector.SaveCredentials(credsPath, rotated); saveErr != nil {
+			logger.Error("save rotated certificate", "error", saveErr)
+			os.Exit(1)
+		} else {
+			creds = rotated
+			metricClient, err = collector.NewMTLSClient(creds)
+			if err != nil {
+				logger.Error("reload rotated certificate", "error", err)
+				os.Exit(1)
+			}
+			logger.Info("collector certificate rotated", "expires_at", creds.CertificateExpiresAt)
+		}
+	}
 	status.Store("online")
 	queue := collector.NewQueue(filepath.Join(dataDir, "metrics.queue.json"), 2048)
+	advancedConfig := collector.AdvancedConfigFromEnv()
+	var lastAdvanced time.Time
 	interval := 30 * time.Second
 	if raw := os.Getenv("MAOYAN_COLLECT_INTERVAL"); raw != "" {
 		if parsed, e := time.ParseDuration(raw); e == nil && parsed >= 10*time.Second {
@@ -77,7 +98,18 @@ func main() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		batch, err := collector.Collect(creds.DeviceID, time.Now().UTC())
+		now := time.Now().UTC()
+		batch, err := collector.Collect(creds.DeviceID, now)
+		if err == nil && (lastAdvanced.IsZero() || now.Sub(lastAdvanced) >= 5*time.Minute) {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			points, warnings := collector.CollectAdvanced(ctx, advancedConfig, now)
+			cancel()
+			batch.Points = append(batch.Points, points...)
+			lastAdvanced = now
+			if len(warnings) > 0 {
+				logger.Warn("advanced collection partially degraded", "warnings", warnings)
+			}
+		}
 		if err == nil {
 			_ = queue.Append(batch)
 		}

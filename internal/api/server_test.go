@@ -98,4 +98,33 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 	if mtlsRecorder.Code != http.StatusAccepted {
 		t.Fatalf("mTLS metric status=%d body=%s", mtlsRecorder.Code, mtlsRecorder.Body.String())
 	}
+
+	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/certificate/rotate", nil)
+	rotateRequest.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert}}
+	rotateRecorder := httptest.NewRecorder()
+	New(st, ca, "../../web", 10*time.Minute).CollectorHandler().ServeHTTP(rotateRecorder, rotateRequest)
+	if rotateRecorder.Code != http.StatusOK {
+		t.Fatalf("rotate status=%d body=%s", rotateRecorder.Code, rotateRecorder.Body.String())
+	}
+	var rotated protocol.PairCollectorResponse
+	if err := json.NewDecoder(rotateRecorder.Body).Decode(&rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.CertificateSerial == paired.CertificateSerial {
+		t.Fatal("certificate serial was not rotated")
+	}
+
+	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/v1/devices/"+paired.DeviceID+"/revoke", nil)
+	revokeRecorder := httptest.NewRecorder()
+	New(st, ca, "../../web", 10*time.Minute).Handler().ServeHTTP(revokeRecorder, revokeRequest)
+	if revokeRecorder.Code != http.StatusOK {
+		t.Fatalf("revoke status=%d body=%s", revokeRecorder.Code, revokeRecorder.Body.String())
+	}
+	deniedRequest := httptest.NewRequest(http.MethodPost, "/api/v1/metrics/batch", bytes.NewReader(metricBody))
+	deniedRequest.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert}}
+	deniedRecorder := httptest.NewRecorder()
+	New(st, ca, "../../web", 10*time.Minute).CollectorHandler().ServeHTTP(deniedRecorder, deniedRequest)
+	if deniedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked certificate status=%d", deniedRecorder.Code)
+	}
 }

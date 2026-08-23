@@ -58,6 +58,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, hostname TEXT NOT NULL UNIQUE, os_version TEXT NOT NULL DEFAULT '', collector_version TEXT NOT NULL, capabilities_json TEXT NOT NULL DEFAULT '[]', token_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'online', created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, subject_type TEXT NOT NULL, subject_id TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, name TEXT NOT NULL, value REAL NOT NULL, unit TEXT NOT NULL DEFAULT '', labels_json TEXT NOT NULL DEFAULT '{}', collected_at TEXT NOT NULL, received_at TEXT NOT NULL);`,
+		`CREATE TABLE IF NOT EXISTS device_certificates (serial TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, expires_at TEXT NOT NULL, valid_until TEXT, revoked_at TEXT, created_at TEXT NOT NULL);`,
+		`CREATE INDEX IF NOT EXISTS idx_device_certificates_device ON device_certificates(device_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_device_name_time ON metrics(device_id,name,collected_at DESC);`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, datetime('now'));`,
@@ -169,23 +171,78 @@ func (s *Store) AuthenticateDevice(ctx context.Context, deviceID, token string) 
 }
 
 func (s *Store) SetCertificate(ctx context.Context, deviceID, serial string, expiresAt time.Time) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE devices SET certificate_serial=?,certificate_expires_at=? WHERE id=? AND revoked_at IS NULL`, serial, expiresAt.UTC().Format(time.RFC3339Nano), deviceID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE devices SET certificate_serial=?,certificate_expires_at=? WHERE id=? AND revoked_at IS NULL`, serial, expiresAt.UTC().Format(time.RFC3339Nano), deviceID)
 	if err != nil {
 		return err
 	}
 	if n, _ := result.RowsAffected(); n != 1 {
 		return errors.New("device not found or revoked")
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `INSERT INTO device_certificates(serial,device_id,expires_at,created_at) VALUES(?,?,?,?)`, serial, deviceID, expiresAt.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CertificateAllowed(ctx context.Context, deviceID, serial string) error {
 	var found string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM devices WHERE id=? AND certificate_serial=? AND revoked_at IS NULL`, deviceID, serial).Scan(&found)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	err := s.db.QueryRowContext(ctx, `SELECT c.device_id FROM device_certificates c JOIN devices d ON d.id=c.device_id WHERE c.device_id=? AND c.serial=? AND c.revoked_at IS NULL AND d.revoked_at IS NULL AND c.expires_at>? AND (c.valid_until IS NULL OR c.valid_until>?)`, deviceID, serial, now, now).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("certificate revoked or unknown")
 	}
 	return err
+}
+
+func (s *Store) RotateCertificate(ctx context.Context, deviceID, oldSerial, newSerial string, expiresAt time.Time, grace time.Duration) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	result, err := tx.ExecContext(ctx, `UPDATE device_certificates SET valid_until=? WHERE serial=? AND device_id=? AND revoked_at IS NULL`, now.Add(grace).Format(time.RFC3339Nano), oldSerial, deviceID)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return errors.New("old certificate not found")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO device_certificates(serial,device_id,expires_at,created_at) VALUES(?,?,?,?)`, newSerial, deviceID, expiresAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE devices SET certificate_serial=?,certificate_expires_at=? WHERE id=? AND revoked_at IS NULL`, newSerial, expiresAt.UTC().Format(time.RFC3339Nano), deviceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RevokeDevice(ctx context.Context, deviceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at=?,status='revoked' WHERE id=? AND revoked_at IS NULL`, now, deviceID)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return errors.New("device not found or already revoked")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE device_certificates SET revoked_at=? WHERE device_id=? AND revoked_at IS NULL`, now, deviceID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(action,subject_type,subject_id,created_at) VALUES('device.revoked','device',?,?)`, deviceID, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) IngestMetrics(ctx context.Context, batch protocol.MetricBatch) error {

@@ -34,6 +34,7 @@ func (s *Server) CollectorHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("POST /api/v1/metrics/batch", s.ingestMetricsMTLS)
+	mux.HandleFunc("POST /api/v1/certificate/rotate", s.rotateCertificateMTLS)
 	return securityHeaders(mux)
 }
 func (s *Server) routes() {
@@ -41,6 +42,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/pairing-codes", s.createPairingCode)
 	s.mux.HandleFunc("POST /api/v1/collectors/pair", s.pairCollector)
 	s.mux.HandleFunc("GET /api/v1/devices", s.listDevices)
+	s.mux.HandleFunc("POST /api/v1/devices/{id}/revoke", s.revokeDevice)
 	s.mux.HandleFunc("/", s.static)
 }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +95,18 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"items": devices, "count": len(devices)})
 }
+func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	if deviceID == "" {
+		problem(w, 400, "invalid_device", "设备 ID 必填")
+		return
+	}
+	if err := s.store.RevokeDevice(r.Context(), deviceID); err != nil {
+		problem(w, 404, "device_not_found", "设备不存在或已吊销")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "revoked", "deviceId": deviceID})
+}
 func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 	var batch protocol.MetricBatch
 	if err := decodeJSON(r, &batch); err != nil || !validBatch(batch) {
@@ -135,6 +149,36 @@ func (s *Server) ingestMetricsMTLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
+}
+
+func (s *Server) rotateCertificateMTLS(w http.ResponseWriter, r *http.Request) {
+	cert := peerCertificate(r)
+	if cert == nil || cert.Subject.CommonName == "" {
+		problem(w, 401, "invalid_client_certificate", "缺少 Collector 证书")
+		return
+	}
+	deviceID, oldSerial := cert.Subject.CommonName, cert.SerialNumber.Text(16)
+	if err := s.store.CertificateAllowed(r.Context(), deviceID, oldSerial); err != nil {
+		problem(w, 401, "revoked_client_certificate", "Collector 证书未知或已吊销")
+		return
+	}
+	identity, err := s.ca.IssueClient(deviceID, deviceID, 365*24*time.Hour)
+	if err != nil {
+		problem(w, 500, "certificate_issue_failed", "无法签发新证书")
+		return
+	}
+	if err := s.store.RotateCertificate(r.Context(), deviceID, oldSerial, identity.Serial, identity.ExpiresAt, 24*time.Hour); err != nil {
+		problem(w, 500, "certificate_rotate_failed", "无法轮换证书")
+		return
+	}
+	writeJSON(w, http.StatusOK, protocol.PairCollectorResponse{
+		DeviceID:             deviceID,
+		CertificatePEM:       identity.CertificatePEM,
+		PrivateKeyPEM:        identity.PrivateKeyPEM,
+		CACertificatePEM:     identity.CACertificatePEM,
+		CertificateSerial:    identity.Serial,
+		CertificateExpiresAt: identity.ExpiresAt,
+	})
 }
 
 func validBatch(batch protocol.MetricBatch) bool {
