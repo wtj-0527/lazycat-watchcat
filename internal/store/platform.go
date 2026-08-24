@@ -219,6 +219,20 @@ type AuditEntry struct {
 	CreatedAt   time.Time       `json:"createdAt"`
 }
 
+func (s *Store) RecordAudit(ctx context.Context, action, subjectType, subjectID string, metadata any) error {
+	raw := []byte("{}")
+	if metadata != nil {
+		var err error
+		raw, err = json.Marshal(metadata)
+		if err != nil {
+			return err
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(action,subject_type,subject_id,metadata_json,created_at) VALUES(?,?,?,?,?)`,
+		action, subjectType, subjectID, string(raw), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 type DeviceEvent struct {
 	ID        string          `json:"id"`
 	Type      string          `json:"type"`

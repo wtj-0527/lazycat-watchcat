@@ -128,6 +128,7 @@ func (s *Server) alertRules(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "rules_update_failed", err.Error())
 		return
 	}
+	_ = s.store.RecordAudit(r.Context(), "alert_rules.updated", "settings", "alert.rules", map[string]any{"count": len(req.Items)})
 	_ = s.SyncAlerts(r.Context())
 	writeJSON(w, 200, map[string]any{"items": req.Items})
 }
@@ -156,10 +157,12 @@ func (s *Server) maintenanceWindows(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteMaintenanceWindow(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteMaintenanceWindow(r.Context(), id); err != nil {
 		problem(w, 404, "maintenance_not_found", "维护窗口不存在")
 		return
 	}
+	_ = s.store.RecordAudit(r.Context(), "maintenance_window.deleted", "maintenance_window", id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -179,6 +182,7 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "notification_test_failed", err.Error())
 		return
 	}
+	_ = s.store.RecordAudit(r.Context(), "notification.test_queued", "notification", key, nil)
 	writeJSON(w, 202, map[string]any{"status": "queued"})
 }
 
