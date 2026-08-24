@@ -17,7 +17,7 @@ function capabilitySummary(device: Device): string {
 <template>
   <div class="table-scroll">
   <table class="fleet-table device-inventory-table">
-    <thead><tr><th aria-label="选择" /><th>设备</th><th>健康</th><th>连接</th><th>采集能力</th><th>资源摘要</th><th>最新数据</th><th>活动告警</th><th /></tr></thead>
+    <thead><tr><th aria-label="选择" /><th>设备</th><th>健康</th><th>连接</th><th>采集能力</th><th>资源摘要</th><th>最新数据</th><th>告警</th><th /></tr></thead>
     <tbody>
       <tr v-for="device in items" :key="device.id" :class="{ 'device-row': clickable }" @click="clickable && $emit('select', device.id)">
         <td><input type="checkbox" aria-label="选择设备" @click.stop></td>

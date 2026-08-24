@@ -83,7 +83,7 @@ async function action(fingerprint: string, name: string) {
     <p v-if="actionEvidence" class="operation-evidence" :class="actionEvidence.status" role="status">{{ actionEvidence.message }}</p>
     <div class="alert-workbench">
       <section class="card alert-list-panel">
-        <div class="section-title compact"><div><h2>{{ filtered.length }} 个活动告警</h2></div></div>
+        <div class="section-title compact"><div><h2>{{ filtered.length }} 个告警</h2></div></div>
         <div v-if="filtered.length" class="triage-list">
           <button v-for="alert in filtered" :key="alert.fingerprint" class="alert-list-item" :class="{ active: selectedAlert?.fingerprint === alert.fingerprint, critical: alert.severity === 'critical' }" @click="selectedFingerprint = alert.fingerprint">
             <i /><span><b>{{ alert.message || alert.resource }}</b><small>{{ alert.deviceName }} · {{ ago(alert.lastSeenAt || alert.observedAt || alert.collectedAt) }}</small></span><StatusPill :status="alert.severity" />
