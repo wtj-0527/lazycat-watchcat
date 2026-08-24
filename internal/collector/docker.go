@@ -1,8 +1,10 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +25,9 @@ import (
 const defaultDockerSocket = "/lzcapp/run/lzc-docker/docker.sock"
 const defaultDockerStatsBatchSize = 8
 const defaultDockerStatsConcurrency = 2
+const smartHelperLabel = "community.lazycat.app.maoyan.smart-helper"
+
+var smartBlockDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 
 type DockerCollector struct {
 	socket           string
@@ -33,12 +39,56 @@ type DockerCollector struct {
 }
 
 type dockerContainer struct {
-	ID     string            `json:"Id"`
-	Names  []string          `json:"Names"`
-	Image  string            `json:"Image"`
-	State  string            `json:"State"`
-	Status string            `json:"Status"`
-	Labels map[string]string `json:"Labels"`
+	ID      string            `json:"Id"`
+	Names   []string          `json:"Names"`
+	Image   string            `json:"Image"`
+	ImageID string            `json:"ImageID"`
+	State   string            `json:"State"`
+	Status  string            `json:"Status"`
+	Labels  map[string]string `json:"Labels"`
+}
+
+type dockerContainerInspect struct {
+	Image string `json:"Image"`
+}
+
+type dockerCreateResponse struct {
+	ID       string   `json:"Id"`
+	Warnings []string `json:"Warnings"`
+}
+
+type dockerWaitResponse struct {
+	StatusCode int `json:"StatusCode"`
+	Error      *struct {
+		Message string `json:"Message"`
+	} `json:"Error"`
+}
+
+type dockerDeviceMapping struct {
+	PathOnHost        string `json:"PathOnHost"`
+	PathInContainer   string `json:"PathInContainer"`
+	CgroupPermissions string `json:"CgroupPermissions"`
+}
+
+type dockerHelperConfig struct {
+	Image        string            `json:"Image"`
+	Entrypoint   []string          `json:"Entrypoint"`
+	Cmd          []string          `json:"Cmd"`
+	AttachStdout bool              `json:"AttachStdout"`
+	AttachStderr bool              `json:"AttachStderr"`
+	Tty          bool              `json:"Tty"`
+	Labels       map[string]string `json:"Labels"`
+	HostConfig   struct {
+		NetworkMode    string                `json:"NetworkMode"`
+		ReadonlyRootfs bool                  `json:"ReadonlyRootfs"`
+		CapDrop        []string              `json:"CapDrop"`
+		CapAdd         []string              `json:"CapAdd,omitempty"`
+		SecurityOpt    []string              `json:"SecurityOpt"`
+		Binds          []string              `json:"Binds,omitempty"`
+		Devices        []dockerDeviceMapping `json:"Devices,omitempty"`
+		PidsLimit      int64                 `json:"PidsLimit"`
+		Memory         int64                 `json:"Memory"`
+	} `json:"HostConfig"`
 }
 
 type dockerStats struct {
@@ -91,7 +141,7 @@ func NewDockerCollector(socket string) *DockerCollector {
 		statsConcurrency = configured
 	}
 	return &DockerCollector{
-		socket: socket, client: &http.Client{Transport: transport, Timeout: 8 * time.Second},
+		socket: socket, client: &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		statsBatch: statsBatch, statsConcurrency: statsConcurrency,
 	}
 }
@@ -204,6 +254,229 @@ func (d *DockerCollector) getJSON(ctx context.Context, path string, dest any) er
 		return fmt.Errorf("decode docker %s: %w", path, err)
 	}
 	return nil
+}
+
+func (d *DockerCollector) doJSON(ctx context.Context, method, path string, body any, accepted ...int) ([]byte, error) {
+	var payload io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		payload = bytes.NewReader(raw)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, payload)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := d.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	for _, status := range accepted {
+		if response.StatusCode == status {
+			return raw, nil
+		}
+	}
+	return nil, fmt.Errorf("docker %s %s: %s: %s", method, path, response.Status, strings.TrimSpace(string(raw)))
+}
+
+func (d *DockerCollector) helperImage(ctx context.Context) (string, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", err
+	}
+	var inspected dockerContainerInspect
+	if err := d.getJSON(ctx, "/containers/"+url.PathEscape(hostname)+"/json", &inspected); err == nil && inspected.Image != "" {
+		return inspected.Image, nil
+	}
+	var containers []dockerContainer
+	if err := d.getJSON(ctx, "/containers/json?all=1", &containers); err != nil {
+		return "", fmt.Errorf("list containers to identify collector image: %w", err)
+	}
+	appID := strings.TrimSpace(os.Getenv("LAZYCAT_APP_ID"))
+	service := strings.TrimSpace(os.Getenv("LAZYCAT_APP_SERVICE_NAME"))
+	for _, item := range containers {
+		if appID != "" && dockerAppID(item) != appID {
+			continue
+		}
+		if service != "" && item.Labels["com.docker.compose.service"] != service {
+			continue
+		}
+		if item.State != "running" {
+			continue
+		}
+		if item.ImageID != "" {
+			return item.ImageID, nil
+		}
+		if item.Image != "" {
+			return item.Image, nil
+		}
+	}
+	return "", fmt.Errorf("identify collector image for app=%q service=%q", appID, service)
+}
+
+func newDockerHelperConfig(image string, entrypoint, cmd []string) dockerHelperConfig {
+	cfg := dockerHelperConfig{
+		Image: image, Entrypoint: entrypoint, Cmd: cmd, AttachStdout: true, AttachStderr: true, Tty: true,
+		Labels: map[string]string{smartHelperLabel: "true"},
+	}
+	cfg.HostConfig.NetworkMode = "none"
+	cfg.HostConfig.ReadonlyRootfs = true
+	cfg.HostConfig.CapDrop = []string{"ALL"}
+	cfg.HostConfig.SecurityOpt = []string{"no-new-privileges"}
+	cfg.HostConfig.PidsLimit = 32
+	cfg.HostConfig.Memory = 64 << 20
+	return cfg
+}
+
+func (d *DockerCollector) runHelper(ctx context.Context, cfg dockerHelperConfig) ([]byte, int, error) {
+	raw, err := d.doJSON(ctx, http.MethodPost, "/containers/create", cfg, http.StatusCreated)
+	if err != nil {
+		return nil, -1, err
+	}
+	var created dockerCreateResponse
+	if err := json.Unmarshal(raw, &created); err != nil {
+		return nil, -1, fmt.Errorf("decode Docker helper create response: %w", err)
+	}
+	if created.ID == "" {
+		return nil, -1, errors.New("decode Docker helper create response: empty container ID")
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = d.doJSON(cleanupCtx, http.MethodDelete, "/containers/"+url.PathEscape(created.ID)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
+	}()
+	if _, err := d.doJSON(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start", nil, http.StatusNoContent); err != nil {
+		return nil, -1, err
+	}
+	raw, err = d.doJSON(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/wait?condition=not-running", nil, http.StatusOK)
+	if err != nil {
+		return nil, -1, err
+	}
+	var waited dockerWaitResponse
+	if err := json.Unmarshal(raw, &waited); err != nil {
+		return nil, -1, err
+	}
+	logs, logsErr := d.doJSON(ctx, http.MethodGet, "/containers/"+url.PathEscape(created.ID)+"/logs?stdout=1&stderr=1", nil, http.StatusOK)
+	if logsErr != nil {
+		return nil, waited.StatusCode, logsErr
+	}
+	if waited.Error != nil && waited.Error.Message != "" {
+		return logs, waited.StatusCode, errors.New(waited.Error.Message)
+	}
+	return logs, waited.StatusCode, nil
+}
+
+func (d *DockerCollector) discoverSmartDevices(ctx context.Context, image string) ([]string, error) {
+	const script = `for p in /host-sys/class/block/*; do n=${p##*/}; case "$n" in sd[a-z]|nvme[0-9]n[0-9]) echo /dev/$n;; esac; done`
+	cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", script})
+	cfg.HostConfig.Binds = []string{"/sys:/host-sys:ro"}
+	raw, exitCode, err := d.runHelper(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if exitCode != 0 {
+		return nil, fmt.Errorf("device discovery helper exited %d: %s", exitCode, strings.TrimSpace(string(raw)))
+	}
+	seen := map[string]bool{}
+	var devices []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		device := strings.TrimSpace(line)
+		if !smartBlockDevice.MatchString(device) || seen[device] {
+			continue
+		}
+		seen[device] = true
+		devices = append(devices, device)
+	}
+	sort.Strings(devices)
+	return devices, nil
+}
+
+func (d *DockerCollector) readSmartDevice(ctx context.Context, image, device, smartType string) ([]byte, int, error) {
+	if !smartBlockDevice.MatchString(device) {
+		return nil, -1, fmt.Errorf("unsafe SMART device %q", device)
+	}
+	args := []string{"-j", "-a"}
+	if smartType != "" {
+		args = append(args, "-d", smartType)
+	}
+	args = append(args, device)
+	cfg := newDockerHelperConfig(image, []string{"/usr/sbin/smartctl"}, args)
+	cfg.HostConfig.CapAdd = []string{"SYS_RAWIO"}
+	cfg.HostConfig.Devices = []dockerDeviceMapping{{
+		PathOnHost: device, PathInContainer: device, CgroupPermissions: "rwm",
+	}}
+	if strings.HasPrefix(device, "/dev/nvme") {
+		controller := strings.TrimSuffix(device, "n1")
+		if controller != device {
+			cfg.HostConfig.CapAdd = append(cfg.HostConfig.CapAdd, "SYS_ADMIN")
+			cfg.HostConfig.Devices = append(cfg.HostConfig.Devices, dockerDeviceMapping{
+				PathOnHost: controller, PathInContainer: controller, CgroupPermissions: "rwm",
+			})
+		}
+	}
+	return d.runHelper(ctx, cfg)
+}
+
+func smartNeedsSAT(raw []byte) bool {
+	text := strings.ToLower(string(raw))
+	return strings.Contains(text, "unknown usb bridge") ||
+		strings.Contains(text, "please specify device type with the -d option")
+}
+
+func (d *DockerCollector) CollectSMART(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
+	if !d.Available() {
+		return nil, []string{"docker smart: Docker socket unavailable"}
+	}
+	image, err := d.helperImage(ctx)
+	if err != nil {
+		return nil, []string{"docker smart: " + err.Error()}
+	}
+	devices, err := d.discoverSmartDevices(ctx, image)
+	if err != nil {
+		return nil, []string{"docker smart: " + err.Error()}
+	}
+	var points []protocol.MetricPoint
+	var warnings []string
+	for _, device := range devices {
+		raw, exitCode, runErr := d.readSmartDevice(ctx, image, device, "")
+		smartType := "auto"
+		if smartNeedsSAT(raw) && strings.HasPrefix(device, "/dev/sd") {
+			raw, exitCode, runErr = d.readSmartDevice(ctx, image, device, "sat")
+			smartType = "sat"
+		}
+		if runErr != nil {
+			warnings = append(warnings, "docker smart "+device+": "+runErr.Error())
+			continue
+		}
+		parsed, err := parseSmart(raw, device, now)
+		if err != nil {
+			if exitCode != 0 {
+				warnings = append(warnings, fmt.Sprintf("docker smart %s: smartctl exited %d: %v", device, exitCode, err))
+			} else {
+				warnings = append(warnings, "docker smart "+device+": "+err.Error())
+			}
+			continue
+		}
+		if exitCode != 0 {
+			warnings = append(warnings, fmt.Sprintf("docker smart %s: smartctl health/status bitmask %d", device, exitCode))
+		}
+		for i := range parsed {
+			parsed[i].Labels["source"] = "lazycat-docker-helper"
+			parsed[i].Labels["smart_type"] = smartType
+		}
+		points = append(points, parsed...)
+	}
+	return points, warnings
 }
 
 func dockerLabels(item dockerContainer) map[string]string {

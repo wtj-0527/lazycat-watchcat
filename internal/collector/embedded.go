@@ -19,6 +19,8 @@ type capabilityEvidence struct {
 	dockerMapped     bool
 	dockerReachable  bool
 	dockerRestricted bool
+	smartAttempted   bool
+	smartRestricted  bool
 }
 
 type Embedded struct {
@@ -126,6 +128,20 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 		warnings = append(warnings, "docker runtime: read-only LazyCat Docker socket unavailable")
 	}
 	if includeAdvanced {
+		if evidence.dockerMapped {
+			evidence.smartAttempted = true
+			callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			points, smartWarnings := e.docker.CollectSMART(callCtx, now)
+			cancel()
+			batch.Points = append(batch.Points, points...)
+			warnings = append(warnings, smartWarnings...)
+			for _, warning := range smartWarnings {
+				if permissionDenied(errors.New(warning)) {
+					evidence.smartRestricted = true
+					break
+				}
+			}
+		}
 		callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		points, advancedWarnings := CollectAdvanced(callCtx, e.advanced, now)
 		cancel()
@@ -154,7 +170,17 @@ func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points
 		}
 	}
 	smartWarnings := warningsForTargets(warnings, "smart ", e.advanced.SmartDevices)
+	for _, warning := range warnings {
+		if strings.HasPrefix(warning, "docker smart") {
+			smartWarnings = append(smartWarnings, warning)
+		}
+	}
 	nvmeWarnings := warningsForTargets(warnings, "smart ", nvmeDevices)
+	for _, warning := range warnings {
+		if strings.HasPrefix(warning, "docker smart /dev/nvme") {
+			nvmeWarnings = append(nvmeWarnings, warning)
+		}
+	}
 	btrfsWarnings := warningsForTargets(warnings, "btrfs ", e.advanced.BtrfsMounts)
 	items := []store.CapabilityStatus{
 		{Capability: "system.metrics", Status: "available", Detail: "读取宿主机共享 /proc 指标", CheckedAt: now},
@@ -166,8 +192,8 @@ func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points
 		accessCapability("container.runtime", evidence.dockerReachable, evidence.dockerMapped, evidence.dockerRestricted, warnings, "docker runtime:", "LazyCat Docker socket，仅调用 List/Stats", "只读 LazyCat Docker socket 未授权或不可用", now),
 	}
 	items = append(items,
-		capabilityFromConfig("smart", len(e.advanced.SmartDevices) > 0, has("disk.temperature", "disk.power_on_hours", "disk.nvme.", "disk.ata."), smartWarnings, "宿主机块设备未映射给应用；当前不生成 SMART 健康结论", now),
-		capabilityFromConfig("nvme", len(nvmeDevices) > 0, has("disk.nvme."), nvmeWarnings, "宿主机 NVMe 设备未映射给应用；当前不生成 NVMe 健康结论", now),
+		smartCapability("smart", evidence.smartAttempted || len(e.advanced.SmartDevices) > 0, has("disk.temperature", "disk.power_on_hours", "disk.nvme.", "disk.ata."), evidence.smartRestricted, smartWarnings, "通过短生命周期、无网络、只读根文件系统的 Docker helper 读取 SMART；仅附加 SYS_RAWIO 与单设备映射", now),
+		smartCapability("nvme", evidence.smartAttempted || len(nvmeDevices) > 0, has("disk.nvme."), evidence.smartRestricted, nvmeWarnings, "通过受控 Docker helper 读取 NVMe SMART", now),
 		capabilityFromConfig("btrfs", len(e.advanced.BtrfsMounts) > 0, has("btrfs."), btrfsWarnings, "宿主机 Btrfs 挂载未映射给应用；当前不生成 Btrfs 健康结论", now),
 	)
 	if e.advanced.LPKStatusFile != "" {
@@ -179,6 +205,30 @@ func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points
 	if err := e.store.SetCapabilityStatuses(ctx, e.deviceID, items); err != nil {
 		e.logger.Warn("persist collector capabilities", "error", err)
 	}
+}
+
+func smartCapability(name string, attempted, available, restricted bool, warnings []string, detail string, now time.Time) store.CapabilityStatus {
+	if available {
+		if len(warnings) > 0 {
+			detail += "；部分设备失败：" + warnings[0]
+		}
+		return store.CapabilityStatus{Capability: name, Status: "available", Detail: detail, CheckedAt: now}
+	}
+	if restricted {
+		detail = "LazyCat Docker 拒绝受控块设备采集"
+		if len(warnings) > 0 {
+			detail = warnings[0]
+		}
+		return store.CapabilityStatus{Capability: name, Status: "restricted", Detail: detail, CheckedAt: now}
+	}
+	if attempted {
+		detail = "未获得受支持的 SMART 数据"
+		if len(warnings) > 0 {
+			detail = warnings[0]
+		}
+		return store.CapabilityStatus{Capability: name, Status: "error", Detail: detail, CheckedAt: now}
+	}
+	return store.CapabilityStatus{Capability: name, Status: "unsupported", Detail: "未启用 SMART 采集", CheckedAt: now}
 }
 
 func metricPrefixPresent(points []protocol.MetricPoint, prefixes ...string) bool {

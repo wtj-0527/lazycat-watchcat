@@ -36,16 +36,32 @@
 - Btrfs 容量和使用率
 - LPK 应用健康状态及重启次数
 
-SMART 和 Btrfs 采集仅调用固定程序与固定参数，不经过 Shell。设备路径仅接受
-`/dev/sdX` 和 `/dev/nvmeXnY` 格式，挂载路径必须是绝对路径。缺少工具或权限时，
-Collector 会报告能力降级，但不会影响基础指标上报。
+SMART 调用仅使用固定的 `smartctl -j -a` 参数，并在明确识别到 USB-SATA 桥接错误时
+回退 `-d sat`。设备路径仅接受 `/dev/sdX` 和 `/dev/nvmeXnY` 格式。Btrfs 挂载路径
+必须是绝对路径。缺少工具或权限时，Collector 会报告能力降级，但不会影响基础指标上报。
 
-内置 Collector 的容器采集器只连接 `/lzcapp/run/lzc-docker/docker.sock`，并且代码仅允许：
+内置 Collector 连接 `/lzcapp/run/lzc-docker/docker.sock`：
 
 - `GET /containers/json`
 - `GET /containers/{id}/stats?stream=false`
+- 每 5 分钟创建短生命周期 SMART helper，完成后立即删除
 
-不实现 Docker 写操作，也不开放任意 Docker API 代理。
+SMART helper 使用当前猫眼镜像，不增加常驻 Service，并强制：
+
+- `network_mode=none`
+- 只读根文件系统
+- `no-new-privileges`
+- 默认丢弃全部 capability
+- SATA/USB-SATA 仅附加 `SYS_RAWIO`
+- NVMe 仅附加 `SYS_RAWIO` 与 `SYS_ADMIN`
+- 每次仅映射白名单匹配的单个块设备；NVMe 同时映射对应控制器
+- 固定 64 MiB 内存和 32 PID 上限
+- 不接受来自用户、API 或数据库的命令、镜像和设备路径
+
+设备发现 helper 仅只读挂载 `/sys`，执行内置固定脚本列举顶层 `sdX` 与 `nvmeXnY`。
+SMART helper 不使用 `privileged`，也不挂载完整 `/dev`。
+
+猫眼不开放任意 Docker API 代理。除上述受控 helper 生命周期外，不执行 Docker 写操作。
 
 ## 离线队列
 
