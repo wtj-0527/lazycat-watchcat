@@ -97,4 +97,71 @@ describe('AppsPage', () => {
     expect(wrapper.findAll('.line-chart')).toHaveLength(4)
     wrapper.unmount()
   })
+
+  it('applies a custom historical time range', async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path.includes('/metrics')) return {
+        appId: 'busy', from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z',
+        bucketSeconds: 300, updatedAt: new Date().toISOString(),
+        series: { cpuPercent: [], memoryUsage: [], networkReceiveRate: [], networkTransmitRate: [], blockReadRate: [], blockWriteRate: [] },
+      }
+      return {
+        items: [application({ id: 'busy', title: '繁忙应用', healthy: 1 })],
+        source: 'lazycat', stale: false, updatedAt: new Date().toISOString(),
+      }
+    })
+
+    const wrapper = mount(AppsPage)
+    await flushPromises()
+    await wrapper.get('.history-range button:last-child').trigger('click')
+    const inputs = wrapper.findAll('.custom-history-range input')
+    await inputs[0].setValue('2026-08-23T08:00')
+    await inputs[1].setValue('2026-08-24T08:00')
+    await wrapper.get('.custom-history-range .primary-button').trigger('click')
+    await flushPromises()
+
+    const customRequest = apiMock.mock.calls.map(([path]) => String(path)).find((path) => path.includes('from='))
+    expect(customRequest).toContain('/api/v1/applications/busy/metrics?from=')
+    expect(customRequest).toContain('&to=')
+    expect(wrapper.text()).toContain('2026/8/23')
+    wrapper.unmount()
+  })
+
+  it('sorts applications by the selected metric and opens the all-app comparison', async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path.includes('/metrics/compare')) return {
+        metric: 'memory', from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z', bucketSeconds: 300,
+        items: [
+          { appId: 'small', value: 1024, unit: 'bytes', points: [] },
+          { appId: 'large', value: 4096, unit: 'bytes', points: [] },
+        ],
+        updatedAt: new Date().toISOString(),
+      }
+      if (path.includes('/metrics')) return {
+        appId: 'large', from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z', bucketSeconds: 300,
+        summary: { networkReceiveRateBytes: 0, networkTransmitRateBytes: 0, networkTotalBytes: 0, blockReadRateBytes: 0, blockWriteRateBytes: 0, blockTotalBytes: 0 },
+        series: { cpuPercent: [], memoryUsage: [], networkReceiveRate: [], networkTransmitRate: [], blockReadRate: [], blockWriteRate: [] },
+      }
+      return {
+        items: [
+          application({ id: 'small', title: '小内存应用', healthy: 1, resources: { ...resources, cpuPercent: 50, memoryUsage: 1024 } }),
+          application({ id: 'large', title: '大内存应用', healthy: 1, resources: { ...resources, cpuPercent: 1, memoryUsage: 4096 } }),
+        ],
+        source: 'lazycat', stale: false, updatedAt: new Date().toISOString(),
+      }
+    })
+
+    const wrapper = mount(AppsPage)
+    await flushPromises()
+    await wrapper.get('[aria-label="排序指标"]').setValue('memory')
+    expect(wrapper.findAll('.app-resource-item')[0].text()).toContain('大内存应用')
+
+    await wrapper.findAll('.view-toggle button')[1].trigger('click')
+    await flushPromises()
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('/metrics/compare?metric=memory'))).toBe(true)
+    expect(wrapper.text()).toContain('所有应用对比')
+    expect(wrapper.findAll('.app-comparison-table tbody tr')).toHaveLength(2)
+    expect(wrapper.findAll('.app-comparison-table tbody tr')[0].text()).toContain('大内存应用')
+    wrapper.unmount()
+  })
 })

@@ -51,9 +51,19 @@ func TestApplicationHistoryAggregatesContainersAndCounterRates(t *testing.T) {
 		{DeviceID: "d1", Value: 50, Labels: map[string]string{"container": "b"}, CollectedAt: start},
 		{DeviceID: "d1", Value: 200, Labels: map[string]string{"container": "b"}, CollectedAt: start.Add(30 * time.Second)},
 	}
-	points = aggregateApplicationCounter(counter, time.Minute)
-	if len(points) != 1 || points[0].Value != 15 {
-		t.Fatalf("counter points=%+v", points)
+	points, total := aggregateApplicationCounterWithTotal(counter, time.Minute)
+	if len(points) != 1 || points[0].Value != 15 || total != 450 {
+		t.Fatalf("counter points=%+v total=%v", points, total)
+	}
+}
+
+func TestApplicationHistoryRejectsInvalidCustomRange(t *testing.T) {
+	server := New(nil, nil, "../../web", time.Minute)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/applications/app.one/metrics?from=2026-08-24T10:00:00Z&to=2026-08-24T09:00:00Z", nil)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

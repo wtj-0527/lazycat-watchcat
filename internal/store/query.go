@@ -107,16 +107,45 @@ func (s *Store) MetricHistory(ctx context.Context, deviceID, name string, since 
 	return out, rows.Err()
 }
 
-func (s *Store) ApplicationMetricHistory(ctx context.Context, appID, name string, since time.Time, limit int) ([]ApplicationMetricSample, error) {
+func (s *Store) ApplicationMetricHistory(ctx context.Context, appID, name string, since, until time.Time, limit int) ([]ApplicationMetricSample, error) {
 	if limit <= 0 || limit > 100000 {
 		limit = 50000
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT metrics.device_id,metrics.value,metrics.labels_json,metrics.collected_at
 		FROM (SELECT DISTINCT device_id FROM application_runtime_state WHERE app_id=?) AS app_devices
 		JOIN metrics ON metrics.device_id=app_devices.device_id
-		WHERE metrics.name=? AND metrics.collected_at>=? AND json_extract(metrics.labels_json,'$.app')=?
+		WHERE metrics.name=? AND metrics.collected_at>=? AND metrics.collected_at<=? AND json_extract(metrics.labels_json,'$.app')=?
 		ORDER BY metrics.device_id,metrics.labels_json,metrics.collected_at ASC LIMIT ?`,
-		appID, name, since.UTC().Format(time.RFC3339Nano), appID, limit)
+		appID, name, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano), appID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ApplicationMetricSample
+	for rows.Next() {
+		var item ApplicationMetricSample
+		var labels, collected string
+		if err := rows.Scan(&item.DeviceID, &item.Value, &labels, &collected); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(labels), &item.Labels)
+		item.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AllApplicationMetricHistory(ctx context.Context, name string, since, until time.Time, limit int) ([]ApplicationMetricSample, error) {
+	if limit <= 0 || limit > 300000 {
+		limit = 200000
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT metrics.device_id,metrics.value,metrics.labels_json,metrics.collected_at
+		FROM (SELECT DISTINCT device_id FROM application_runtime_state) AS app_devices
+		JOIN metrics ON metrics.device_id=app_devices.device_id
+		WHERE metrics.name=? AND metrics.collected_at>=? AND metrics.collected_at<=?
+			AND json_extract(metrics.labels_json,'$.app')<>''
+		ORDER BY metrics.device_id,metrics.labels_json,metrics.collected_at ASC LIMIT ?`,
+		name, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano), limit)
 	if err != nil {
 		return nil, err
 	}

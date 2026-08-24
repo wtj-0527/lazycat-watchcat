@@ -220,12 +220,15 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "application_required", "应用 ID 必填")
 		return
 	}
-	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
-	if hours <= 0 || hours > 24*7 {
-		hours = 24
+	from, to, code, message := applicationTimeRange(r)
+	if code != "" {
+		problem(w, http.StatusBadRequest, code, message)
+		return
 	}
-	bucket := applicationHistoryBucket(hours)
-	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	now := time.Now().UTC()
+	summary := map[string]float64{}
+	duration := to.Sub(from)
+	bucket := applicationHistoryBucket(int(duration.Hours()))
 	metrics := []struct {
 		name    string
 		key     string
@@ -240,21 +243,174 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	series := make(map[string][]applicationHistoryPoint, len(metrics))
 	for _, metric := range metrics {
-		samples, err := s.store.ApplicationMetricHistory(r.Context(), appID, metric.name, since, 100000)
+		samples, err := s.store.ApplicationMetricHistory(r.Context(), appID, metric.name, from, to, 100000)
 		if err != nil {
 			problem(w, http.StatusInternalServerError, "internal_error", "无法读取应用资源历史")
 			return
 		}
 		if metric.counter {
-			series[metric.key] = aggregateApplicationCounter(samples, bucket)
+			points, total := aggregateApplicationCounterWithTotal(samples, bucket)
+			series[metric.key] = points
+			summary[metric.key+"Bytes"] = total
 		} else {
 			series[metric.key] = aggregateApplicationGauge(samples, bucket)
 		}
 	}
+	summary["networkTotalBytes"] = summary["networkReceiveRateBytes"] + summary["networkTransmitRateBytes"]
+	summary["blockTotalBytes"] = summary["blockReadRateBytes"] + summary["blockWriteRateBytes"]
 	writeJSON(w, http.StatusOK, map[string]any{
-		"appId": appID, "hours": hours, "bucketSeconds": int(bucket.Seconds()),
-		"series": series, "updatedAt": time.Now().UTC(),
+		"appId": appID, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
+		"series": series, "summary": summary, "updatedAt": now,
 	})
+}
+
+func applicationTimeRange(r *http.Request) (time.Time, time.Time, string, string) {
+	now := time.Now().UTC()
+	fromRaw, toRaw := strings.TrimSpace(r.URL.Query().Get("from")), strings.TrimSpace(r.URL.Query().Get("to"))
+	if fromRaw == "" && toRaw == "" {
+		hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+		if hours <= 0 || hours > 24*7 {
+			hours = 24
+		}
+		return now.Add(-time.Duration(hours) * time.Hour), now, "", ""
+	}
+	if fromRaw == "" || toRaw == "" {
+		return time.Time{}, time.Time{}, "time_range_incomplete", "自定义时间必须同时提供 from 和 to"
+	}
+	from, err := time.Parse(time.RFC3339, fromRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, "invalid_from", "from 必须是 RFC3339 时间"
+	}
+	to, err := time.Parse(time.RFC3339, toRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, "invalid_to", "to 必须是 RFC3339 时间"
+	}
+	if !from.Before(to) {
+		return time.Time{}, time.Time{}, "invalid_time_range", "开始时间必须早于结束时间"
+	}
+	if to.Sub(from) > 30*24*time.Hour {
+		return time.Time{}, time.Time{}, "time_range_too_large", "单次查询范围不能超过 30 天"
+	}
+	return from, to, "", ""
+}
+
+func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Request) {
+	metric := strings.TrimSpace(r.URL.Query().Get("metric"))
+	if metric == "" {
+		metric = "cpu"
+	}
+	if metric != "cpu" && metric != "memory" && metric != "network" && metric != "disk" {
+		problem(w, http.StatusBadRequest, "invalid_metric", "metric 仅支持 cpu、memory、network 或 disk")
+		return
+	}
+	from, to, code, message := applicationTimeRange(r)
+	if code != "" {
+		problem(w, http.StatusBadRequest, code, message)
+		return
+	}
+	bucket := applicationHistoryBucket(int(to.Sub(from).Hours()))
+	type comparisonItem struct {
+		AppID  string                    `json:"appId"`
+		Value  float64                   `json:"value"`
+		Unit   string                    `json:"unit"`
+		Points []applicationHistoryPoint `json:"points"`
+	}
+	items := map[string]*comparisonItem{}
+	addGauge := func(name, unit string) error {
+		samples, err := s.store.AllApplicationMetricHistory(r.Context(), name, from, to, 300000)
+		if err != nil {
+			return err
+		}
+		for appID, appSamples := range groupApplicationSamples(samples) {
+			points := aggregateApplicationGauge(appSamples, bucket)
+			items[appID] = &comparisonItem{AppID: appID, Value: averageHistoryPoints(points), Unit: unit, Points: points}
+		}
+		return nil
+	}
+	addCounter := func(names []string) error {
+		for _, name := range names {
+			samples, err := s.store.AllApplicationMetricHistory(r.Context(), name, from, to, 300000)
+			if err != nil {
+				return err
+			}
+			for appID, appSamples := range groupApplicationSamples(samples) {
+				points, total := aggregateApplicationCounterWithTotal(appSamples, bucket)
+				item := items[appID]
+				if item == nil {
+					item = &comparisonItem{AppID: appID, Unit: "bytes"}
+					items[appID] = item
+				}
+				item.Value += total
+				item.Points = mergeHistoryPoints(item.Points, points)
+			}
+		}
+		return nil
+	}
+	var err error
+	switch metric {
+	case "cpu":
+		err = addGauge("container.cpu.usage", "%")
+	case "memory":
+		err = addGauge("container.memory.usage", "bytes")
+	case "network":
+		err = addCounter([]string{"container.network.receive.bytes_total", "container.network.transmit.bytes_total"})
+	case "disk":
+		err = addCounter([]string{"container.block.read.bytes_total", "container.block.write.bytes_total"})
+	}
+	if err != nil {
+		problem(w, http.StatusInternalServerError, "internal_error", "无法读取应用对比数据")
+		return
+	}
+	out := make([]*comparisonItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Value > out[j].Value })
+	writeJSON(w, http.StatusOK, map[string]any{
+		"metric": metric, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
+		"items": out, "updatedAt": time.Now().UTC(),
+	})
+}
+
+func groupApplicationSamples(samples []store.ApplicationMetricSample) map[string][]store.ApplicationMetricSample {
+	out := map[string][]store.ApplicationMetricSample{}
+	for _, sample := range samples {
+		if appID := sample.Labels["app"]; appID != "" {
+			out[appID] = append(out[appID], sample)
+		}
+	}
+	return out
+}
+
+func averageHistoryPoints(points []applicationHistoryPoint) float64 {
+	if len(points) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, point := range points {
+		total += point.Value
+	}
+	return total / float64(len(points))
+}
+
+func mergeHistoryPoints(left, right []applicationHistoryPoint) []applicationHistoryPoint {
+	values := map[time.Time]float64{}
+	for _, point := range left {
+		values[point.CollectedAt] += point.Value
+	}
+	for _, point := range right {
+		values[point.CollectedAt] += point.Value
+	}
+	times := make([]time.Time, 0, len(values))
+	for at := range values {
+		times = append(times, at)
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	out := make([]applicationHistoryPoint, 0, len(times))
+	for _, at := range times {
+		out = append(out, applicationHistoryPoint{Value: values[at], CollectedAt: at})
+	}
+	return out
 }
 
 func applicationHistoryBucket(hours int) time.Duration {
@@ -303,17 +459,24 @@ func aggregateApplicationGauge(samples []store.ApplicationMetricSample, bucket t
 }
 
 func aggregateApplicationCounter(samples []store.ApplicationMetricSample, bucket time.Duration) []applicationHistoryPoint {
+	points, _ := aggregateApplicationCounterWithTotal(samples, bucket)
+	return points
+}
+
+func aggregateApplicationCounterWithTotal(samples []store.ApplicationMetricSample, bucket time.Duration) ([]applicationHistoryPoint, float64) {
 	type values struct {
 		sum   float64
 		count int
 	}
 	byBucket := map[time.Time]map[string]values{}
 	previous := map[string]store.ApplicationMetricSample{}
+	total := 0.0
 	for _, sample := range samples {
 		key := applicationSeriesKey(sample)
 		if before, ok := previous[key]; ok {
 			elapsed := sample.CollectedAt.Sub(before.CollectedAt).Seconds()
 			if elapsed > 0 && elapsed <= 30*60 && sample.Value >= before.Value {
+				total += sample.Value - before.Value
 				at := sample.CollectedAt.Truncate(bucket)
 				if byBucket[at] == nil {
 					byBucket[at] = map[string]values{}
@@ -326,7 +489,7 @@ func aggregateApplicationCounter(samples []store.ApplicationMetricSample, bucket
 		}
 		previous[key] = sample
 	}
-	return applicationHistoryPoints(byBucket, func(items map[string]values) float64 {
+	points := applicationHistoryPoints(byBucket, func(items map[string]values) float64 {
 		total := 0.0
 		for _, item := range items {
 			if item.count > 0 {
@@ -335,6 +498,7 @@ func aggregateApplicationCounter(samples []store.ApplicationMetricSample, bucket
 		}
 		return total
 	})
+	return points, total
 }
 
 func applicationHistoryPoints[T any](buckets map[time.Time]T, value func(T) float64) []applicationHistoryPoint {

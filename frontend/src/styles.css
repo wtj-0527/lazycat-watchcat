@@ -581,6 +581,9 @@ body { font-size: 12px; }
 
 /* Application resource history */
 .app-resource-intro { align-items: center; min-height: 48px; }
+.application-time-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 12px 14px; }
+.application-time-controls > div:first-child { display: grid; gap: 2px; }
+.application-time-controls > .custom-history-range { flex: 1 0 100%; }
 .app-resource-layout { display: grid; grid-template-columns: minmax(280px, .72fr) minmax(0, 2fr); gap: 16px; align-items: start; }
 .app-resource-list-card { padding-right: 10px; }
 .app-resource-list { display: grid; gap: 6px; max-height: 760px; padding-right: 6px; overflow-y: auto; }
@@ -605,16 +608,29 @@ body { font-size: 12px; }
 .history-range { display: flex; gap: 6px; padding: 3px; border-radius: 9px; background: #f1f5f9; }
 .history-range button { min-height: 30px; padding: 0 11px; border-radius: 7px; background: transparent; color: var(--secondary); font-size: 11px; font-weight: 700; }
 .history-range button.active { background: #fff; color: var(--primary); box-shadow: 0 1px 3px rgba(15, 23, 42, .1); }
+.custom-history-range { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(190px, 1fr) auto auto; align-items: end; gap: 10px; margin: -4px 0 16px; padding: 14px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; }
+.custom-history-range label { display: grid; gap: 6px; color: var(--secondary); font-size: 11px; font-weight: 700; }
+.custom-history-range input { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); }
+.custom-history-range > small { grid-column: 1 / -1; color: var(--critical); }
 .history-loading { min-height: 220px; display: grid; place-items: center; color: var(--muted); }
 .app-history-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .app-history-grid > div { min-width: 0; padding: 16px 14px 4px; border: 1px solid var(--border-subtle); border-radius: 10px; background: #fbfdff; }
 .app-history-grid h3 { margin: 0 0 10px; font-size: 13px; }
 .app-instance-table { min-width: 720px; }
+.sort-direction { min-width: 104px; }
+.app-comparison-card { min-height: 560px; }
+.comparison-chart { margin-bottom: 18px; padding: 14px 12px 0; border: 1px solid var(--border-subtle); border-radius: 10px; background: #fbfdff; }
+.app-comparison-table { min-width: 680px; }
+.app-comparison-table th:first-child, .app-comparison-table td:first-child { width: 64px; text-align: center; }
+.app-comparison-table strong { font-size: 14px; }
 @media (max-width: 1100px) {
   .app-resource-layout { grid-template-columns: 1fr; }
   .app-resource-list { max-height: 360px; }
 }
 @media (max-width: 760px) {
+  .application-time-controls { align-items: stretch; flex-direction: column; }
   .app-resource-kpis, .app-history-grid { grid-template-columns: 1fr; }
   .app-history-card .section-title { align-items: stretch; flex-direction: column; }
+  .custom-history-range { grid-template-columns: 1fr; }
+  .custom-history-range > small { grid-column: 1; }
 }
