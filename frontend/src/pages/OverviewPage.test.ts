@@ -47,8 +47,8 @@ describe('OverviewPage', () => {
     const wrapper = mount(OverviewPage)
     await flushPromises()
 
-    expect(wrapper.get('.overview-matrix').text()).toContain('96.0%')
-    expect(wrapper.get('.overview-matrix').find('.pill').classes()).toContain('critical')
+    expect(wrapper.get('.capacity-evidence-list').text()).toContain('96.0%')
+    expect(wrapper.get('.capacity-evidence-list').find('.pill').classes()).toContain('critical')
     wrapper.unmount()
   })
 })

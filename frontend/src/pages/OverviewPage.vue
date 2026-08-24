@@ -5,6 +5,8 @@ import { usePolling } from '@/composables'
 import type { Device, Overview } from '@/types'
 import { ago, deviceState, formatMetricValue, statusRank, storageRiskAdvice, storageRiskStatus, storageUsageMetric } from '@/utils'
 import AlertRow from '@/components/AlertRow.vue'
+import BarChart from '@/components/BarChart.vue'
+import DonutChart from '@/components/DonutChart.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
@@ -18,6 +20,18 @@ const activeAlerts = computed(() => data.value?.alerts || [])
 const storageRows = computed(() => orderedDevices.value.map((device) => ({ device, point: storageUsageMetric(device) }))
   .filter((row) => row.point)
   .sort((a, b) => (b.point?.value || 0) - (a.point?.value || 0)))
+const healthDistribution = computed(() => [
+  { label: '健康', value: orderedDevices.value.filter((device) => deviceState(device) === 'healthy').length, color: '#118847' },
+  { label: '警告', value: orderedDevices.value.filter((device) => deviceState(device) === 'warning').length, color: '#c05600' },
+  { label: '严重', value: orderedDevices.value.filter((device) => deviceState(device) === 'critical').length, color: '#c51d23' },
+  { label: '离线', value: orderedDevices.value.filter((device) => deviceState(device) === 'offline').length, color: '#64748b' },
+])
+const capacityBars = computed(() => storageRows.value.slice(0, 8).map((row) => ({
+  label: `${row.device.name} / ${row.point?.labels?.mount || row.point?.labels?.device || '主存储'}`,
+  value: Number((row.point?.value || 0).toFixed(1)),
+  color: row.point && storageRiskStatus(row.point) === 'critical' ? '#c51d23' : row.point && storageRiskStatus(row.point) === 'warning' ? '#c05600' : '#2563eb',
+  hint: row.point ? storageRiskAdvice(row.point) : '等待采集',
+})))
 function capabilitySummary(device: Device): string {
   const latest = Object.keys(device.latest || {})
   const available = ['system.', 'container.', 'filesystem.', 'disk.', 'btrfs.']
@@ -28,6 +42,16 @@ function capabilitySummary(device: Device): string {
 
 <template>
   <PageState :loading="loading" :error="error" @retry="refresh">
+    <div class="chart-panel-grid">
+      <section class="card">
+        <div class="section-title"><div><h2>设备健康构成</h2><span class="muted">健康、警告、严重与离线分别统计</span></div></div>
+        <DonutChart :items="healthDistribution" center-label="设备" />
+      </section>
+      <section class="card">
+        <div class="section-title"><div><h2>容量使用率</h2><span class="muted">按风险与当前使用率排序</span></div></div>
+        <BarChart :items="capacityBars" unit="%" />
+      </section>
+    </div>
     <div class="overview-layout-v2">
       <section class="card device-health-card">
         <div class="section-title">
@@ -59,20 +83,14 @@ function capabilitySummary(device: Device): string {
 
     <section class="card capacity-risk-card">
       <div class="section-title"><div><h2>容量风险与预计写满时间</h2></div></div>
-      <div class="table-scroll">
-        <table class="fleet-table overview-matrix">
-          <thead><tr><th>设备 / 卷</th><th>当前使用率</th><th>采集能力</th><th>预计写满</th><th>风险</th><th>建议</th></tr></thead>
-          <tbody>
-            <tr v-for="row in storageRows.slice(0, 5)" :key="row.device.id">
-              <td class="device"><b>{{ row.device.name }}</b><small>{{ row.point?.labels?.mount || row.point?.labels?.device || '主存储' }}</small></td>
-              <td><b>{{ row.point ? formatMetricValue(row.point.value, row.point.unit) : '未知' }}</b></td>
-              <td>{{ capabilitySummary(row.device) }}</td>
-              <td>未知</td>
-              <td><StatusPill :status="row.point && storageRiskStatus(row.point) || 'unknown'" /></td>
-              <td>{{ row.point ? storageRiskAdvice(row.point) : '等待采集' }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="capacity-evidence-list">
+        <div v-for="row in storageRows.slice(0, 5)" :key="row.device.id" class="capacity-evidence-row">
+          <div><b>{{ row.device.name }}</b><small>{{ row.point?.labels?.mount || row.point?.labels?.device || '主存储' }}</small></div>
+          <strong>{{ row.point ? formatMetricValue(row.point.value, row.point.unit) : '未知' }}</strong>
+          <span>{{ capabilitySummary(row.device) }}</span>
+          <StatusPill :status="row.point && storageRiskStatus(row.point) || 'unknown'" />
+          <p>{{ row.point ? storageRiskAdvice(row.point) : '等待采集' }}</p>
+        </div>
       </div>
       <div v-if="!storageRows.length" class="inline-empty">尚无可用于容量判断的真实存储指标。</div>
     </section>

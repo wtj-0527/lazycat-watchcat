@@ -5,6 +5,8 @@ import { usePolling } from '@/composables'
 import type { Inspection } from '@/types'
 import { ago, dateTime, inspectionState, signed } from '@/utils'
 import PageState from '@/components/PageState.vue'
+import DonutChart from '@/components/DonutChart.vue'
+import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
@@ -28,6 +30,24 @@ const connectivityCheckState = computed(() => {
   const devices = reportChecks.value.devices
   if (typeof online !== 'number' || typeof devices !== 'number' || devices === 0) return 'unknown'
   return online === devices ? 'healthy' : 'warning'
+})
+const latestDistribution = computed(() => latest.value ? [
+  { label: '健康', value: latest.value.healthyCount, color: '#118847' },
+  { label: '警告', value: latest.value.warningCount, color: '#c05600' },
+  { label: '严重', value: latest.value.criticalCount, color: '#c51d23' },
+] : [])
+const inspectionTrend = computed<ChartSeries[]>(() => {
+  const items = [...(data.value?.items || [])].sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime()).slice(-14)
+  const points = (key: 'healthyCount' | 'warningCount' | 'criticalCount') => items.map((item) => ({
+    value: item[key],
+    at: dateTime(item.startedAt),
+    label: new Date(item.startedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
+  }))
+  return items.length ? [
+    { name: '健康', color: '#118847', points: points('healthyCount') },
+    { name: '警告', color: '#c05600', points: points('warningCount') },
+    { name: '严重', color: '#c51d23', points: points('criticalCount') },
+  ] : []
 })
 
 async function start() {
@@ -82,6 +102,17 @@ function exportReport(format: 'json' | 'pdf') {
         <StatCard label="通过" :value="latest.healthyCount" :hint="latest.deviceCount ? `${(latest.healthyCount / latest.deviceCount * 100).toFixed(1)}%` : '暂无设备'" tone="green" />
         <StatCard label="Warning" :value="latest.warningCount" :hint="`较上次 ${signed(latest.changeSummary?.warningDelta)}`" tone="amber" />
         <StatCard label="Critical" :value="latest.criticalCount" :hint="`较上次 ${signed(latest.changeSummary?.criticalDelta)}`" tone="red" />
+      </div>
+
+      <div class="chart-panel-grid">
+        <section class="card">
+          <div class="section-title"><div><h2>巡检结果趋势</h2><span class="muted">最近 14 次正式巡检</span></div></div>
+          <LineChart :series="inspectionTrend" :min="0" :height="230" />
+        </section>
+        <section class="card">
+          <div class="section-title"><div><h2>本次健康构成</h2><span class="muted">基于不可变巡检报告</span></div></div>
+          <DonutChart :items="latestDistribution" center-label="设备" />
+        </section>
       </div>
 
       <div class="inspection-layout">

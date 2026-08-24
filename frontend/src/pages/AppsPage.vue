@@ -5,6 +5,8 @@ import { usePolling } from '@/composables'
 import type { ApplicationItem } from '@/types'
 import { ago, bytes, formatNumber, percent } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
+import BarChart from '@/components/BarChart.vue'
+import DonutChart from '@/components/DonutChart.vue'
 import PageState from '@/components/PageState.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -37,6 +39,14 @@ const deviceColumns = computed(() => {
   for (const item of data.value?.items || []) for (const device of item.devices || []) devices.set(device.deviceId, device.deviceName || '未知设备')
   return [...devices.entries()].map(([id, name]) => ({ id, name }))
 })
+const statusDistribution = computed(() => [
+  { label: '运行正常', value: healthy.value, color: '#118847' },
+  { label: '已暂停', value: paused.value, color: '#c05600' },
+  { label: '异常', value: errors.value, color: '#c51d23' },
+])
+const resourceRanking = computed(() => filtered.value
+  .map((item) => ({ label: item.title || item.id, value: Number(item.resources.cpuPercent.toFixed(1)), hint: `内存 ${bytes(item.resources.memoryUsage)}` }))
+  .sort((a, b) => b.value - a.value).slice(0, 6))
 function instanceFor(item: ApplicationItem, deviceId: string) { return item.devices?.find((device) => device.deviceId === deviceId) }
 </script>
 
@@ -51,6 +61,16 @@ function instanceFor(item: ApplicationItem, deviceId: string) { return item.devi
       <select v-model="statusFilter"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
       <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
       <span class="filter-note">更新 {{ ago(data?.updatedAt) }}</span>
+    </div>
+    <div class="chart-panel-grid">
+      <section class="card">
+        <div class="section-title"><div><h2>应用状态构成</h2><span class="muted">按实时 Runtime 实例状态统计</span></div></div>
+        <DonutChart :items="statusDistribution" center-label="实例" />
+      </section>
+      <section class="card">
+        <div class="section-title"><div><h2>处理器占用排行</h2><span class="muted">当前筛选范围内前 6 个应用</span></div></div>
+        <BarChart :items="resourceRanking" unit="%" />
+      </section>
     </div>
     <section class="card app-matrix-card">
       <div class="section-title"><div><h2>{{ viewMode === 'app' ? '应用 × 设备' : '设备 × 应用' }}</h2><span class="muted">颜色、图形和文字共同表达状态；未知状态不计入健康率。</span></div><button class="row-link" @click="tableMode = !tableMode">{{ tableMode ? '切换为矩阵视图' : '切换为表格视图' }}</button></div>

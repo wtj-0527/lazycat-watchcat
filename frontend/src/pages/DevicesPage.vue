@@ -5,6 +5,7 @@ import { usePolling, useRovingTabs } from '@/composables'
 import type { Capability, Device, Metric, Overview } from '@/types'
 import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
+import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -25,7 +26,7 @@ const statusFilter = ref('all')
 const connectivityFilter = ref('all')
 const capabilityFilter = ref('all')
 const groupFilter = ref('all')
-const trend = ref<Metric[]>([])
+const trend = ref<Record<string, Metric[]>>({})
 const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail: Record<string, unknown>; createdAt: string }>>([])
 const deviceCapabilities = ref<Capability[]>([])
 interface SavedView { id: string; name: string; query: { query?: string; status?: string; connectivity?: string; capability?: string; group?: string } }
@@ -57,12 +58,16 @@ async function showDevice(id: string) {
   selectedTab.value = 'overview'
   try {
     selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(id)}`)
-    const [history, events, operations] = await Promise.all([
-      api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(id)}/metrics?name=system.memory.usage&hours=24`),
+    const metricNames = ['system.cpu.usage', 'system.memory.usage', 'filesystem.root.usage']
+    const [histories, events, operations] = await Promise.all([
+      Promise.all(metricNames.map(async (name) => {
+        const result = await api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(id)}/metrics?name=${encodeURIComponent(name)}&hours=24`)
+        return [name, result.items || []] as const
+      })),
       api<{ items: typeof deviceEvents.value }>(`/api/v1/devices/${encodeURIComponent(id)}/events`),
       api<{ capabilities: Array<Capability & { deviceId?: string }> }>('/api/v1/operations'),
     ])
-    trend.value = history.items || []
+    trend.value = Object.fromEntries(histories)
     deviceEvents.value = events.items || []
     deviceCapabilities.value = (operations.capabilities || []).filter((item) => !item.deviceId || item.deviceId === id)
   } catch (reason) {
@@ -97,7 +102,18 @@ async function editMetadata() {
   })
   selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(selected.value.id)}`)
 }
-function trendHeight(value: number) { return `${Math.max(2, Math.min(100, value))}%` }
+const trendSeries = computed<ChartSeries[]>(() => [
+  { name: '处理器', color: '#2563eb', points: trend.value['system.cpu.usage'] || [] },
+  { name: '内存', color: '#c05600', points: trend.value['system.memory.usage'] || [] },
+  { name: '存储', color: '#7c3aed', points: trend.value['filesystem.root.usage'] || [] },
+].filter((item) => item.points.length).map((item) => ({
+  ...item,
+  points: item.points.map((point) => ({
+    value: point.value,
+    at: dateTime(point.collectedAt),
+    label: new Date(point.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+  })),
+})))
 
 function closeDetail() {
   selected.value = undefined
@@ -194,9 +210,8 @@ const capabilityCount = computed(() => selected.value
               <a href="#settings">查看权限原因与修复步骤 →</a>
             </aside>
             <section class="card resource-trend-card">
-              <div class="section-title"><div><h2>24 小时资源趋势</h2><span class="muted">单轴显示内存使用率；点击系统页签查看原始历史数据。</span></div></div>
-              <div v-if="trend.length" class="trend-placeholder"><i v-for="(point, index) in trend" :key="`${point.collectedAt}-${index}`" :style="{ height: trendHeight(point.value) }" :title="`${formatMetricValue(point.value, point.unit)} · ${dateTime(point.collectedAt)}`" /></div>
-              <div v-else class="inline-empty">最近 24 小时没有内存历史数据。</div>
+              <div class="section-title"><div><h2>24 小时资源趋势</h2><span class="muted">处理器、内存和根文件系统均来自历史指标 API。</span></div></div>
+              <LineChart :series="trendSeries" :min="0" :max="100" unit="%" :height="210" />
             </section>
           </div>
         </div>

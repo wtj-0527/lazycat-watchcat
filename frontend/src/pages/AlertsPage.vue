@@ -7,6 +7,8 @@ import { ago, formatMetricValue } from '@/utils'
 import StatusPill from '@/components/StatusPill.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import PageState from '@/components/PageState.vue'
+import BarChart from '@/components/BarChart.vue'
+import DonutChart from '@/components/DonutChart.vue'
 
 const emit = defineEmits<{ toast: [message: string] }>()
 const query = ref(sessionStorage.getItem('maoyanSearch') || '')
@@ -41,6 +43,30 @@ const filtered = computed(() => (data.value?.items || []).filter((alert) => {
   return matchesQuery && matchesFilter && matchesSeverity && matchesTime
 }))
 const selectedAlert = computed(() => filtered.value.find((item) => item.fingerprint === selectedFingerprint.value) || filtered.value[0])
+const lifecycleDistribution = computed(() => [
+  { label: '触发中', value: (data.value?.items || []).filter((item) => item.status === 'firing').length, color: '#c51d23' },
+  { label: '已确认', value: counts.value.acknowledged, color: '#c05600' },
+  { label: '已静默', value: (data.value?.items || []).filter((item) => item.status === 'silenced').length, color: '#7c3aed' },
+  { label: '已恢复', value: counts.value.resolved, color: '#118847' },
+])
+const severityByTime = computed(() => {
+  const now = Date.now()
+  const windows = [
+    { label: '0–6h', from: 0, to: 6 },
+    { label: '6–12h', from: 6, to: 12 },
+    { label: '12–24h', from: 12, to: 24 },
+    { label: '1–7d', from: 24, to: 168 },
+  ]
+  return windows.map((window) => ({
+    label: window.label,
+    value: (data.value?.items || []).filter((item) => {
+      const observed = new Date(item.lastSeenAt || item.observedAt || item.collectedAt || 0).getTime()
+      const hours = (now - observed) / 3_600_000
+      return hours >= window.from && hours < window.to
+    }).length,
+    color: window.to <= 24 ? '#c51d23' : '#c05600',
+  }))
+})
 
 
 async function action(fingerprint: string, name: string) {
@@ -95,6 +121,16 @@ async function bulkAcknowledge() {
       <button class="secondary-button" :disabled="!filtered.length" @click="bulkAcknowledge">批量确认</button>
     </div>
     <p v-if="actionEvidence" class="operation-evidence" :class="actionEvidence.status" role="status">{{ actionEvidence.message }}</p>
+    <div class="chart-panel-grid">
+      <section class="card">
+        <div class="section-title"><div><h2>告警生命周期构成</h2><span class="muted">触发、确认、静默与恢复分别统计</span></div></div>
+        <DonutChart :items="lifecycleDistribution" center-label="告警" />
+      </section>
+      <section class="card">
+        <div class="section-title"><div><h2>最近事件分布</h2><span class="muted">按最后一次观测时间聚合</span></div></div>
+        <BarChart :items="severityByTime" />
+      </section>
+    </div>
     <div class="alert-workbench">
       <section class="card alert-list-panel">
         <div class="section-title compact"><div><h2>{{ filtered.length }} 个告警</h2></div></div>

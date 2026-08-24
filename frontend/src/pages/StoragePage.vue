@@ -5,17 +5,26 @@ import { usePolling } from '@/composables'
 import type { Capability, Metric } from '@/types'
 import { ago, bytes, formatMetricValue, metricLabel, storageRiskAdvice, storageRiskStatus } from '@/utils'
 import PageState from '@/components/PageState.vue'
+import BarChart from '@/components/BarChart.vue'
+import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
-interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[]; summary: { totalBytes: number; fillWithin30Days: number } }
+interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[]; summary: { totalBytes: number; fillWithin30Days: number }; history: Metric[]; historyTarget?: Metric }
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
   const [storage, operations] = await Promise.all([
     api<{ items: Metric[] | null; updatedAt: string; summary: { totalBytes: number; fillWithin30Days: number } }>('/api/v1/storage'),
     api<{ capabilities: Capability[] | null }>('/api/v1/operations')
       .catch(() => ({ capabilities: null })),
   ])
-  return { ...storage, items: storage.items || [], summary: storage.summary || { totalBytes: 0, fillWithin30Days: 0 }, capabilities: operations.capabilities || [] }
+  const items = storage.items || []
+  const historyTarget = [...items]
+    .filter((item) => item.name === 'filesystem.root.usage' || item.name === 'btrfs.usage')
+    .sort((a, b) => b.value - a.value)[0]
+  const history = historyTarget?.deviceId
+    ? await api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(historyTarget.deviceId)}/metrics?name=${encodeURIComponent(historyTarget.name)}&hours=336`).then((result) => result.items || []).catch(() => [])
+    : []
+  return { ...storage, items, history, historyTarget, summary: storage.summary || { totalBytes: 0, fillWithin30Days: 0 }, capabilities: operations.capabilities || [] }
 })
 const groups = computed(() => {
   const result: Record<string, Metric[]> = {}
@@ -37,6 +46,32 @@ const display = (items: Metric[], names: string[], digits = 1) => {
   return point ? formatMetricValue(point.value, point.unit, digits) : '暂无数据'
 }
 const capabilityStatus = (name: string) => data.value?.capabilities.find((item) => item.capability.includes(name))
+const capacityTrend = computed<ChartSeries[]>(() => {
+  const target = data.value?.historyTarget
+  const points = (data.value?.history || []).filter((point) => {
+    if (!target) return false
+    return (point.labels?.mount || '') === (target.labels?.mount || '') && (point.labels?.device || '') === (target.labels?.device || '')
+  })
+  return points.length ? [{
+    name: `${target?.deviceName || '设备'} · ${target?.labels?.mount || target?.labels?.device || '主存储'}`,
+    color: '#2563eb',
+    points: points.map((point) => ({
+      value: point.value,
+      at: new Date(point.collectedAt).toLocaleString('zh-CN'),
+      label: new Date(point.collectedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
+    })),
+  }] : []
+})
+const temperatureBars = computed(() => (data.value?.items || [])
+  .filter((item) => item.name === 'disk.temperature')
+  .sort((a, b) => b.value - a.value)
+  .slice(0, 8)
+  .map((item) => ({
+    label: `${item.deviceName || '设备'} / ${item.labels?.device || item.labels?.sensor || '磁盘'}`,
+    value: Math.round(item.value),
+    color: item.value >= 55 ? '#c51d23' : item.value >= 45 ? '#c05600' : '#2563eb',
+    hint: `采集于 ${ago(item.collectedAt)}`,
+  })))
 </script>
 
 <template>
@@ -47,6 +82,17 @@ const capabilityStatus = (name: string) => data.value?.capabilities.find((item) 
       <StatCard label="总容量" :value="bytes(data?.summary.totalBytes || 0)" hint="基于文件系统可用量与使用率计算" />
       <StatCard label="Critical" :value="critical" hint="需要立即处理" :tone="critical ? 'red' : 'green'" />
       <StatCard label="30 天内写满" :value="data?.summary.fillWithin30Days || 0" hint="基于最近 30 天真实增长率" tone="amber" />
+    </div>
+
+    <div class="chart-panel-grid">
+      <section class="card">
+        <div class="section-title"><div><h2>高风险卷 · 14 天使用率趋势</h2><span class="muted">自动选择当前使用率最高且具备历史证据的卷</span></div></div>
+        <LineChart :series="capacityTrend" :min="0" :max="100" unit="%" :height="230" />
+      </section>
+      <section class="card">
+        <div class="section-title"><div><h2>磁盘温度</h2><span class="muted">SMART 实时温度，颜色随阈值变化</span></div></div>
+        <BarChart :items="temperatureBars" unit="°C" />
+      </section>
     </div>
 
     <section class="card storage-risk-card">
