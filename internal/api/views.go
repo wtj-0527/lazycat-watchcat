@@ -210,7 +210,7 @@ func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) 
 	out := map[string]applicationResourceView{}
 	containers := map[string]map[string]struct{}{}
 	for _, metric := range metrics {
-		if now.Sub(metric.CollectedAt) > 2*time.Minute {
+		if now.Sub(metric.CollectedAt) > 6*time.Minute {
 			continue
 		}
 		appID := metric.Labels["app"]

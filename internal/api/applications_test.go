@@ -25,7 +25,7 @@ func TestAggregateApplicationResourcesIgnoresStaleContainers(t *testing.T) {
 		{Name: "container.cpu.usage", Value: 12.5, Labels: map[string]string{"app": "app.one", "container": "a"}, CollectedAt: now},
 		{Name: "container.cpu.usage", Value: 7.5, Labels: map[string]string{"app": "app.one", "container": "b"}, CollectedAt: now},
 		{Name: "container.memory.usage", Value: 1024, Labels: map[string]string{"app": "app.one", "container": "a"}, CollectedAt: now},
-		{Name: "container.memory.usage", Value: 9999, Labels: map[string]string{"app": "app.one", "container": "old"}, CollectedAt: now.Add(-3 * time.Minute)},
+		{Name: "container.memory.usage", Value: 9999, Labels: map[string]string{"app": "app.one", "container": "old"}, CollectedAt: now.Add(-7 * time.Minute)},
 	}
 	item := aggregateApplicationResources(metrics, now)["app.one"]
 	if item.Containers != 2 || item.CPUPercent != 20 || item.MemoryUsage != 1024 {

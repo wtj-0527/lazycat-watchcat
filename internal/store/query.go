@@ -38,7 +38,7 @@ func (s *Store) DeviceByID(ctx context.Context, id string) (protocol.Device, err
 }
 
 func (s *Store) ListLatestMetrics(ctx context.Context) ([]LatestMetric, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.device_id,m.name,m.value,m.unit,m.labels_json,m.collected_at FROM metrics m JOIN (SELECT device_id,name,labels_json,MAX(collected_at) AS max_time FROM metrics GROUP BY device_id,name,labels_json) latest ON latest.device_id=m.device_id AND latest.name=m.name AND latest.labels_json=m.labels_json AND latest.max_time=m.collected_at ORDER BY m.device_id,m.name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,name,value,unit,labels_json,collected_at FROM latest_metrics ORDER BY device_id,name`)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (s *Store) ListLatestMetrics(ctx context.Context) ([]LatestMetric, error) {
 }
 
 func (s *Store) LatestMetricsForDevice(ctx context.Context, deviceID string) ([]LatestMetric, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.device_id,m.name,m.value,m.unit,m.labels_json,m.collected_at FROM metrics m JOIN (SELECT name,labels_json,MAX(collected_at) AS max_time FROM metrics WHERE device_id=? GROUP BY name,labels_json) latest ON latest.name=m.name AND latest.labels_json=m.labels_json AND latest.max_time=m.collected_at WHERE m.device_id=? ORDER BY m.name`, deviceID, deviceID)
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,name,value,unit,labels_json,collected_at FROM latest_metrics WHERE device_id=? ORDER BY name`, deviceID)
 	if err != nil {
 		return nil, err
 	}

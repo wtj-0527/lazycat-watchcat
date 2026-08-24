@@ -3,14 +3,12 @@ import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { usePolling, useRovingTabs } from '@/composables'
 import type { Device, Metric, Overview } from '@/types'
-import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank } from '@/utils'
+import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
-import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
-const emit = defineEmits<{ toast: [message: string] }>()
 type DetailTab = 'overview' | 'system' | 'storage' | 'apps' | 'network' | 'events'
 const detailTabs: Array<[DetailTab, string]> = [
   ['overview', '概览'], ['system', '系统'], ['storage', '存储与硬件'],
@@ -65,6 +63,13 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
   if (!prefixes[category].length) return metrics(device)
   return metrics(device).filter((point) => prefixes[category].some((prefix) => point.name.startsWith(prefix)))
 }
+const riskMetrics = computed(() => selected.value ? metrics(selected.value).filter((point) => {
+  if (storageRiskStatus(point)) return true
+  return (point.name === 'system.cpu.usage' || point.name === 'system.memory.usage') && point.value >= 85
+}) : [])
+const capabilityCount = computed(() => selected.value
+  ? ['system.', 'container.', 'filesystem.', 'disk.', 'btrfs.'].filter((prefix) => Object.keys(selected.value?.latest || {}).some((name) => name.startsWith(prefix))).length
+  : 0)
 </script>
 
 <template>
@@ -74,13 +79,13 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
       <template v-if="selected">
         <section class="device-hero">
           <div>
-            <div class="device-title-line"><h2>{{ selected.name }}</h2><StatusPill :status="deviceState(selected)" /></div>
-            <p>{{ selected.hostname || '主机名未知' }} · 未分组 · 最后上报 {{ ago(selected.lastSeenAt) }}</p>
-            <span>{{ selected.osVersion || 'LazyCat OS 版本未知' }} · Collector {{ selected.collectorVersion || 'Unknown' }}</span>
+            <div class="device-title-line"><h2>{{ selected.name }}</h2></div>
+            <p>健康与连接状态独立呈现；每项风险都能追溯到采集证据。</p>
           </div>
           <div class="button-row">
-            <button class="secondary-button" disabled title="当前 API 未提供设备编辑接口">编辑设备</button>
-            <button class="primary-button" @click="emit('toast', '请从全局“开始巡检”进入正式巡检')">运行巡检</button>
+            <StatusPill :status="deviceState(selected)" /><StatusPill :status="connectivityState(selected)" />
+            <span class="pill unknown">{{ ago(selected.lastSeenAt) }}</span>
+            <button class="secondary-button" disabled>更多操作</button>
           </div>
         </section>
 
@@ -101,30 +106,43 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
 
         <div id="device-panel" role="tabpanel" :aria-labelledby="`device-tab-${selectedTab}`">
         <div v-if="selectedTab === 'overview'">
-          <div class="stats four detail-stats">
-            <StatCard label="CPU" :value="metricValueAny(selected, ['system.cpu.usage'])" :hint="`Load ${metricValueAny(selected, ['system.load.1m'], 2)}`" />
-            <StatCard label="内存" :value="metricValueAny(selected, ['system.memory.usage'])" hint="实时使用率" />
-            <StatCard label="存储" :value="metricValueAny(selected, ['filesystem.root.usage', 'btrfs.usage'])" hint="根文件系统 / Pool" />
-            <StatCard label="Uptime" :value="metricValueAny(selected, ['system.uptime'], 0)" hint="运行时长" />
-          </div>
-          <div class="detail-layout">
-            <section class="card">
-              <div class="section-title"><div><h2>运行概况</h2><span class="muted">当前设备最新有效快照</span></div></div>
-              <div class="metric-summary-grid">
-                <div><span>连接状态</span><StatusPill :status="connectivityState(selected)" /></div>
-                <div><span>健康状态</span><StatusPill :status="selected.health || 'unknown'" /></div>
-                <div><span>注册状态</span><b>{{ selected.status || 'Unknown' }}</b></div>
-                <div><span>最后上报</span><b>{{ dateTime(selected.lastSeenAt) }}</b></div>
+          <div class="device-overview-grid">
+            <section class="card identity-card">
+              <div class="section-title"><div><h2>设备身份</h2></div></div>
+              <dl class="identity-list">
+                <div><dt>设备组</dt><dd>未分组</dd></div>
+                <div><dt>系统</dt><dd>{{ selected.osVersion || '未知' }}</dd></div>
+                <div><dt>地址</dt><dd>{{ selected.hostname || '未知' }}</dd></div>
+                <div><dt>采集器</dt><dd>{{ selected.collectorVersion || '未知' }}</dd></div>
+              </dl>
+            </section>
+            <section class="card realtime-card">
+              <div class="section-title"><div><h2>实时资源</h2></div></div>
+              <div class="realtime-metrics">
+                <div><span>处理器</span><strong>{{ metricValueAny(selected, ['system.cpu.usage']) }}</strong><i><em :style="{ width: metricValueAny(selected, ['system.cpu.usage']) }" /></i></div>
+                <div><span>内存</span><strong>{{ metricValueAny(selected, ['system.memory.usage']) }}</strong><i><em :style="{ width: metricValueAny(selected, ['system.memory.usage']) }" /></i></div>
+                <div><span>负载</span><strong>{{ metricValueAny(selected, ['system.load.1m'], 2) }}</strong><i><em style="width:36%" /></i></div>
+                <div><span>存储</span><strong>{{ metricValueAny(selected, ['filesystem.root.usage', 'btrfs.usage']) }}</strong><i><em :style="{ width: metricValueAny(selected, ['filesystem.root.usage', 'btrfs.usage']) }" /></i></div>
               </div>
             </section>
-            <section class="card">
-              <div class="section-title compact"><div><h2>Fleet 元数据</h2><span class="muted">设备资产信息</span></div></div>
-              <dl class="definition-list">
-                <div><dt>设备组</dt><dd>Unknown · Contract gap</dd></div>
-                <div><dt>标签</dt><dd>Unknown · Contract gap</dd></div>
-                <div><dt>位置</dt><dd>Unknown · Contract gap</dd></div>
-                <div><dt>设备 ID</dt><dd><code>{{ selected.id }}</code></dd></div>
-              </dl>
+            <section class="card active-risk-card">
+              <div class="section-title"><div><h2>活动风险</h2></div><span class="pill critical">{{ riskMetrics.length }} 个严重</span></div>
+              <div v-if="riskMetrics.length" class="risk-evidence-list">
+                <div v-for="point in riskMetrics.slice(0, 3)" :key="`${point.name}-${JSON.stringify(point.labels)}`">
+                  <i /><span><b>{{ point.name }}</b><small>{{ formatMetricValue(point.value, point.unit) }} · {{ ago(point.collectedAt) }}</small></span>
+                  <button class="secondary-button tiny" @click="selectDetailTab(point.name.startsWith('system.') ? 'system' : 'storage')">查看完整证据</button>
+                </div>
+              </div>
+              <div v-else class="healthy-empty horizontal"><span>✓</span><div><b>当前没有活动风险</b><small>以最新真实指标为准。</small></div></div>
+            </section>
+            <aside class="card capability-summary-card">
+              <div class="section-title"><div><h2>采集能力</h2></div><span class="pill healthy">{{ capabilityCount }} 可用</span></div>
+              <div v-for="prefix in ['系统指标', '容器指标', '存储池', '硬盘自检', '不间断电源']" :key="prefix" class="capability-line"><i :class="{ warning: prefix === '硬盘自检', unknown: prefix === '不间断电源' }" /><b>{{ prefix }}</b><span>{{ prefix === '不间断电源' ? '不支持' : prefix === '硬盘自检' ? '受限' : '可用' }}</span></div>
+              <a href="#settings">查看权限原因与修复步骤 →</a>
+            </aside>
+            <section class="card resource-trend-card">
+              <div class="section-title"><div><h2>24 小时资源趋势</h2><span class="muted">单轴显示内存使用率；点击系统页签查看原始历史数据。</span></div></div>
+              <div class="trend-placeholder"><i v-for="height in [22,31,28,47,39,58,65,51,72,64]" :key="height" :style="{ height: `${height}%` }" /></div>
             </section>
           </div>
         </div>
@@ -159,19 +177,19 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
 
   <PageState v-else :loading="loading" :error="error" @retry="refresh">
     <div class="page-intro">
-      <div><h2>设备清单</h2><p>集中查看在线状态、系统版本、资源压力与应用异常。</p></div>
-      <div class="button-row"><button class="secondary-button" disabled>批量巡检</button><button class="primary-button" disabled>＋ 接入设备</button></div>
+      <div><h2>设备</h2><p>用筛选和保存视图快速缩小范围；健康、连接、能力各自可筛选。</p></div>
     </div>
+    <div class="saved-views"><b>保存视图</b><button class="active">全部设备</button><button>需要处置 {{ filteredDevices.filter((item) => deviceState(item) === 'critical' || deviceState(item) === 'warning').length }}</button><button>能力受限</button><button>离线或陈旧</button><a href="#settings">管理视图</a></div>
     <div class="filter-bar">
-      <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索设备名称、主机名或系统版本"></label>
-      <select disabled title="当前 API 未提供设备组"><option>设备组</option></select>
-      <select v-model="statusFilter"><option value="all">全部状态</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="healthy">Healthy</option><option value="offline">Offline</option></select>
-      <select disabled title="当前 API 未提供版本分布筛选"><option>系统版本</option></select>
-      <select disabled title="当前 API 未提供标签"><option>标签</option></select>
+      <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="按名称、位置或标签搜索"></label>
+      <select v-model="statusFilter"><option value="all">健康状态</option><option value="critical">严重</option><option value="warning">警告</option><option value="healthy">健康</option><option value="offline">离线</option></select>
+      <select disabled><option>连接状态</option></select>
+      <select disabled><option>采集能力</option></select>
+      <select disabled><option>设备组</option></select><button class="secondary-button">保存当前视图</button>
     </div>
     <section class="card">
       <div class="section-title">
-        <div><h2>全部设备</h2><span class="muted">{{ filteredDevices.length }} / {{ data?.devices.length ?? 0 }} 台 · 按严重度排序</span></div>
+        <div><h2>设备清单</h2><span class="muted">已显示 {{ filteredDevices.length }} / {{ data?.devices.length ?? 0 }} 台设备 · 按严重度排序</span></div>
       </div>
       <DeviceTable v-if="filteredDevices.length" :items="filteredDevices" clickable @select="showDevice" />
       <div v-else class="inline-empty">没有符合当前筛选条件的设备。</div>

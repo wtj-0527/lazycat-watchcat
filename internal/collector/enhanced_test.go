@@ -84,6 +84,23 @@ func TestDockerStatPointsCalculateResourceMetrics(t *testing.T) {
 	}
 }
 
+func TestDockerStatsTargetsRotateAcrossRunningContainers(t *testing.T) {
+	collector := NewDockerCollector("/not-used")
+	collector.statsBatch = 2
+	running := []dockerContainer{{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "d"}, {ID: "e"}}
+
+	first := collector.nextStatsTargets(running)
+	second := collector.nextStatsTargets(running)
+	third := collector.nextStatsTargets(running)
+	got := []string{first[0].ID, first[1].ID, second[0].ID, second[1].ID, third[0].ID, third[1].ID}
+	want := []string{"a", "b", "c", "d", "e", "a"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("rotation=%v want=%v", got, want)
+		}
+	}
+}
+
 func TestMetricFiltersAvoidVirtualNoise(t *testing.T) {
 	if includeNetworkInterface("lo") || includeNetworkInterface("veth1234") || !includeNetworkInterface("eth0") || !includeNetworkInterface("lzc-br0") {
 		t.Fatal("unexpected network interface filter result")

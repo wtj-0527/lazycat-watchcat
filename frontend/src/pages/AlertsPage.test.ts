@@ -50,10 +50,10 @@ describe('AlertsPage', () => {
     const wrapper = mount(AlertsPage)
     await flushPromises()
 
-    const warningTab = wrapper.findAll('.alert-filter-tabs button')
-      .find((button) => button.text().includes('Warning'))
-    expect(warningTab?.get('b').text()).toBe('1')
-    await warningTab!.trigger('click')
+    const firingTab = wrapper.findAll('.alert-filter-tabs button')
+      .find((button) => button.text().includes('触发中'))
+    expect(firingTab?.get('b').text()).toBe('1')
+    await firingTab!.trigger('click')
 
     expect(wrapper.get('.triage-list').text()).toContain(alert.message)
     expect(wrapper.get('.triage-list').text()).not.toContain('已恢复的 Warning 告警')
@@ -76,7 +76,7 @@ describe('AlertsPage', () => {
     const onToast = vi.fn()
     const wrapper = mount(AlertsPage, { props: { onToast } })
     await flushPromises()
-    await wrapper.get('.alert-actions button').trigger('click')
+    await wrapper.findAll('.alert-detail-actions button')[1].trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('已回读确认告警状态：已确认')
@@ -98,9 +98,9 @@ describe('AlertsPage', () => {
 
     const wrapper = mount(AlertsPage)
     await flushPromises()
-    const buttons = wrapper.findAll('.alert-actions button')
-    ;(buttons[0].element as HTMLButtonElement).click()
+    const buttons = wrapper.findAll('.alert-detail-actions button')
     ;(buttons[1].element as HTMLButtonElement).click()
+    ;(buttons[0].element as HTMLButtonElement).click()
     await flushPromises()
 
     const mutationCalls = apiMock.mock.calls.filter(([path]) => !String(path).includes('?includeResolved=true'))

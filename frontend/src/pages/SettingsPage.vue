@@ -24,8 +24,10 @@ const tabs: Array<[Tab, string]> = [
   ['onboarding', '设备接入'], ['groups', '设备组与标签'], ['capabilities', 'Collector 能力'], ['thresholds', '告警阈值'],
   ['notifications', '通知渠道'], ['maintenance', '维护窗口'], ['retention', '数据保留'], ['audit', '用户与审计'],
 ]
+const props = defineProps<{ initialTab?: Tab }>()
+const isOnboardingRoute = computed(() => props.initialTab === 'onboarding')
 const emit = defineEmits<{ toast: [message: string] }>()
-const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, 'onboarding', 'settings-tab-')
+const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, props.initialTab || 'onboarding', 'settings-tab-')
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
 const backupLoading = ref(false)
@@ -119,8 +121,20 @@ async function resetStability() {
 
 <template>
   <PageState :loading="loading" :error="error" @retry="refresh">
-    <div class="page-intro"><div><h2>设置</h2><p>管理 Collector 接入、能力、通知、数据保留与生产运维。</p></div></div>
-    <div class="settings-tabs" role="tablist" aria-label="设置分类">
+    <div class="page-intro">
+      <div>
+        <h2>{{ isOnboardingRoute ? '接入新设备' : '设置与治理' }}</h2>
+        <p>{{ isOnboardingRoute ? '一次完成配对、连通性验证、能力探测和权限修复。' : '所有变更均记录操作、时间与服务端回读结果。' }}</p>
+      </div>
+    </div>
+    <div v-if="isOnboardingRoute" class="onboarding-progress" aria-label="接入步骤">
+      <div class="done"><b>1</b><span>选择方式</span></div>
+      <div class="done"><b>2</b><span>生成配对码</span></div>
+      <div class="active"><b>3</b><span>验证连接</span></div>
+      <div><b>4</b><span>能力探测</span></div>
+      <div><b>5</b><span>完成</span></div>
+    </div>
+    <div v-else class="settings-tabs" role="tablist" aria-label="设置分类">
       <button
         v-for="[key, label] in tabs"
         :id="`settings-tab-${key}`"
@@ -140,11 +154,11 @@ async function resetStability() {
     <template v-if="data && tab === 'onboarding'">
       <div class="onboarding-layout">
         <section class="card">
-          <div class="section-title"><div><h2>接入新设备</h2><span class="muted">在目标 LazyCat 安装只读 Collector，然后使用一次性配对码完成认证。</span></div></div>
+          <div class="section-title"><div><h2>验证设备连接</h2><span class="muted">在目标 LazyCat 设备安装猫眼后输入配对码；连接成功后自动进行安全握手。</span></div></div>
           <ol class="onboarding-steps">
-            <li><span>1</span><div><b>安装 Collector</b><p>远端 Collector 使用 mTLS 上报；当前猫眼 LPK 已内置本机 Collector，无需安装第二个 LPK。</p></div><StatusPill :status="data.settings.embeddedCollector ? 'available' : 'unknown'" /></li>
-            <li><span>2</span><div><b>生成一次性配对码</b><p>配对码由真实 API 生成，只能使用一次并具有到期时间。</p></div><button class="primary-button" :disabled="pairingLoading" @click="createPairingCode">{{ pairingLoading ? '生成中…' : '生成配对码' }}</button></li>
-            <li><span>3</span><div><b>完成认证与首次上报</b><p>设备成功配对并上报指标后，会自动出现在设备清单和 Fleet Overview。</p></div><StatusPill status="unknown" /></li>
+            <li><span>1</span><div><b>配对请求</b><p>远端 Collector 使用 mTLS 上报；当前猫眼 LPK 已内置本机 Collector。</p></div><StatusPill :status="data.settings.embeddedCollector ? 'available' : 'unknown'" /></li>
+            <li><span>2</span><div><b>一次性配对码</b><p>配对码由真实 API 生成，只能使用一次并具有到期时间。</p></div><button class="primary-button" :disabled="pairingLoading" @click="createPairingCode">{{ pairingLoading ? '生成中…' : '生成配对码' }}</button></li>
+            <li><span>3</span><div><b>首次数据上报</b><p>完成身份验证后等待第一批真实系统指标。</p></div><StatusPill status="unknown" /></li>
           </ol>
           <div v-if="pairing" class="pairing-code-box"><span>一次性配对码</span><strong>{{ pairing.code }}</strong><small>有效期至 {{ dateTime(pairing.expiresAt) }}</small></div>
         </section>

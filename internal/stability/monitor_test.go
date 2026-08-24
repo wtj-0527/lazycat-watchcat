@@ -23,13 +23,19 @@ func TestObservationPersistsAcrossMonitorRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.SampleCount < 1 || !status.DatabaseIntegrityOK {
+	if status.SampleCount < 1 || !status.DatabaseIntegrityOK || status.DatabaseIntegrityAt == nil {
 		t.Fatalf("unexpected first sample: %+v", status)
+	}
+	firstIntegrityAt := *status.DatabaseIntegrityAt
+	first.sample(context.Background())
+	resampled := first.Current()
+	if resampled.SampleCount != status.SampleCount+1 || resampled.DatabaseIntegrityAt == nil || !resampled.DatabaseIntegrityAt.Equal(firstIntegrityAt) {
+		t.Fatalf("integrity check should be reused inside cadence: first=%+v resampled=%+v", status, resampled)
 	}
 	second := New(st, logger, time.Hour)
 	second.loadOrReset(context.Background())
 	loaded := second.Current()
-	if !loaded.StartedAt.Equal(status.StartedAt) || loaded.SampleCount != status.SampleCount {
-		t.Fatalf("observation was not persisted: first=%+v loaded=%+v", status, loaded)
+	if !loaded.StartedAt.Equal(resampled.StartedAt) || loaded.SampleCount != resampled.SampleCount || loaded.DatabaseIntegrityAt == nil {
+		t.Fatalf("observation was not persisted: first=%+v loaded=%+v", resampled, loaded)
 	}
 }

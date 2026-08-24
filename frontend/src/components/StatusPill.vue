@@ -3,14 +3,14 @@ import { computed } from 'vue'
 
 const props = defineProps<{ status: string }>()
 const label = computed(() => ({
-  critical: 'Critical',
-  warning: 'Warning',
-  healthy: 'Healthy',
-  unknown: 'Unknown',
-  online: 'Online',
-  stale: 'Stale',
-  offline: 'Offline',
-  revoked: 'Revoked',
+  critical: '严重',
+  warning: '警告',
+  healthy: '健康',
+  unknown: '未知',
+  online: '在线',
+  stale: '陈旧',
+  offline: '离线',
+  revoked: '已撤销',
   firing: '触发中',
   acknowledged: '已确认',
   silenced: '已静默',

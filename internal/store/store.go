@@ -62,6 +62,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_device_certificates_device ON device_certificates(device_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_device_name_time ON metrics(device_id,name,collected_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_received_at ON metrics(received_at);`,
+		`CREATE TABLE IF NOT EXISTS latest_metrics (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			value REAL NOT NULL,
+			unit TEXT NOT NULL DEFAULT '',
+			labels_json TEXT NOT NULL DEFAULT '{}',
+			collected_at TEXT NOT NULL,
+			received_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,name,labels_json)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_latest_metrics_device_name ON latest_metrics(device_id,name);`,
 		`CREATE TABLE IF NOT EXISTS alert_instances (
 			fingerprint TEXT PRIMARY KEY,
 			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -184,6 +195,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, datetime('now'))`)
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, datetime('now'))`)
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(7, datetime('now'))`)
 	return nil
 }
 
@@ -362,9 +374,26 @@ func (s *Store) IngestMetrics(ctx context.Context, batch protocol.MetricBatch) e
 		return err
 	}
 	defer stmt.Close()
+	latestStmt, err := tx.PrepareContext(ctx, `INSERT INTO latest_metrics(device_id,name,value,unit,labels_json,collected_at,received_at)
+		VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(device_id,name,labels_json) DO UPDATE SET
+			value=excluded.value,
+			unit=excluded.unit,
+			collected_at=excluded.collected_at,
+			received_at=excluded.received_at
+		WHERE excluded.collected_at>=latest_metrics.collected_at`)
+	if err != nil {
+		return err
+	}
+	defer latestStmt.Close()
 	for _, point := range batch.Points {
 		labels, _ := json.Marshal(point.Labels)
-		if _, err := stmt.ExecContext(ctx, batch.DeviceID, point.Name, point.Value, point.Unit, string(labels), point.CollectedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		collectedAt := point.CollectedAt.UTC().Format(time.RFC3339Nano)
+		receivedAt := now.Format(time.RFC3339Nano)
+		if _, err := stmt.ExecContext(ctx, batch.DeviceID, point.Name, point.Value, point.Unit, string(labels), collectedAt, receivedAt); err != nil {
+			return err
+		}
+		if _, err := latestStmt.ExecContext(ctx, batch.DeviceID, point.Name, point.Value, point.Unit, string(labels), collectedAt, receivedAt); err != nil {
 			return err
 		}
 	}

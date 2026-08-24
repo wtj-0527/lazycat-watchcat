@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+.env.*
+*.lpk
+*.lpk.sha256
+dist
+frontend/node_modules
+web
+data

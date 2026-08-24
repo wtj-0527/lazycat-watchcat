@@ -83,7 +83,6 @@ func main() {
 		retentionTicker := time.NewTicker(time.Hour)
 		defer alertTicker.Stop()
 		defer retentionTicker.Stop()
-		_ = handlers.SyncAlerts(context.Background())
 		notifier.ProcessPending(context.Background(), 20)
 		for {
 			select {

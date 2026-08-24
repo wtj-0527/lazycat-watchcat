@@ -28,57 +28,49 @@ const filtered = computed(() => (data.value?.items || []).filter((item) => {
     || (statusFilter.value === 'critical' && status === 'critical')
   return matchesQuery && matchesStatus
 }))
-const statusLabel = (status: string) => ({ running: '运行中', paused: '已暂停', starting: '启动中', stopping: '停止中', error: '异常' } as Record<string, string>)[status] || status || 'Unknown'
+const statusLabel = (status: string) => ({ running: '健康', paused: '暂停', starting: '启动中', stopping: '停止中', error: '严重' } as Record<string, string>)[status] || status || '未知'
+const deviceColumns = computed(() => {
+  const devices = new Map<string, string>()
+  for (const item of data.value?.items || []) for (const device of item.devices || []) devices.set(device.deviceId, device.deviceName || '未知设备')
+  return [...devices.entries()].map(([id, name]) => ({ id, name }))
+})
+function instanceFor(item: ApplicationItem, deviceId: string) { return item.devices?.find((device) => device.deviceId === deviceId) }
 </script>
 
 <template>
   <PageState :loading="loading" :error="error" :empty="data?.items.length === 0" empty-title="尚无应用数据" empty-text="LazyCat Package Manager 尚未返回当前用户的应用状态。" @retry="refresh">
     <div class="page-intro">
-      <div><h2>应用健康</h2><p>从应用视角定位版本漂移、容器异常与跨设备故障。</p></div>
-      <span v-if="data?.stale" class="stale-banner">Stale · 当前显示最近一次成功快照</span>
+      <div><h2>应用矩阵</h2><p>从应用视角判断影响范围；矩阵允许组件内部横向滚动，不让页面根节点溢出。</p></div>
+      <div class="view-toggle"><button class="active">按应用</button><button>按设备</button></div>
     </div>
-    <div class="stats five">
-      <StatCard label="LPK 应用" :value="data?.items.length ?? 0" hint="全 Fleet" />
-      <StatCard label="运行正常" :value="healthy" :hint="percent(healthy, instances)" tone="green" />
-      <StatCard label="Degraded" :value="paused" hint="暂停或未完全运行" :tone="paused ? 'amber' : 'green'" />
-      <StatCard label="Critical" :value="errors" hint="实例异常" :tone="errors ? 'red' : 'green'" />
-      <StatCard label="版本漂移" :value="versionDrift" hint="跨设备版本不一致" :tone="versionDrift ? 'amber' : 'green'" />
+    <div class="filter-bar app-filter-bar">
+      <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称"></label>
+      <select v-model="statusFilter"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
+      <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
+      <span class="filter-note">更新 {{ ago(data?.updatedAt) }}</span>
     </div>
-    <div class="filter-bar">
-      <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称或 App ID"></label>
-      <select v-model="statusFilter"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">Degraded</option><option value="critical">Critical</option></select>
-      <span class="filter-note">来源：LazyCat Package Manager · 更新 {{ ago(data?.updatedAt) }}</span>
-    </div>
-    <section class="card">
-      <div class="section-title"><div><h2>应用矩阵</h2><span class="muted">每一行展示真实应用部署、实例、版本和容器资源</span></div></div>
+    <section class="card app-matrix-card">
+      <div class="section-title"><div><h2>应用 × 设备</h2><span class="muted">颜色、图形和文字共同表达状态；未知状态不计入健康率。</span></div><button class="row-link">切换为表格视图</button></div>
       <div class="table-scroll">
         <table class="fleet-table app-matrix">
-          <thead><tr><th>应用部署</th><th>结果</th><th>设备实例</th><th>版本</th><th>运行状态</th><th>容器资源</th><th>网络 / 块 IO</th></tr></thead>
+          <thead><tr><th>应用</th><th v-for="device in deviceColumns" :key="device.id">{{ device.name }}</th><th v-if="!deviceColumns.length">当前设备</th></tr></thead>
           <tbody>
             <tr v-for="item in filtered" :key="item.id">
-              <td class="device"><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></td>
-              <td><StatusPill :status="appStatus(item)" /></td>
-              <td>
-                <div v-if="item.devices?.length" class="instance-stack">
-                  <span v-for="device in item.devices" :key="device.deployId"><i :class="device.status" />{{ device.deviceName || 'Unknown device' }} · {{ statusLabel(device.status) }}</span>
+              <td class="device"><b>{{ item.title || item.id }}</b><small>{{ item.id }} · {{ Object.keys(item.versions).join(' / ') || '版本未知' }}</small></td>
+              <td v-for="device in deviceColumns" :key="device.id">
+                <div v-if="instanceFor(item, device.id)" class="matrix-cell" :class="instanceFor(item, device.id)?.status">
+                  <i /> <b>{{ statusLabel(instanceFor(item, device.id)?.status || '') }}</b>
+                  <small>{{ instanceFor(item, device.id)?.version || '版本未知' }}</small>
                 </div>
-                <span v-else class="contract-gap">Unknown</span>
+                <div v-else class="matrix-cell unknown"><i /><b>未知</b><small>尚无实例证据</small></div>
               </td>
-              <td>{{ Object.entries(item.versions).map(([version, count]) => `${version || 'Unknown'} × ${count}`).join(' · ') || 'Unknown' }}</td>
-              <td><span v-for="([status, count]) in Object.entries(item.statusCounts)" :key="status" class="runtime-chip" :class="status">{{ statusLabel(status) }} × {{ count }}</span></td>
-              <td>
-                <template v-if="item.resources.containers">{{ item.resources.containers }} 容器 · CPU {{ formatNumber(item.resources.cpuPercent) }}%<small>{{ bytes(item.resources.memoryUsage) }} / {{ bytes(item.resources.memoryLimit) }}</small></template>
-                <span v-else class="capability-note">Restricted / Unsupported</span>
-              </td>
-              <td>
-                <template v-if="item.resources.containers">↓ {{ bytes(item.resources.networkReceive) }} / ↑ {{ bytes(item.resources.networkTransmit) }}<small>读 {{ bytes(item.resources.blockRead) }} / 写 {{ bytes(item.resources.blockWrite) }}</small></template>
-                <span v-else>Unknown</span>
-              </td>
+              <td v-if="!deviceColumns.length"><div class="matrix-cell unknown"><i /><b>未知</b><small>尚无设备实例</small></div></td>
             </tr>
           </tbody>
         </table>
       </div>
       <div v-if="!filtered.length" class="inline-empty">没有符合当前筛选条件的应用。</div>
     </section>
+    <section class="matrix-context"><div><h2>选择矩阵单元后显示上下文</h2><p>当前后端已提供应用实例、版本和容器资源；点击交互将在单元格详情 API 就绪后启用。</p></div><span>键盘可达</span><span>表格替代</span></section>
   </PageState>
 </template>

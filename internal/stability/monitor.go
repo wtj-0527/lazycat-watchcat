@@ -10,6 +10,7 @@ import (
 )
 
 const stateKey = "stability_observation"
+const defaultIntegrityInterval = 6 * time.Hour
 
 type Status struct {
 	StartedAt              time.Time  `json:"startedAt"`
@@ -20,6 +21,7 @@ type Status struct {
 	ConsecutiveFailures    int64      `json:"consecutiveFailures"`
 	LastError              string     `json:"lastError,omitempty"`
 	DatabaseIntegrityOK    bool       `json:"databaseIntegrityOk"`
+	DatabaseIntegrityAt    *time.Time `json:"databaseIntegrityAt,omitempty"`
 	DatabaseLatencyMS      int64      `json:"databaseLatencyMs"`
 	LatestMetricAt         *time.Time `json:"latestMetricAt,omitempty"`
 	MetricFreshnessSeconds *int64     `json:"metricFreshnessSeconds,omitempty"`
@@ -102,9 +104,16 @@ func (m *Monitor) loadOrReset(ctx context.Context) {
 
 func (m *Monitor) sample(ctx context.Context) {
 	started := time.Now()
-	integrityErr := m.store.IntegrityCheck(ctx)
-	inputs, inputErr := m.store.StabilityInputs(ctx)
 	now := time.Now().UTC()
+	m.mu.RLock()
+	lastIntegrityAt := m.status.DatabaseIntegrityAt
+	m.mu.RUnlock()
+	runIntegrity := lastIntegrityAt == nil || now.Sub(*lastIntegrityAt) >= defaultIntegrityInterval
+	var integrityErr error
+	if runIntegrity {
+		integrityErr = m.store.IntegrityCheck(ctx)
+	}
+	inputs, inputErr := m.store.StabilityInputs(ctx)
 
 	m.mu.Lock()
 	status := m.status
@@ -115,7 +124,11 @@ func (m *Monitor) sample(ctx context.Context) {
 	status.LastSampleAt = now
 	status.SampleCount++
 	status.DatabaseLatencyMS = time.Since(started).Milliseconds()
-	status.DatabaseIntegrityOK = integrityErr == nil
+	if runIntegrity {
+		status.DatabaseIntegrityOK = integrityErr == nil
+		checkedAt := now
+		status.DatabaseIntegrityAt = &checkedAt
+	}
 	status.LatestMetricAt = inputs.LatestMetricAt
 	status.PendingNotifications = inputs.PendingNotifications
 	status.LastRetentionAt = inputs.LastRetentionAt
@@ -126,7 +139,7 @@ func (m *Monitor) sample(ctx context.Context) {
 		}
 		status.MetricFreshnessSeconds = &freshness
 	}
-	if integrityErr != nil || inputErr != nil {
+	if (runIntegrity && integrityErr != nil) || inputErr != nil {
 		status.FailureCount++
 		status.ConsecutiveFailures++
 		if integrityErr != nil {

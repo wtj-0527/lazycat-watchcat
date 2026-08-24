@@ -1,66 +1,43 @@
-# 猫眼 Design Handoff
+# 猫眼 Design Handoff · 第二版
 
-本目录是“猫眼 Fleet Monitoring”V1 的设计交付包，供前端、后端和验收人员把 Penpot 原型转换为可验证实现。
+本目录现以 Penpot 页面 `猫眼 · 产品原型 · 第二版` 为唯一视觉基线。
 
 ## 基线
 
-- 产品：猫眼 Fleet Monitoring
-- 设计文件：Penpot 页面 `猫眼 · Fleet Monitoring · V1`
-- 设计范围：Desktop Light Theme
+- 文件：`1026db5b-a74d-8088-8008-86a322b0ce01`
+- 页面：`6f979ade-b8bb-80b1-8008-87abe5d899a5`
 - 参考画布：1440 × 1024 px
-- 设备规模：10～50 台 LazyCat 设备；实现允许扩展至 100 台
-- 品牌标志：用户确认的蓝金色卡通猫头鹰
-- 页面结构：固定 Sidebar、粘性 Topbar、主内容区
+- 桌面框架：240 px Sidebar、72 px Topbar、主内容左右 32 px 边距
+- 技术实现：Vue 3 + TypeScript，真实 API，单一镜像 Service，单一 LPK
 
 ## Source of truth
 
-发生冲突时按以下顺序处理：
+冲突时按以下顺序处理：
 
-1. 本目录的状态语义与交互约束
-2. Penpot 中对应 Board 的视觉布局
-3. `tokens.json` 中的设计 Token
-4. 当前实现
+1. Penpot 第二版对应 Board 的视觉与交互
+2. 真实 API 与生产状态语义
+3. 本目录中的实现说明
+4. 当前代码
 
-状态语义优先于颜色和截图。`Unknown`、无权限、不支持与离线不得合并为“健康”。
+原型中的设备数、名称、告警和图表仅用于表达布局；生产 UI 必须使用真实 API，缺失能力显示“未知/受限/不支持”，不得伪造数据。
 
-## 文件
+## 第二版已落地范围
 
-- [screen-map.md](screen-map.md)：Penpot Board、当前 hash route 与页面状态映射
-- [component-spec.md](component-spec.md)：布局、组件和视觉规范
-- [interaction-spec.md](interaction-spec.md)：导航、刷新、操作和异常状态
-- [status-model.md](status-model.md)：健康、连接、能力、库存和告警语义
-- [api-screen-map.md](api-screen-map.md)：当前 API 与页面消费关系
-- [acceptance-checklist.md](acceptance-checklist.md)：设计实现验收清单
-- [tokens.json](tokens.json)：机器可读的颜色、字体、间距、圆角和布局 Token
-- [assets/](assets/)：批准使用的 Logo 资源
+- 统一应用框架：范围、数据新鲜度、全局搜索、通知、身份区
+- 总览：四项核心指标、设备群健康、待处理事件、容量风险
+- 设备：保存视图、复合筛选、设备清单、证据驱动详情
+- 应用：跨设备矩阵与状态单元格
+- 存储：容量与磁盘风险、采集能力
+- 告警：生命周期工作台、服务端写入与回读
+- 巡检：正式任务、持久报告、历史与证据摘要
+- 接入：独立五步向导入口
+- 设置：治理标签页、备份恢复、稳定性、通知与审计边界
+- Loading、Empty、Error、Stale、Unknown 状态
 
-## 实现状态
+## 验收原则
 
-设计交接最初只包含文档和 Logo 资产，未修改运行前端；这也是 1.7.0 与 Penpot
-不一致的根因。自 1.8.0 起，运行中的 Vue 前端已按本目录和 Penpot Board 重构：
-
-- App Shell、Logo、导航、状态组件和设计 Token 已落入生产代码。
-- Overview、Devices、Device Detail、Applications、Storage、Alerts、
-  Inspections 和 Settings 已按 Fleet-first 信息层级重构。
-- 所有数值继续来自真实 API；契约缺口明确显示 `Unknown` 或 `Contract gap`。
-- 不使用 Penpot 示例数值补齐生产页面。
-
-当前不作为 V1 设计完成项：
-
-- Dark Mode
-- 独立 Mobile／Tablet 版式
-- 正式 Penpot Components／Variables 发布
-- Palette accessibility／CVD 自动化验证
-- 新增或修改后端 API
-
-现有实现已包含窄屏 CSS 降级规则，但它不等同于经过设计验收的移动端方案。
-
-## 开发使用方法
-
-1. 先阅读 `status-model.md`，固定业务语义。
-2. 根据 `screen-map.md` 找到页面和状态。
-3. 使用 `tokens.json` 与 `component-spec.md` 实现视觉层。
-4. 根据 `api-screen-map.md` 复用当前 API，不从截图猜字段。
-5. 按 `acceptance-checklist.md` 在真实应用中验收。
-
-不要把 Penpot 中的示例数值硬编码到生产 UI。示例设备名、告警和图表数据仅用于表达布局及状态。
+- 1440 × 1024 下按 Board 逐屏比对。
+- 所有数字必须能追溯至 API 或明确显示未知。
+- 写操作只有在服务端回读确认后显示成功。
+- 页面根节点不得横向溢出；矩阵与宽表在组件内部滚动。
+- 单一 `maoyan` Service，不安装第二个 Collector LPK。

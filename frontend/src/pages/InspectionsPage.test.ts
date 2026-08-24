@@ -45,7 +45,7 @@ describe('InspectionsPage', () => {
     const wrapper = mount(InspectionsPage)
     await flushPromises()
 
-    expect(wrapper.get('.inspection-title .pill').text()).toBe('Warning')
+    expect(wrapper.get('.inspection-title .pill').text()).toBe('警告')
     expect(wrapper.get('.inspection-title .pill').classes()).toContain('warning')
     expect(wrapper.get('.report-history tbody tr').attributes('tabindex')).toBeUndefined()
     expect(wrapper.get('.report-history .row-link').text()).toBe('#inspecti')
@@ -74,7 +74,7 @@ describe('InspectionsPage', () => {
     await flushPromises()
 
     const connectivity = wrapper.findAll('.check-row')[0]
-    expect(connectivity.get('.pill').text()).toBe('Unknown')
+    expect(connectivity.get('.pill').text()).toBe('未知')
     expect(connectivity.get('.pill').classes()).toContain('unknown')
     wrapper.unmount()
   })
@@ -120,7 +120,7 @@ describe('InspectionsPage', () => {
     await flushPromises()
 
     expect(wrapper.get('.inspection-title').text()).toContain('#newer-re')
-    expect(wrapper.get('.inspection-title .pill').text()).toBe('Warning')
+    expect(wrapper.get('.inspection-title .pill').text()).toBe('警告')
     wrapper.unmount()
   })
 })

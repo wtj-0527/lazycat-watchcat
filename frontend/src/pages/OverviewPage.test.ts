@@ -47,10 +47,8 @@ describe('OverviewPage', () => {
     const wrapper = mount(OverviewPage)
     await flushPromises()
 
-    const storageStat = wrapper.findAll('.stat').find((item) => item.text().includes('存储风险'))
-    expect(storageStat?.get('strong').text()).toBe('1')
     expect(wrapper.get('.overview-matrix').text()).toContain('96.0%')
-    expect(wrapper.get('.overview-matrix').text()).toContain('2.0 KiB')
+    expect(wrapper.get('.overview-matrix').find('.pill').classes()).toContain('critical')
     wrapper.unmount()
   })
 })

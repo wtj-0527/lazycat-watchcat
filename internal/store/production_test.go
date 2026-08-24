@@ -132,3 +132,42 @@ func TestInspectionEvidenceAndRetentionRollupAreIdempotent(t *testing.T) {
 		t.Fatalf("report=%s err=%v", loaded.Report, err)
 	}
 }
+
+func TestLatestMetricsProjectionAvoidsHistoricalScanAndRejectsOlderSamples(t *testing.T) {
+	ctx := context.Background()
+	st, paired := testStoreDevice(t)
+	defer st.Close()
+
+	now := time.Now().UTC()
+	newer := protocol.MetricPoint{
+		Name: "system.cpu.usage", Value: 42, Unit: "%",
+		Labels: map[string]string{"scope": "host"}, CollectedAt: now,
+	}
+	older := newer
+	older.Value = 99
+	older.CollectedAt = now.Add(-time.Minute)
+	if err := st.IngestMetrics(ctx, protocol.MetricBatch{DeviceID: paired.DeviceID, Points: []protocol.MetricPoint{newer}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.IngestMetrics(ctx, protocol.MetricBatch{DeviceID: paired.DeviceID, Points: []protocol.MetricPoint{older}}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := st.ListLatestMetrics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Value != 42 || !items[0].CollectedAt.Equal(now) {
+		t.Fatalf("latest metrics=%+v", items)
+	}
+	var historyRows, latestRows int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM metrics`).Scan(&historyRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM latest_metrics`).Scan(&latestRows); err != nil {
+		t.Fatal(err)
+	}
+	if historyRows != 2 || latestRows != 1 {
+		t.Fatalf("historyRows=%d latestRows=%d", historyRows, latestRows)
+	}
+}

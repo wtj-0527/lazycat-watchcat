@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +20,14 @@ import (
 )
 
 const defaultDockerSocket = "/lzcapp/run/lzc-docker/docker.sock"
+const defaultDockerStatsBatchSize = 8
 
 type DockerCollector struct {
-	socket string
-	client *http.Client
+	socket      string
+	client      *http.Client
+	statsBatch  int
+	cursorMu    sync.Mutex
+	statsCursor int
 }
 
 type dockerContainer struct {
@@ -74,7 +80,11 @@ func NewDockerCollector(socket string) *DockerCollector {
 			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "unix", socket)
 		},
 	}
-	return &DockerCollector{socket: socket, client: &http.Client{Transport: transport, Timeout: 8 * time.Second}}
+	statsBatch := defaultDockerStatsBatchSize
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAOYAN_DOCKER_STATS_BATCH_SIZE"))); err == nil && configured > 0 && configured <= 64 {
+		statsBatch = configured
+	}
+	return &DockerCollector{socket: socket, client: &http.Client{Transport: transport, Timeout: 8 * time.Second}, statsBatch: statsBatch}
 }
 
 func (d *DockerCollector) Available() bool {
@@ -90,24 +100,31 @@ func (d *DockerCollector) Collect(ctx context.Context, now time.Time) ([]protoco
 	if err := d.getJSON(ctx, "/containers/json?all=1", &containers); err != nil {
 		return nil, err
 	}
-	points := make([]protocol.MetricPoint, 0, len(containers)*8)
+	monitored := make([]dockerContainer, 0, len(containers))
 	for _, item := range containers {
-		labels := dockerLabels(item)
-		running := 0.0
-		if item.State == "running" {
-			running = 1
+		if dockerAppID(item) != "" {
+			monitored = append(monitored, item)
 		}
-		points = append(points, protocol.MetricPoint{Name: "container.running", Value: running, Unit: "bool", Labels: labels, CollectedAt: now})
 	}
-	var mu sync.Mutex
+	sort.Slice(monitored, func(i, j int) bool { return monitored[i].ID < monitored[j].ID })
+	points := make([]protocol.MetricPoint, 0, len(monitored)*8)
+	runningContainers := make([]dockerContainer, 0, len(monitored))
+	for _, item := range monitored {
+		labels := dockerLabels(item)
+		runningValue := 0.0
+		if item.State == "running" {
+			runningValue = 1
+			runningContainers = append(runningContainers, item)
+		}
+		points = append(points, protocol.MetricPoint{Name: "container.running", Value: runningValue, Unit: "bool", Labels: labels, CollectedAt: now})
+	}
+	statsTargets := d.nextStatsTargets(runningContainers)
+	var pointsMu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
 	var firstErr error
-	for _, item := range containers {
+	for _, item := range statsTargets {
 		item := item
-		if item.State != "running" {
-			continue
-		}
 		labels := dockerLabels(item)
 		wg.Add(1)
 		go func() {
@@ -120,17 +137,17 @@ func (d *DockerCollector) Collect(ctx context.Context, now time.Time) ([]protoco
 			}
 			var stats dockerStats
 			if err := d.getJSON(ctx, "/containers/"+url.PathEscape(item.ID)+"/stats?stream=false", &stats); err != nil {
-				mu.Lock()
+				pointsMu.Lock()
 				if firstErr == nil {
 					firstErr = err
 				}
-				mu.Unlock()
+				pointsMu.Unlock()
 				return
 			}
 			collected := dockerStatPoints(stats, labels, now)
-			mu.Lock()
+			pointsMu.Lock()
 			points = append(points, collected...)
-			mu.Unlock()
+			pointsMu.Unlock()
 		}()
 	}
 	wg.Wait()
@@ -138,6 +155,25 @@ func (d *DockerCollector) Collect(ctx context.Context, now time.Time) ([]protoco
 		return nil, firstErr
 	}
 	return points, firstErr
+}
+
+func (d *DockerCollector) nextStatsTargets(running []dockerContainer) []dockerContainer {
+	if len(running) == 0 {
+		return nil
+	}
+	batch := d.statsBatch
+	if batch <= 0 || batch >= len(running) {
+		return append([]dockerContainer(nil), running...)
+	}
+	d.cursorMu.Lock()
+	defer d.cursorMu.Unlock()
+	start := d.statsCursor % len(running)
+	out := make([]dockerContainer, 0, batch)
+	for offset := 0; offset < batch; offset++ {
+		out = append(out, running[(start+offset)%len(running)])
+	}
+	d.statsCursor = (start + batch) % len(running)
+	return out
 }
 
 func (d *DockerCollector) getJSON(ctx context.Context, path string, dest any) error {
@@ -166,10 +202,7 @@ func dockerLabels(item dockerContainer) map[string]string {
 	labels := map[string]string{
 		"container": shortContainerID(item.ID), "name": name, "image": item.Image, "state": item.State,
 	}
-	appID := item.Labels["lzcapp.app-id"]
-	if appID == "" {
-		appID = item.Labels["home-cloud.app-id"]
-	}
+	appID := dockerAppID(item)
 	if appID != "" {
 		labels["app"] = appID
 	}
@@ -177,6 +210,14 @@ func dockerLabels(item dockerContainer) map[string]string {
 		labels["service"] = service
 	}
 	return labels
+}
+
+func dockerAppID(item dockerContainer) string {
+	appID := item.Labels["lzcapp.app-id"]
+	if appID == "" {
+		appID = item.Labels["home-cloud.app-id"]
+	}
+	return appID
 }
 
 func dockerStatPoints(stats dockerStats, labels map[string]string, now time.Time) []protocol.MetricPoint {

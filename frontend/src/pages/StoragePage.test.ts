@@ -78,7 +78,7 @@ describe('StoragePage', () => {
 
     expect(wrapper.text()).toContain('猫盒')
     expect(wrapper.text()).toContain('50.0%')
-    expect(wrapper.get('.capability-card').text()).toContain('Unknown')
+    expect(wrapper.get('.capability-card').text()).toContain('未知')
     expect(wrapper.text()).not.toContain('数据加载失败')
     wrapper.unmount()
   })
