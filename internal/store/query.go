@@ -24,6 +24,12 @@ type MetricSample struct {
 	Labels      map[string]string `json:"labels"`
 	CollectedAt time.Time         `json:"collectedAt"`
 }
+type ApplicationMetricSample struct {
+	DeviceID    string
+	Value       float64
+	Labels      map[string]string
+	CollectedAt time.Time
+}
 
 func (s *Store) DeviceByID(ctx context.Context, id string) (protocol.Device, error) {
 	var d protocol.Device
@@ -97,6 +103,34 @@ func (s *Store) MetricHistory(ctx context.Context, deviceID, name string, since 
 		_ = json.Unmarshal([]byte(labels), &m.Labels)
 		m.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ApplicationMetricHistory(ctx context.Context, appID, name string, since time.Time, limit int) ([]ApplicationMetricSample, error) {
+	if limit <= 0 || limit > 100000 {
+		limit = 50000
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT metrics.device_id,metrics.value,metrics.labels_json,metrics.collected_at
+		FROM (SELECT DISTINCT device_id FROM application_runtime_state WHERE app_id=?) AS app_devices
+		JOIN metrics ON metrics.device_id=app_devices.device_id
+		WHERE metrics.name=? AND metrics.collected_at>=? AND json_extract(metrics.labels_json,'$.app')=?
+		ORDER BY metrics.device_id,metrics.labels_json,metrics.collected_at ASC LIMIT ?`,
+		appID, name, since.UTC().Format(time.RFC3339Nano), appID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ApplicationMetricSample
+	for rows.Next() {
+		var item ApplicationMetricSample
+		var labels, collected string
+		if err := rows.Scan(&item.DeviceID, &item.Value, &labels, &collected); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(labels), &item.Labels)
+		item.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }

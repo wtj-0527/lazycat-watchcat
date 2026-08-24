@@ -1,28 +1,42 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { ApplicationItem } from '@/types'
 import { ago, bytes, formatNumber, percent } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
-import BarChart from '@/components/BarChart.vue'
-import DonutChart from '@/components/DonutChart.vue'
+import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import PageState from '@/components/PageState.vue'
-import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
 interface Payload { items: ApplicationItem[]; source: string; stale: boolean; updatedAt?: string }
+interface HistoryPoint { value: number; collectedAt: string }
+interface HistoryPayload {
+  appId: string
+  hours: number
+  bucketSeconds: number
+  updatedAt: string
+  series: {
+    cpuPercent: HistoryPoint[]
+    memoryUsage: HistoryPoint[]
+    networkReceiveRate: HistoryPoint[]
+    networkTransmitRate: HistoryPoint[]
+    blockReadRate: HistoryPoint[]
+    blockWriteRate: HistoryPoint[]
+  }
+}
+
 const query = ref(sessionStorage.getItem('maoyanSearch') || '')
 const statusFilter = ref('all')
-const viewMode = ref<'app' | 'device'>('app')
-const tableMode = ref(false)
-const selectedApp = ref<ApplicationItem>()
+const selectedAppId = ref('')
+const historyHours = ref(24)
+const history = ref<HistoryPayload>()
+const historyLoading = ref(false)
+const historyError = ref('')
+let historyRequest = 0
 const { data, loading, error, refresh } = usePolling(() => api<Payload>('/api/v1/applications'))
-const instances = computed(() => data.value?.items.reduce((sum, item) => sum + item.instances, 0) ?? 0)
-const healthy = computed(() => data.value?.items.reduce((sum, item) => sum + item.healthy, 0) ?? 0)
 const paused = computed(() => data.value?.items.reduce((sum, item) => sum + item.paused, 0) ?? 0)
 const errors = computed(() => data.value?.items.reduce((sum, item) => sum + item.unhealthy, 0) ?? 0)
-const versionDrift = computed(() => data.value?.items.filter((item) => Object.keys(item.versions).length > 1).length ?? 0)
 const appStatus = (item: ApplicationItem) => item.unhealthy > 0 ? 'critical' : item.paused > 0 ? 'warning' : item.healthy > 0 ? 'healthy' : 'unknown'
 const filtered = computed(() => (data.value?.items || []).filter((item) => {
   const matchesQuery = `${item.title} ${item.id}`.toLowerCase().includes(query.value.trim().toLowerCase())
@@ -32,87 +46,126 @@ const filtered = computed(() => (data.value?.items || []).filter((item) => {
     || (statusFilter.value === 'degraded' && status === 'warning')
     || (statusFilter.value === 'critical' && status === 'critical')
   return matchesQuery && matchesStatus
+}).sort((a, b) => {
+  const rank = ({ critical: 0, warning: 1, healthy: 2, unknown: 3 } as Record<string, number>)
+  return rank[appStatus(a)] - rank[appStatus(b)] || (a.title || a.id).localeCompare(b.title || b.id)
 }))
-const statusLabel = (status: string) => ({ running: '健康', paused: '暂停', starting: '启动中', stopping: '停止中', error: '严重' } as Record<string, string>)[status] || status || '未知'
-const deviceColumns = computed(() => {
-  const devices = new Map<string, string>()
-  for (const item of data.value?.items || []) for (const device of item.devices || []) devices.set(device.deviceId, device.deviceName || '未知设备')
-  return [...devices.entries()].map(([id, name]) => ({ id, name }))
-})
-const statusDistribution = computed(() => [
-  { label: '运行正常', value: healthy.value, color: '#118847' },
-  { label: '已暂停', value: paused.value, color: '#c05600' },
-  { label: '异常', value: errors.value, color: '#c51d23' },
+const selectedApp = computed(() => data.value?.items.find((item) => item.id === selectedAppId.value))
+
+watch(() => data.value?.items, (items) => {
+  if (!items?.length) return
+  if (!items.some((item) => item.id === selectedAppId.value)) {
+    const preferred = [...items].sort((a, b) => b.resources.cpuPercent - a.resources.cpuPercent)[0]
+    selectedAppId.value = preferred.id
+  }
+}, { immediate: true })
+watch([selectedAppId, historyHours], loadHistory)
+
+async function loadHistory() {
+  if (!selectedAppId.value) return
+  const request = ++historyRequest
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const result = await api<HistoryPayload>(`/api/v1/applications/${encodeURIComponent(selectedAppId.value)}/metrics?hours=${historyHours.value}`)
+    if (request === historyRequest) history.value = result
+  } catch (reason) {
+    if (request === historyRequest) {
+      history.value = undefined
+      historyError.value = reason instanceof Error ? reason.message : String(reason)
+    }
+  } finally {
+    if (request === historyRequest) historyLoading.value = false
+  }
+}
+function chartPoints(items: HistoryPoint[] | undefined, scale = 1) {
+  return (items || []).map((item) => ({
+    value: item.value / scale,
+    at: new Date(item.collectedAt).toLocaleString('zh-CN'),
+    label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+  }))
+}
+const cpuSeries = computed<ChartSeries[]>(() => [{ name: 'CPU', color: '#2563eb', points: chartPoints(history.value?.series.cpuPercent) }])
+const memorySeries = computed<ChartSeries[]>(() => [{ name: '内存', color: '#7c3aed', points: chartPoints(history.value?.series.memoryUsage, 1024 * 1024) }])
+const networkSeries = computed<ChartSeries[]>(() => [
+  { name: '接收', color: '#15803d', points: chartPoints(history.value?.series.networkReceiveRate, 1024) },
+  { name: '发送', color: '#c05600', points: chartPoints(history.value?.series.networkTransmitRate, 1024) },
 ])
-const resourceRanking = computed(() => filtered.value
-  .map((item) => ({ label: item.title || item.id, value: Number(item.resources.cpuPercent.toFixed(1)), hint: `内存 ${bytes(item.resources.memoryUsage)}` }))
-  .sort((a, b) => b.value - a.value).slice(0, 6))
-function instanceFor(item: ApplicationItem, deviceId: string) { return item.devices?.find((device) => device.deviceId === deviceId) }
+const blockSeries = computed<ChartSeries[]>(() => [
+  { name: '读取', color: '#2563eb', points: chartPoints(history.value?.series.blockReadRate, 1024) },
+  { name: '写入', color: '#c51d23', points: chartPoints(history.value?.series.blockWriteRate, 1024) },
+])
 </script>
 
 <template>
   <PageState :loading="loading" :error="error" :empty="data?.items.length === 0" empty-title="尚无应用数据" empty-text="LazyCat Package Manager 尚未返回当前用户的应用状态。" @retry="refresh">
-    <div class="page-intro">
-      <div><h2>应用矩阵</h2><p>从应用视角判断影响范围；矩阵允许组件内部横向滚动，不让页面根节点溢出。</p></div>
-      <div class="view-toggle"><button :class="{ active: viewMode === 'app' }" @click="viewMode = 'app'">按应用</button><button :class="{ active: viewMode === 'device' }" @click="viewMode = 'device'">按设备</button></div>
+    <div class="page-intro app-resource-intro">
+      <div><h2>应用资源</h2></div>
+      <span class="muted">更新 {{ ago(data?.updatedAt) }}</span>
     </div>
     <div class="filter-bar app-filter-bar">
       <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称"></label>
-      <select v-model="statusFilter"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
+      <select v-model="statusFilter" aria-label="应用状态"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
       <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
-      <span class="filter-note">更新 {{ ago(data?.updatedAt) }}</span>
+      <span v-if="data?.stale" class="stale-banner">Runtime 状态已陈旧</span>
     </div>
-    <div class="chart-panel-grid">
-      <section class="card">
-        <div class="section-title"><div><h2>应用状态构成</h2><span class="muted">按实时 Runtime 实例状态统计</span></div></div>
-        <DonutChart :items="statusDistribution" center-label="实例" />
-      </section>
-      <section class="card">
-        <div class="section-title"><div><h2>处理器占用排行</h2><span class="muted">当前筛选范围内前 6 个应用</span></div></div>
-        <BarChart :items="resourceRanking" unit="%" />
-      </section>
+
+    <div class="app-resource-layout">
+      <aside class="card app-resource-list-card">
+        <div class="section-title compact"><div><h2>应用</h2><span class="muted">{{ filtered.length }} 个结果</span></div></div>
+        <div v-if="filtered.length" class="app-resource-list">
+          <button v-for="item in filtered" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" @click="selectedAppId = item.id">
+            <i :class="appStatus(item)" />
+            <span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></span>
+            <span class="app-resource-now"><b>{{ formatNumber(item.resources.cpuPercent) }}%</b><small>{{ bytes(item.resources.memoryUsage) }}</small></span>
+          </button>
+        </div>
+        <div v-else class="inline-empty">没有符合当前筛选条件的应用。</div>
+      </aside>
+
+      <main v-if="selectedApp" class="app-resource-detail">
+        <section class="card app-resource-hero">
+          <div class="section-title">
+            <div><h2>{{ selectedApp.title || selectedApp.id }}</h2><span class="muted">{{ selectedApp.id }} · {{ Object.keys(selectedApp.versions).join(' / ') || '版本未知' }}</span></div>
+            <StatusPill :status="appStatus(selectedApp)" />
+          </div>
+          <div class="app-resource-kpis">
+            <div><span>当前 CPU</span><strong>{{ formatNumber(selectedApp.resources.cpuPercent) }}%</strong><small>{{ selectedApp.resources.containers }} 个容器</small></div>
+            <div><span>当前内存</span><strong>{{ bytes(selectedApp.resources.memoryUsage) }}</strong><small>{{ percent(selectedApp.resources.memoryUsage, selectedApp.resources.memoryLimit) }} 配额</small></div>
+            <div><span>累计网络</span><strong>{{ bytes(selectedApp.resources.networkReceive) }}</strong><small>发送 {{ bytes(selectedApp.resources.networkTransmit) }}</small></div>
+            <div><span>累计磁盘 IO</span><strong>{{ bytes(selectedApp.resources.blockRead) }}</strong><small>写入 {{ bytes(selectedApp.resources.blockWrite) }}</small></div>
+          </div>
+        </section>
+
+        <section class="card app-history-card">
+          <div class="section-title">
+            <div><h2>资源历史</h2><span class="muted">CPU、内存、网络吞吐和磁盘 IO 均来自容器历史指标</span></div>
+            <div class="history-range" aria-label="历史时间范围">
+              <button v-for="item in [1, 6, 24]" :key="item" :class="{ active: historyHours === item }" @click="historyHours = item">{{ item }} 小时</button>
+            </div>
+          </div>
+          <div v-if="historyLoading" class="history-loading">正在读取历史指标…</div>
+          <div v-else-if="historyError" class="inline-empty">历史指标加载失败：{{ historyError }} <button class="row-link" @click="loadHistory">重试</button></div>
+          <div v-else class="app-history-grid">
+            <div><h3>CPU 使用率</h3><LineChart :series="cpuSeries" :min="0" unit="%" :height="220" /></div>
+            <div><h3>内存使用量</h3><LineChart :series="memorySeries" :min="0" unit=" MiB" :height="220" /></div>
+            <div><h3>网络吞吐</h3><LineChart :series="networkSeries" :min="0" unit=" KiB/s" :height="220" /></div>
+            <div><h3>磁盘 IO</h3><LineChart :series="blockSeries" :min="0" unit=" KiB/s" :height="220" /></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="section-title compact"><div><h2>运行实例</h2><span class="muted">当前 Package Manager 状态</span></div></div>
+          <div class="table-scroll">
+            <table class="fleet-table app-instance-table">
+              <thead><tr><th>设备</th><th>状态</th><th>版本</th><th>部署 ID</th><th>更新时间</th></tr></thead>
+              <tbody><tr v-for="instance in selectedApp.devices" :key="instance.deployId">
+                <td><b>{{ instance.deviceName || instance.deviceId }}</b></td><td><StatusPill :status="instance.status === 'running' ? 'healthy' : instance.status === 'error' ? 'critical' : 'warning'" /></td><td>{{ instance.version || '未知' }}</td><td><code>{{ instance.deployId }}</code></td><td>{{ ago(instance.collectedAt) }}</td>
+              </tr></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
     </div>
-    <section class="card app-matrix-card">
-      <div class="section-title"><div><h2>{{ viewMode === 'app' ? '应用 × 设备' : '设备 × 应用' }}</h2><span class="muted">颜色、图形和文字共同表达状态；未知状态不计入健康率。</span></div><button class="row-link" @click="tableMode = !tableMode">{{ tableMode ? '切换为矩阵视图' : '切换为表格视图' }}</button></div>
-      <div class="table-scroll">
-        <table v-if="tableMode" class="fleet-table">
-          <thead><tr><th>应用</th><th>设备</th><th>状态</th><th>版本</th><th>CPU</th><th>内存</th></tr></thead>
-          <tbody><template v-for="item in filtered" :key="item.id"><tr v-for="instance in item.devices" :key="instance.deployId" class="device-row" @click="selectedApp = item">
-            <td><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></td><td>{{ instance.deviceName }}</td><td><StatusPill :status="instance.status === 'running' ? 'healthy' : instance.status === 'error' ? 'critical' : 'warning'" /></td><td>{{ instance.version }}</td><td>{{ item.resources.cpuPercent.toFixed(1) }}%</td><td>{{ bytes(item.resources.memoryUsage) }}</td>
-          </tr></template></tbody>
-        </table>
-        <table v-else-if="viewMode === 'app'" class="fleet-table app-matrix">
-          <thead><tr><th>应用</th><th v-for="device in deviceColumns" :key="device.id">{{ device.name }}</th><th v-if="!deviceColumns.length">当前设备</th></tr></thead>
-          <tbody>
-            <tr v-for="item in filtered" :key="item.id">
-              <td class="device"><b>{{ item.title || item.id }}</b><small>{{ item.id }} · {{ Object.keys(item.versions).join(' / ') || '版本未知' }}</small></td>
-              <td v-for="device in deviceColumns" :key="device.id">
-                <button v-if="instanceFor(item, device.id)" class="matrix-cell" :class="instanceFor(item, device.id)?.status" @click="selectedApp = item">
-                  <i /> <b>{{ statusLabel(instanceFor(item, device.id)?.status || '') }}</b>
-                  <small>{{ instanceFor(item, device.id)?.version || '版本未知' }}</small>
-                </button>
-                <div v-else class="matrix-cell unknown"><i /><b>未知</b><small>尚无实例证据</small></div>
-              </td>
-              <td v-if="!deviceColumns.length"><div class="matrix-cell unknown"><i /><b>未知</b><small>尚无设备实例</small></div></td>
-            </tr>
-          </tbody>
-        </table>
-        <table v-else class="fleet-table app-matrix">
-          <thead><tr><th>设备</th><th v-for="item in filtered" :key="item.id">{{ item.title || item.id }}</th></tr></thead>
-          <tbody><tr v-for="device in deviceColumns" :key="device.id">
-            <td class="device"><b>{{ device.name }}</b><small>{{ device.id }}</small></td>
-            <td v-for="item in filtered" :key="item.id">
-              <button v-if="instanceFor(item, device.id)" class="matrix-cell" :class="instanceFor(item, device.id)?.status" @click="selectedApp = item"><i /><b>{{ statusLabel(instanceFor(item, device.id)?.status || '') }}</b><small>{{ instanceFor(item, device.id)?.version }}</small></button>
-              <div v-else class="matrix-cell unknown"><i /><b>未安装</b></div>
-            </td>
-          </tr></tbody>
-        </table>
-      </div>
-      <div v-if="!filtered.length" class="inline-empty">没有符合当前筛选条件的应用。</div>
-    </section>
-    <section v-if="selectedApp" class="matrix-context">
-      <div><h2>{{ selectedApp.title || selectedApp.id }}</h2><p>{{ selectedApp.id }} · {{ selectedApp.instances }} 个实例 · CPU {{ selectedApp.resources.cpuPercent.toFixed(1) }}% · 内存 {{ bytes(selectedApp.resources.memoryUsage) }}</p></div>
-      <span>容器 {{ selectedApp.resources.containers }}</span><span>网络接收 {{ bytes(selectedApp.resources.networkReceive) }}</span><button class="row-link" @click="selectedApp = undefined">关闭</button>
-    </section>
   </PageState>
 </template>

@@ -47,6 +47,10 @@ type applicationResourceView struct {
 	BlockWrite  float64   `json:"blockWrite"`
 	UpdatedAt   time.Time `json:"updatedAt,omitempty"`
 }
+type applicationHistoryPoint struct {
+	Value       float64   `json:"value"`
+	CollectedAt time.Time `json:"collectedAt"`
+}
 
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	devices, metrics, err := s.snapshot(r)
@@ -208,6 +212,142 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	writeJSON(w, 200, map[string]any{"items": out, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
+}
+
+func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
+	appID := strings.TrimSpace(r.PathValue("id"))
+	if appID == "" {
+		problem(w, http.StatusBadRequest, "application_required", "应用 ID 必填")
+		return
+	}
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours <= 0 || hours > 24*7 {
+		hours = 24
+	}
+	bucket := applicationHistoryBucket(hours)
+	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	metrics := []struct {
+		name    string
+		key     string
+		counter bool
+	}{
+		{"container.cpu.usage", "cpuPercent", false},
+		{"container.memory.usage", "memoryUsage", false},
+		{"container.network.receive.bytes_total", "networkReceiveRate", true},
+		{"container.network.transmit.bytes_total", "networkTransmitRate", true},
+		{"container.block.read.bytes_total", "blockReadRate", true},
+		{"container.block.write.bytes_total", "blockWriteRate", true},
+	}
+	series := make(map[string][]applicationHistoryPoint, len(metrics))
+	for _, metric := range metrics {
+		samples, err := s.store.ApplicationMetricHistory(r.Context(), appID, metric.name, since, 100000)
+		if err != nil {
+			problem(w, http.StatusInternalServerError, "internal_error", "无法读取应用资源历史")
+			return
+		}
+		if metric.counter {
+			series[metric.key] = aggregateApplicationCounter(samples, bucket)
+		} else {
+			series[metric.key] = aggregateApplicationGauge(samples, bucket)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"appId": appID, "hours": hours, "bucketSeconds": int(bucket.Seconds()),
+		"series": series, "updatedAt": time.Now().UTC(),
+	})
+}
+
+func applicationHistoryBucket(hours int) time.Duration {
+	switch {
+	case hours <= 1:
+		return time.Minute
+	case hours <= 6:
+		return 2 * time.Minute
+	case hours <= 24:
+		return 5 * time.Minute
+	default:
+		return 30 * time.Minute
+	}
+}
+
+func applicationSeriesKey(sample store.ApplicationMetricSample) string {
+	return sample.DeviceID + "\x00" + sample.Labels["container"]
+}
+
+func aggregateApplicationGauge(samples []store.ApplicationMetricSample, bucket time.Duration) []applicationHistoryPoint {
+	type values struct {
+		sum   float64
+		count int
+	}
+	byBucket := map[time.Time]map[string]values{}
+	for _, sample := range samples {
+		at := sample.CollectedAt.Truncate(bucket)
+		if byBucket[at] == nil {
+			byBucket[at] = map[string]values{}
+		}
+		key := applicationSeriesKey(sample)
+		item := byBucket[at][key]
+		item.sum += sample.Value
+		item.count++
+		byBucket[at][key] = item
+	}
+	return applicationHistoryPoints(byBucket, func(items map[string]values) float64 {
+		total := 0.0
+		for _, item := range items {
+			if item.count > 0 {
+				total += item.sum / float64(item.count)
+			}
+		}
+		return total
+	})
+}
+
+func aggregateApplicationCounter(samples []store.ApplicationMetricSample, bucket time.Duration) []applicationHistoryPoint {
+	type values struct {
+		sum   float64
+		count int
+	}
+	byBucket := map[time.Time]map[string]values{}
+	previous := map[string]store.ApplicationMetricSample{}
+	for _, sample := range samples {
+		key := applicationSeriesKey(sample)
+		if before, ok := previous[key]; ok {
+			elapsed := sample.CollectedAt.Sub(before.CollectedAt).Seconds()
+			if elapsed > 0 && elapsed <= 30*60 && sample.Value >= before.Value {
+				at := sample.CollectedAt.Truncate(bucket)
+				if byBucket[at] == nil {
+					byBucket[at] = map[string]values{}
+				}
+				item := byBucket[at][key]
+				item.sum += (sample.Value - before.Value) / elapsed
+				item.count++
+				byBucket[at][key] = item
+			}
+		}
+		previous[key] = sample
+	}
+	return applicationHistoryPoints(byBucket, func(items map[string]values) float64 {
+		total := 0.0
+		for _, item := range items {
+			if item.count > 0 {
+				total += item.sum / float64(item.count)
+			}
+		}
+		return total
+	})
+}
+
+func applicationHistoryPoints[T any](buckets map[time.Time]T, value func(T) float64) []applicationHistoryPoint {
+	times := make([]time.Time, 0, len(buckets))
+	for at := range buckets {
+		times = append(times, at)
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	points := make([]applicationHistoryPoint, 0, len(times))
+	for _, at := range times {
+		points = append(points, applicationHistoryPoint{Value: value(buckets[at]), CollectedAt: at})
+	}
+	return points
 }
 
 func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) map[string]applicationResourceView {

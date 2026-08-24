@@ -63,6 +63,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/metrics", s.metricHistory)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/events", s.deviceEvents)
 	s.mux.HandleFunc("GET /api/v1/applications", s.applications)
+	s.mux.HandleFunc("GET /api/v1/applications/{id}/metrics", s.applicationMetrics)
 	s.mux.HandleFunc("GET /api/v1/storage", s.storageView)
 	s.mux.HandleFunc("GET /api/v1/alerts", s.alertsView)
 	s.mux.HandleFunc("POST /api/v1/alerts/{fingerprint}/acknowledge", s.alertAction)

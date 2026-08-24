@@ -33,6 +33,30 @@ func TestAggregateApplicationResourcesIgnoresStaleContainers(t *testing.T) {
 	}
 }
 
+func TestApplicationHistoryAggregatesContainersAndCounterRates(t *testing.T) {
+	start := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	gauge := []store.ApplicationMetricSample{
+		{DeviceID: "d1", Value: 10, Labels: map[string]string{"container": "a"}, CollectedAt: start.Add(10 * time.Second)},
+		{DeviceID: "d1", Value: 20, Labels: map[string]string{"container": "a"}, CollectedAt: start.Add(40 * time.Second)},
+		{DeviceID: "d1", Value: 5, Labels: map[string]string{"container": "b"}, CollectedAt: start.Add(20 * time.Second)},
+	}
+	points := aggregateApplicationGauge(gauge, time.Minute)
+	if len(points) != 1 || points[0].Value != 20 {
+		t.Fatalf("gauge points=%+v", points)
+	}
+
+	counter := []store.ApplicationMetricSample{
+		{DeviceID: "d1", Value: 100, Labels: map[string]string{"container": "a"}, CollectedAt: start},
+		{DeviceID: "d1", Value: 400, Labels: map[string]string{"container": "a"}, CollectedAt: start.Add(30 * time.Second)},
+		{DeviceID: "d1", Value: 50, Labels: map[string]string{"container": "b"}, CollectedAt: start},
+		{DeviceID: "d1", Value: 200, Labels: map[string]string{"container": "b"}, CollectedAt: start.Add(30 * time.Second)},
+	}
+	points = aggregateApplicationCounter(counter, time.Minute)
+	if len(points) != 1 || points[0].Value != 15 {
+		t.Fatalf("counter points=%+v", points)
+	}
+}
+
 func TestTemperatureAlertsUseStableSensorClasses(t *testing.T) {
 	if severity, _ := metricAlert("system.temperature", 99, "celsius", map[string]string{"sensor": "coretemp_core_0"}); severity != "" {
 		t.Fatalf("per-core spike should remain telemetry only, severity=%q", severity)
