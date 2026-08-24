@@ -73,7 +73,7 @@ describe('InspectionsPage', () => {
     const wrapper = mount(InspectionsPage)
     await flushPromises()
 
-    const connectivity = wrapper.findAll('.check-row')[0]
+    const connectivity = wrapper.findAll('.check-row:not(.check-row-head)')[0]
     expect(connectivity.get('.pill').text()).toBe('未知')
     expect(connectivity.get('.pill').classes()).toContain('unknown')
     wrapper.unmount()

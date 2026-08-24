@@ -118,6 +118,7 @@ function exportReport(format: 'json' | 'pdf') {
       <div class="inspection-layout">
         <section class="card inspection-results">
           <div class="section-title"><div><h2>分类检查结果</h2><span class="muted">来自已保存报告，不使用模拟检查项</span></div></div>
+          <div class="check-row check-row-head"><div><b>检查项</b></div><strong>结果</strong><span>状态</span></div>
           <div class="check-row"><div><b>设备连接</b><span>在线设备与设备总数</span></div><strong>{{ reportChecks.online ?? '暂无证据' }} / {{ reportChecks.devices ?? latest.deviceCount }}</strong><StatusPill :status="connectivityCheckState" /></div>
           <div class="check-row"><div><b>健康规则</b><span>Collector 阈值判断</span></div><strong>{{ reportChecks.healthy ?? latest.healthyCount }} 通过</strong><StatusPill :status="inspectionState(latest)" /></div>
           <div class="check-row"><div><b>存储与 SMART</b><span>报告内设备原始指标可追溯</span></div><strong>{{ latest.report?.devices ? '已包含快照' : '旧版报告无此证据' }}</strong><StatusPill :status="latest.report?.devices ? 'available' : 'unknown'" /></div>

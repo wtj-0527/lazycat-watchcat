@@ -49,6 +49,9 @@ describe('OverviewPage', () => {
 
     expect(wrapper.get('.capacity-evidence-list').text()).toContain('96.0%')
     expect(wrapper.get('.capacity-evidence-list').find('.pill').classes()).toContain('critical')
+    expect(wrapper.get('.device-health-head').text()).toContain('最新数据')
+    expect(wrapper.get('.capacity-evidence-head').text()).toContain('预计写满')
+    expect(wrapper.get('.capacity-evidence-list').text()).toContain('采集能力 2/5')
     wrapper.unmount()
   })
 })
