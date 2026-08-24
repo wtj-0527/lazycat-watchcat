@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 export interface ChartPoint { value: number; label?: string; at?: string }
 export interface ChartSeries { name: string; color: string; points: ChartPoint[] }
 const props = withDefaults(defineProps<{ series: ChartSeries[]; min?: number; max?: number; unit?: string; height?: number }>(), { min: 0, unit: '', height: 220 })
 const width = 900
 const pad = { left: 42, right: 18, top: 18, bottom: 30 }
+const hover = ref<{ ratio: number; left: number }>()
 const normalizedSeries = computed(() => props.series.map((item) => {
   if (item.points.length <= 120) return item
   const step = (item.points.length - 1) / 119
@@ -24,11 +25,41 @@ const axisLabels = computed(() => {
   const indexes = [...new Set([0, Math.floor((longest.length - 1) / 2), longest.length - 1])]
   return indexes.map((index) => ({ x: x(index, longest.length), label: longest[index]?.label || longest[index]?.at || '' }))
 })
+const hoverItems = computed(() => {
+  if (!hover.value) return []
+  return normalizedSeries.value.filter((item) => item.points.length).map((item) => {
+    const index = Math.round(hover.value!.ratio * (item.points.length - 1))
+    return { ...item, point: item.points[index], index }
+  })
+})
+const hoverLabel = computed(() => {
+  const item = hoverItems.value.reduce<(typeof hoverItems.value)[number] | undefined>((best, current) => {
+    if (!best || current.points.length > best.points.length) return current
+    return best
+  }, undefined)
+  return item?.point.at || item?.point.label || ''
+})
+const hoverX = computed(() => pad.left + (hover.value?.ratio || 0) * (width - pad.left - pad.right))
+function formatHoverValue(value: number) {
+  const digits = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2
+  return `${value.toFixed(digits)}${props.unit}`
+}
+function showHover(event: MouseEvent) {
+  const target = event.currentTarget as SVGSVGElement
+  const rect = target.getBoundingClientRect()
+  if (rect.width <= 0) return
+  const svgX = (event.clientX - rect.left) / rect.width * width
+  const ratio = Math.max(0, Math.min(1, (svgX - pad.left) / (width - pad.left - pad.right)))
+  hover.value = {
+    ratio,
+    left: Math.max(112, Math.min(rect.width - 112, event.clientX - rect.left)),
+  }
+}
 </script>
 
 <template>
   <div class="line-chart" :style="{ height: `${height}px` }">
-    <svg v-if="all.length" :viewBox="`0 0 ${width} ${height}`" role="img" aria-label="历史趋势图" preserveAspectRatio="none">
+    <svg v-if="all.length" :viewBox="`0 0 ${width} ${height}`" role="img" aria-label="历史趋势图" preserveAspectRatio="none" @mousemove="showHover" @mouseleave="hover = undefined">
       <g class="chart-grid">
         <template v-for="(tick, index) in ticks" :key="index">
           <line :x1="pad.left" :x2="width - pad.right" :y1="y(tick)" :y2="y(tick)" />
@@ -37,13 +68,19 @@ const axisLabels = computed(() => {
       </g>
       <g v-for="item in normalizedSeries" :key="item.name">
         <path class="chart-line" :d="path(item.points)" :stroke="item.color" />
-        <circle v-for="(point, index) in item.points" :key="index" :cx="x(index, item.points.length)" :cy="y(point.value)" r="3" :fill="item.color">
-          <title>{{ item.name }} · {{ point.value.toFixed(1) }}{{ unit }} · {{ point.at || point.label }}</title>
-        </circle>
+        <circle v-for="(point, index) in item.points" :key="index" :cx="x(index, item.points.length)" :cy="y(point.value)" r="3" :fill="item.color" />
+      </g>
+      <g v-if="hover" class="chart-hover-layer">
+        <line :x1="hoverX" :x2="hoverX" :y1="pad.top" :y2="height - pad.bottom" />
+        <circle v-for="item in hoverItems" :key="item.name" :cx="x(item.index, item.points.length)" :cy="y(item.point.value)" r="5" :fill="item.color" />
       </g>
       <text v-for="item in axisLabels" :key="item.x" class="chart-axis-label" :x="item.x" :y="height - 7" text-anchor="middle">{{ item.label }}</text>
     </svg>
-    <div v-else class="inline-empty">当前时间范围内没有历史数据。</div>
+    <div v-if="hover && hoverItems.length" class="chart-tooltip" :style="{ left: `${hover.left}px` }">
+      <b>{{ hoverLabel }}</b>
+      <span v-for="item in hoverItems" :key="item.name"><i :style="{ background: item.color }" />{{ item.name }}<strong>{{ formatHoverValue(item.point.value) }}</strong></span>
+    </div>
+    <div v-if="!all.length" class="inline-empty">当前时间范围内没有历史数据。</div>
     <div v-if="series.length" class="chart-legend"><span v-for="item in series" :key="item.name"><i :style="{ background: item.color }" />{{ item.name }}</span></div>
   </div>
 </template>

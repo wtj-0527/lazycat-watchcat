@@ -541,6 +541,13 @@ body { font-size: 12px; }
 .chart-grid text,.chart-axis-label { fill:#64748b; font-size:11px; }
 .chart-line { fill:none; stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }
 .line-chart circle { vector-effect:non-scaling-stroke; }
+.chart-hover-layer line { stroke:#94a3b8; stroke-width:1; stroke-dasharray:4 4; vector-effect:non-scaling-stroke; }
+.chart-hover-layer circle { stroke:#fff; stroke-width:2; vector-effect:non-scaling-stroke; }
+.chart-tooltip { position:absolute; z-index:4; top:34px; display:grid; min-width:190px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:9px; background:rgba(15,23,42,.94); color:#fff; box-shadow:0 10px 28px rgba(15,23,42,.22); pointer-events:none; transform:translateX(-50%); }
+.chart-tooltip b { margin-bottom:7px; color:#e2e8f0; font-size:11px; font-weight:600; }
+.chart-tooltip span { display:grid; grid-template-columns:8px 1fr auto; align-items:center; gap:7px; min-height:24px; font-size:11px; }
+.chart-tooltip i { width:8px; height:8px; border-radius:50%; }
+.chart-tooltip strong { color:#fff; font-size:12px; }
 .chart-legend { position:absolute; top:-4px; right:4px; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:14px; color:var(--secondary); font-size:12px; font-weight:700; }
 .chart-legend span,.donut-legend span { display:flex; align-items:center; gap:7px; }
 .chart-legend i,.donut-legend i { width:8px; height:8px; border-radius:50%; }
