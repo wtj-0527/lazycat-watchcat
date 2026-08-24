@@ -13,4 +13,9 @@ describe('api client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: '备份失败' } }), { status: 500 })))
     await expect(api('/api/v1/backups')).rejects.toEqual(new ApiError('备份失败', 500))
   })
+
+  it('turns aborted requests into a visible timeout error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('timed out', 'TimeoutError')))
+    await expect(api('/api/v1/overview')).rejects.toEqual(new ApiError('请求超时，请重试', 408))
+  })
 })

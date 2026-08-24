@@ -31,10 +31,11 @@ type Server struct {
 	restart       func()
 	runtimeApps   *runtimeapps.Source
 	localDeviceID string
+	analytics     chan struct{}
 }
 
 func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
-	s := &Server{store: st, ca: ca, webDir: webDir, pairingTTL: pairingTTL, mux: http.NewServeMux()}
+	s := &Server{store: st, ca: ca, webDir: webDir, pairingTTL: pairingTTL, mux: http.NewServeMux(), analytics: make(chan struct{}, 1)}
 	s.routes()
 	return s
 }

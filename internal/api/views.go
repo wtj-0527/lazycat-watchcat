@@ -58,7 +58,6 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取实时状态")
 		return
 	}
-	_ = s.store.ReconcileAlerts(r.Context(), alertSignals(deriveAlertsWithRules(devices, s.loadAlertRules(r.Context()))))
 	alerts, _ := s.store.ListAlerts(r.Context(), false)
 	stats := map[string]int{"devices": len(devices), "online": 0, "offline": 0, "critical": 0, "warning": 0, "healthy": 0}
 	for _, d := range devices {
@@ -225,6 +224,11 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, code, message)
 		return
 	}
+	ctx, done, ok := s.beginAnalytics(w, r)
+	if !ok {
+		return
+	}
+	defer done()
 	now := time.Now().UTC()
 	summary := map[string]float64{}
 	duration := to.Sub(from)
@@ -243,7 +247,7 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	series := make(map[string][]applicationHistoryPoint, len(metrics))
 	for _, metric := range metrics {
-		samples, err := s.store.ApplicationMetricHistory(r.Context(), appID, metric.name, from, to, 100000)
+		samples, err := s.store.ApplicationMetricHistory(ctx, appID, metric.name, from, to, 100000)
 		if err != nil {
 			problem(w, http.StatusInternalServerError, "internal_error", "无法读取应用资源历史")
 			return
@@ -308,6 +312,11 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 		problem(w, http.StatusBadRequest, code, message)
 		return
 	}
+	ctx, done, ok := s.beginAnalytics(w, r)
+	if !ok {
+		return
+	}
+	defer done()
 	bucket := applicationHistoryBucket(int(to.Sub(from).Hours()))
 	type comparisonItem struct {
 		AppID  string                    `json:"appId"`
@@ -317,7 +326,7 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 	}
 	items := map[string]*comparisonItem{}
 	addGauge := func(name, unit string) error {
-		samples, err := s.store.AllApplicationMetricHistory(r.Context(), name, from, to, 300000)
+		samples, err := s.store.AllApplicationMetricHistory(ctx, name, from, to, 300000)
 		if err != nil {
 			return err
 		}
@@ -329,7 +338,7 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 	}
 	addCounter := func(names []string) error {
 		for _, name := range names {
-			samples, err := s.store.AllApplicationMetricHistory(r.Context(), name, from, to, 300000)
+			samples, err := s.store.AllApplicationMetricHistory(ctx, name, from, to, 300000)
 			if err != nil {
 				return err
 			}
@@ -370,6 +379,25 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 		"metric": metric, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
 		"items": out, "updatedAt": time.Now().UTC(),
 	})
+}
+
+func (s *Server) beginAnalytics(w http.ResponseWriter, r *http.Request) (context.Context, func(), bool) {
+	wait := time.NewTimer(2 * time.Second)
+	defer wait.Stop()
+	select {
+	case s.analytics <- struct{}{}:
+	case <-r.Context().Done():
+		return nil, func() {}, false
+	case <-wait.C:
+		w.Header().Set("Retry-After", "2")
+		problem(w, http.StatusTooManyRequests, "analytics_busy", "历史分析正在计算，请稍后重试")
+		return nil, func() {}, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	return ctx, func() {
+		cancel()
+		<-s.analytics
+	}, true
 }
 
 func groupApplicationSamples(samples []store.ApplicationMetricSample) map[string][]store.ApplicationMetricSample {

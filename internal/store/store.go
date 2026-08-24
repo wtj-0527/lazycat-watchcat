@@ -32,7 +32,10 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	// WAL permits concurrent readers. Keeping a small pool prevents an
+	// analytical history query from blocking overview and health reads.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 	s := &Store{db: db}
 	if err := s.migrate(context.Background()); err != nil {
 		db.Close()
@@ -62,6 +65,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_device_certificates_device ON device_certificates(device_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_device_name_time ON metrics(device_id,name,collected_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_received_at ON metrics(received_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_metrics_application_app_time
+			ON metrics(device_id,name,json_extract(labels_json,'$.app'),collected_at DESC)
+			WHERE json_extract(labels_json,'$.app')<>'';`,
+		`CREATE INDEX IF NOT EXISTS idx_metrics_application_time
+			ON metrics(device_id,name,collected_at DESC)
+			WHERE json_extract(labels_json,'$.app')<>'';`,
 		`CREATE TABLE IF NOT EXISTS latest_metrics (
 			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
 			name TEXT NOT NULL,

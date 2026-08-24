@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
@@ -111,57 +112,100 @@ func (s *Store) ApplicationMetricHistory(ctx context.Context, appID, name string
 	if limit <= 0 || limit > 100000 {
 		limit = 50000
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT metrics.device_id,metrics.value,metrics.labels_json,metrics.collected_at
-		FROM (SELECT DISTINCT device_id FROM application_runtime_state WHERE app_id=?) AS app_devices
-		JOIN metrics ON metrics.device_id=app_devices.device_id
-		WHERE metrics.name=? AND metrics.collected_at>=? AND metrics.collected_at<=? AND json_extract(metrics.labels_json,'$.app')=?
-		ORDER BY metrics.device_id,metrics.labels_json,metrics.collected_at ASC LIMIT ?`,
-		appID, name, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano), appID, limit)
+	deviceIDs, err := s.applicationDeviceIDs(ctx, appID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []ApplicationMetricSample
-	for rows.Next() {
-		var item ApplicationMetricSample
-		var labels, collected string
-		if err := rows.Scan(&item.DeviceID, &item.Value, &labels, &collected); err != nil {
-			return nil, err
-		}
-		_ = json.Unmarshal([]byte(labels), &item.Labels)
-		item.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
-		out = append(out, item)
-	}
-	return out, rows.Err()
+	return s.applicationMetricHistoryForDevices(ctx, deviceIDs, appID, name, since, until, limit)
 }
 
 func (s *Store) AllApplicationMetricHistory(ctx context.Context, name string, since, until time.Time, limit int) ([]ApplicationMetricSample, error) {
 	if limit <= 0 || limit > 300000 {
 		limit = 200000
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT metrics.device_id,metrics.value,metrics.labels_json,metrics.collected_at
-		FROM (SELECT DISTINCT device_id FROM application_runtime_state) AS app_devices
-		JOIN metrics ON metrics.device_id=app_devices.device_id
-		WHERE metrics.name=? AND metrics.collected_at>=? AND metrics.collected_at<=?
-			AND json_extract(metrics.labels_json,'$.app')<>''
-		ORDER BY metrics.device_id,metrics.labels_json,metrics.collected_at ASC LIMIT ?`,
-		name, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano), limit)
+	deviceIDs, err := s.applicationDeviceIDs(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return s.applicationMetricHistoryForDevices(ctx, deviceIDs, "", name, since, until, limit)
+}
+
+func (s *Store) applicationDeviceIDs(ctx context.Context, appID string) ([]string, error) {
+	query := `SELECT DISTINCT device_id FROM application_runtime_state`
+	var args []any
+	if appID != "" {
+		query += ` WHERE app_id=?`
+		args = append(args, appID)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ApplicationMetricSample
+	var out []string
 	for rows.Next() {
-		var item ApplicationMetricSample
-		var labels, collected string
-		if err := rows.Scan(&item.DeviceID, &item.Value, &labels, &collected); err != nil {
+		var deviceID string
+		if err := rows.Scan(&deviceID); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(labels), &item.Labels)
-		item.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
-		out = append(out, item)
+		out = append(out, deviceID)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) applicationMetricHistoryForDevices(ctx context.Context, deviceIDs []string, appID, name string, since, until time.Time, limit int) ([]ApplicationMetricSample, error) {
+	var out []ApplicationMetricSample
+	for _, deviceID := range deviceIDs {
+		remaining := limit - len(out)
+		if remaining <= 0 {
+			break
+		}
+		index := "idx_metrics_application_time"
+		if appID != "" {
+			index = "idx_metrics_application_app_time"
+		}
+		query := `SELECT device_id,value,labels_json,collected_at
+			FROM metrics INDEXED BY ` + index + `
+			WHERE device_id=? AND name=? AND collected_at>=? AND collected_at<=?
+				AND json_extract(labels_json,'$.app')<>''`
+		args := []any{deviceID, name, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano)}
+		if appID != "" {
+			query += ` AND json_extract(labels_json,'$.app')=?`
+			args = append(args, appID)
+		}
+		query += ` ORDER BY collected_at ASC LIMIT ?`
+		args = append(args, remaining)
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var item ApplicationMetricSample
+			var labels, collected string
+			if err := rows.Scan(&item.DeviceID, &item.Value, &labels, &collected); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			_ = json.Unmarshal([]byte(labels), &item.Labels)
+			item.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
+			out = append(out, item)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		left, right := out[i], out[j]
+		if left.DeviceID != right.DeviceID {
+			return left.DeviceID < right.DeviceID
+		}
+		leftKey, rightKey := left.Labels["app"]+"\x00"+left.Labels["container"], right.Labels["app"]+"\x00"+right.Labels["container"]
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		return left.CollectedAt.Before(right.CollectedAt)
+	})
+	return out, nil
 }
 
 func (s *Store) LatestMetricTimestamp(ctx context.Context) (time.Time, error) {

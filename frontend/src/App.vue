@@ -37,6 +37,7 @@ const globalQuery = ref('')
 const searchNonce = ref(0)
 let toastTimer: number | undefined
 let shellTimer: number | undefined
+let shellLoading = false
 
 const pageComponent = computed(() => pages[page.value])
 const pageProps = computed(() => page.value === 'settings'
@@ -64,11 +65,15 @@ function toast(message: string) {
   toastTimer = window.setTimeout(() => { toastMessage.value = '' }, 2200)
 }
 async function loadShell() {
+  if (shellLoading) return
+  shellLoading = true
   try {
     const result = await api<Overview>('/api/v1/overview')
     fleet.value = { ...result, devices: result.devices || [], alerts: result.alerts || [] }
   } catch {
     // Page-level error states remain authoritative when shell telemetry is unavailable.
+  } finally {
+    shellLoading = false
   }
 }
 function submitGlobalSearch() {
