@@ -398,14 +398,10 @@ body { font-size: 12px; }
 .pending-events .compact-alerts .alert-title span, .pending-events .compact-alerts .alert-main p, .pending-events .compact-alerts .contract-note { display: none; }
 .pending-events .section-link { display: block; margin-top: 12px; }
 .capacity-risk-card { min-height: 250px; }
-.saved-views { display: flex; align-items: center; gap: 10px; height: 58px; margin-bottom: 16px; padding: 0 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
-.saved-views b { margin-right: 14px; color: var(--muted); }
-.saved-views button { height: 30px; padding: 0 15px; border-radius: 15px; background: #f1f5f9; color: var(--secondary); font-weight: 700; }
-.saved-views button.active { background: var(--primary); color: #fff; }
-.saved-views button:nth-of-type(2) { background: var(--critical-soft); color: var(--critical); }
-.saved-views a { margin-left: auto; color: var(--primary); font-weight: 700; text-decoration: none; }
 .filter-bar { min-height: 64px; margin-bottom: 16px; padding: 11px 14px; border-radius: 12px; }
 .filter-bar .search-field { background: #f1f5f9; border-color: transparent; }
+.filter-bar .view-select { min-width: 136px; border-color: #bfdbfe; background-color: #eff6ff; color: #1d4ed8; font-weight: 700; }
+.filter-bar .save-view-button { margin-left: auto; }
 .device-inventory-table { min-width: 1030px; }
 .device-inventory-table th, .device-inventory-table td { padding: 15px 8px; }
 .device-inventory-table th:first-child, .device-inventory-table td:first-child { width: 20px; padding-right: 0; }
@@ -484,9 +480,8 @@ body { font-size: 12px; }
   .freshness-pill, .icon-button { display: none; }
   .global-search { width: auto; flex: 1; }
   #content { padding: 24px 16px; }
-  .page-intro, .saved-views, .filter-bar { align-items: stretch; flex-direction: column; height: auto; }
-  .saved-views { padding: 14px; }
-  .saved-views a { margin-left: 0; }
+  .page-intro, .filter-bar { align-items: stretch; flex-direction: column; height: auto; }
+  .filter-bar .save-view-button { margin-left: 0; }
   .stats.four, .stats.five, .stats, .storage-grid { grid-template-columns: 1fr; }
 }
 .device-overview-grid { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.5fr) minmax(300px, .85fr); gap: 16px; }

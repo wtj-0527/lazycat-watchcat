@@ -26,6 +26,7 @@ const statusFilter = ref('all')
 const connectivityFilter = ref('all')
 const capabilityFilter = ref('all')
 const groupFilter = ref('all')
+const selectedView = ref('all')
 const trend = ref<Record<string, Metric[]>>({})
 const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail: Record<string, unknown>; createdAt: string }>>([])
 const deviceCapabilities = ref<Capability[]>([])
@@ -83,6 +84,23 @@ function applyView(view: SavedView['query']) {
   connectivityFilter.value = view.connectivity || 'all'
   capabilityFilter.value = view.capability || 'all'
   groupFilter.value = view.group || 'all'
+}
+function applySelectedView() {
+  const presets: Record<string, SavedView['query']> = {
+    all: {},
+    attention: { status: 'attention' },
+    limited: { capability: 'limited' },
+    unavailable: { connectivity: 'unavailable' },
+  }
+  if (presets[selectedView.value]) {
+    applyView(presets[selectedView.value])
+    return
+  }
+  const saved = data.value?.savedViews.find((view) => `saved:${view.id}` === selectedView.value)
+  if (saved) applyView(saved.query)
+}
+function markCustomView() {
+  selectedView.value = 'custom'
 }
 async function saveView() {
   const name = window.prompt('保存视图名称')
@@ -249,15 +267,27 @@ const capabilityCount = computed(() => selected.value
 
   <PageState v-else :loading="loading" :error="error" @retry="refresh">
     <div class="page-intro">
-      <div><h2>设备</h2><p>用筛选和保存视图快速缩小范围；健康、连接、能力各自可筛选。</p></div>
+      <div><h2>设备</h2></div>
     </div>
-    <div class="saved-views"><b>保存视图</b><button @click="applyView({})">全部设备</button><button @click="applyView({ status: 'attention' })">需要处置</button><button @click="applyView({ capability: 'limited' })">能力受限</button><button @click="applyView({ connectivity: 'unavailable' })">离线或陈旧</button><button v-for="view in data?.savedViews" :key="view.id" @click="applyView(view.query)">{{ view.name }}</button></div>
     <div class="filter-bar">
-      <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="按名称、位置或标签搜索"></label>
-      <select v-model="statusFilter"><option value="all">健康状态</option><option value="critical">严重</option><option value="warning">警告</option><option value="healthy">健康</option><option value="offline">离线</option></select>
-      <select v-model="connectivityFilter"><option value="all">连接状态</option><option value="online">在线</option><option value="stale">陈旧</option><option value="offline">离线</option></select>
-      <select v-model="capabilityFilter"><option value="all">采集能力</option><option value="full">完整</option><option value="limited">受限</option></select>
-      <select v-model="groupFilter"><option value="all">设备组</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select><button class="secondary-button" @click="saveView">保存当前视图</button>
+      <select v-model="selectedView" class="view-select" aria-label="选择视图" @change="applySelectedView">
+        <option v-if="selectedView === 'custom'" value="custom" disabled>自定义筛选</option>
+        <optgroup label="快捷视图">
+          <option value="all">全部设备</option>
+          <option value="attention">需要处置</option>
+          <option value="limited">能力受限</option>
+          <option value="unavailable">离线或陈旧</option>
+        </optgroup>
+        <optgroup v-if="data?.savedViews.length" label="我的视图">
+          <option v-for="view in data.savedViews" :key="view.id" :value="`saved:${view.id}`">{{ view.name }}</option>
+        </optgroup>
+      </select>
+      <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="按名称、位置或标签搜索" @input="markCustomView"></label>
+      <select v-model="statusFilter" aria-label="健康状态" @change="markCustomView"><option value="all">健康状态</option><option value="attention">需要处置</option><option value="critical">严重</option><option value="warning">警告</option><option value="healthy">健康</option><option value="offline">离线</option></select>
+      <select v-model="connectivityFilter" aria-label="连接状态" @change="markCustomView"><option value="all">连接状态</option><option value="online">在线</option><option value="stale">陈旧</option><option value="offline">离线</option></select>
+      <select v-model="capabilityFilter" aria-label="采集能力" @change="markCustomView"><option value="all">采集能力</option><option value="full">完整</option><option value="limited">受限</option></select>
+      <select v-model="groupFilter" aria-label="设备组" @change="markCustomView"><option value="all">设备组</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select>
+      <button class="secondary-button save-view-button" @click="saveView">保存当前视图</button>
     </div>
     <section class="card">
       <div class="section-title">

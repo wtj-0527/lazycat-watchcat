@@ -26,6 +26,28 @@ afterEach(() => {
 })
 
 describe('DevicesPage detail tabs', () => {
+  it('uses one unified view and filter toolbar without duplicate guidance', async () => {
+    apiMock.mockImplementation(async (path: string) => path === '/api/v1/overview'
+      ? { ...overview, savedViews: [{ id: 'mine', name: '我的关注', query: { status: 'attention' } }] }
+      : device)
+
+    const wrapper = mount(DevicesPage)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('用筛选和保存视图快速缩小范围')
+    expect(wrapper.find('.saved-views').exists()).toBe(false)
+    expect(wrapper.findAll('.filter-bar')).toHaveLength(1)
+    expect(wrapper.get('[aria-label="选择视图"]').text()).toContain('我的关注')
+
+    await wrapper.get('[aria-label="选择视图"]').setValue('attention')
+    expect(wrapper.get('[aria-label="健康状态"]').element).toHaveProperty('value', 'attention')
+    expect(wrapper.text()).toContain('没有符合当前筛选条件的设备')
+
+    await wrapper.get('[aria-label="健康状态"]').setValue('healthy')
+    expect(wrapper.get('[aria-label="选择视图"]').element).toHaveProperty('value', 'custom')
+    wrapper.unmount()
+  })
+
   it('exposes tab semantics and keyboard navigation after opening a device', async () => {
     const wrapper = mount(DevicesPage, { attachTo: document.body })
     await flushPromises()
