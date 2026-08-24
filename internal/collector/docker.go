@@ -21,13 +21,15 @@ import (
 
 const defaultDockerSocket = "/lzcapp/run/lzc-docker/docker.sock"
 const defaultDockerStatsBatchSize = 8
+const defaultDockerStatsConcurrency = 2
 
 type DockerCollector struct {
-	socket      string
-	client      *http.Client
-	statsBatch  int
-	cursorMu    sync.Mutex
-	statsCursor int
+	socket           string
+	client           *http.Client
+	statsBatch       int
+	statsConcurrency int
+	cursorMu         sync.Mutex
+	statsCursor      int
 }
 
 type dockerContainer struct {
@@ -84,7 +86,14 @@ func NewDockerCollector(socket string) *DockerCollector {
 	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAOYAN_DOCKER_STATS_BATCH_SIZE"))); err == nil && configured > 0 && configured <= 64 {
 		statsBatch = configured
 	}
-	return &DockerCollector{socket: socket, client: &http.Client{Transport: transport, Timeout: 8 * time.Second}, statsBatch: statsBatch}
+	statsConcurrency := defaultDockerStatsConcurrency
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAOYAN_DOCKER_STATS_CONCURRENCY"))); err == nil && configured > 0 && configured <= 8 {
+		statsConcurrency = configured
+	}
+	return &DockerCollector{
+		socket: socket, client: &http.Client{Transport: transport, Timeout: 8 * time.Second},
+		statsBatch: statsBatch, statsConcurrency: statsConcurrency,
+	}
 }
 
 func (d *DockerCollector) Available() bool {
@@ -121,7 +130,7 @@ func (d *DockerCollector) Collect(ctx context.Context, now time.Time) ([]protoco
 	statsTargets := d.nextStatsTargets(runningContainers)
 	var pointsMu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
+	sem := make(chan struct{}, d.statsConcurrency)
 	var firstErr error
 	for _, item := range statsTargets {
 		item := item

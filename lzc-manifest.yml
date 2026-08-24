@@ -11,13 +11,14 @@ application:
 
 services:
   maoyan:
-    image: registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.9.0-v2@sha256:4f0bd07eb9b1d4cd86e2d4759247448753c19208c04075108990264fcec64e58
+    image: registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.9.0-v2@sha256:cf51d06eeeab025b41776d981940530c64a1b2b7b228c34693ce38007b2f6062
     environment:
       - MAOYAN_ADDR=:8080
       - MAOYAN_COLLECTOR_ADDR=:8443
       - MAOYAN_DATA_DIR=/lzcapp/var/data
       - MAOYAN_WEB_DIR=/opt/maoyan/web
       - MAOYAN_DOCKER_STATS_BATCH_SIZE=8
+      - MAOYAN_DOCKER_STATS_CONCURRENCY=1
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/health"]
       interval: 30s
