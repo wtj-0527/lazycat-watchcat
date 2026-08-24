@@ -19,7 +19,7 @@ const states: Record<string, string> = { firing: '触发中', acknowledged: '已
         <span>最近 {{ ago(alert.lastSeenAt || alert.observedAt || alert.collectedAt) }}</span>
         <span v-if="alert.unit">当前 {{ formatMetricValue(alert.value, alert.unit) }}</span>
       </div>
-      <div class="contract-note">证据：{{ alert.message }}<template v-if="alert.unit"> · {{ formatMetricValue(alert.value, alert.unit) }}</template> · {{ ago(alert.lastSeenAt || alert.observedAt || alert.collectedAt) }}；规则阈值与推荐操作当前 API 未提供（Contract gap）</div>
+      <div class="contract-note">证据：{{ alert.message }}<template v-if="alert.unit"> · {{ formatMetricValue(alert.value, alert.unit) }}</template> · {{ ago(alert.lastSeenAt || alert.observedAt || alert.collectedAt) }}</div>
       <span v-if="actionable && alert.status !== 'resolved'" class="alert-actions">
         <button class="tiny secondary-button" :disabled="actionLoading" @click="emit('action', alert.fingerprint, 'acknowledge')">{{ actionLoading ? '处理中…' : '确认告警' }}</button>
         <button class="tiny secondary-button" :disabled="actionLoading" @click="emit('action', alert.fingerprint, 'silence')">静默 24 小时</button>

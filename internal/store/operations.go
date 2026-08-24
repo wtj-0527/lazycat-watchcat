@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -12,6 +13,46 @@ type CapabilityStatus struct {
 	Status     string    `json:"status"`
 	Detail     string    `json:"detail"`
 	CheckedAt  time.Time `json:"checkedAt"`
+}
+
+type OperationalSettings struct {
+	RawRetentionDays        int `json:"rawRetentionDays"`
+	RollupRetentionDays     int `json:"rollupRetentionDays"`
+	AuditRetentionDays      int `json:"auditRetentionDays"`
+	InspectionRetentionDays int `json:"inspectionRetentionDays"`
+	DailyInspectionHour     int `json:"dailyInspectionHour"`
+	WeeklyInspectionHour    int `json:"weeklyInspectionHour"`
+}
+
+func DefaultOperationalSettings() OperationalSettings {
+	return OperationalSettings{
+		RawRetentionDays: 30, RollupRetentionDays: 365, AuditRetentionDays: 180,
+		InspectionRetentionDays: 365, DailyInspectionHour: 3, WeeklyInspectionHour: 4,
+	}
+}
+
+func (s *Store) OperationalSettings(ctx context.Context) OperationalSettings {
+	result := DefaultOperationalSettings()
+	_, _ = s.GetSystemState(ctx, "operational.settings", &result)
+	return result
+}
+
+func (s *Store) SetOperationalSettings(ctx context.Context, value OperationalSettings) error {
+	if value.RawRetentionDays < 1 || value.RawRetentionDays > 365 ||
+		value.RollupRetentionDays < value.RawRetentionDays || value.RollupRetentionDays > 3650 ||
+		value.AuditRetentionDays < 1 || value.AuditRetentionDays > 3650 ||
+		value.InspectionRetentionDays < 1 || value.InspectionRetentionDays > 3650 ||
+		value.DailyInspectionHour < 0 || value.DailyInspectionHour > 23 ||
+		value.WeeklyInspectionHour < 0 || value.WeeklyInspectionHour > 23 {
+		return errors.New("invalid operational settings")
+	}
+	if err := s.SetSystemState(ctx, "operational.settings", value); err != nil {
+		return err
+	}
+	raw, _ := json.Marshal(value)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(action,subject_type,subject_id,metadata_json,created_at) VALUES('settings.updated','settings','operational',?,?)`,
+		string(raw), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 func (s *Store) SetCapabilityStatuses(ctx context.Context, deviceID string, items []CapabilityStatus) error {

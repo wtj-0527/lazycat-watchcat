@@ -34,6 +34,7 @@ const version = ref('—')
 const fleet = ref<Overview>()
 const toastMessage = ref('')
 const globalQuery = ref('')
+const searchNonce = ref(0)
 let toastTimer: number | undefined
 let shellTimer: number | undefined
 
@@ -73,10 +74,12 @@ async function loadShell() {
 function submitGlobalSearch() {
   const value = globalQuery.value.trim().toLowerCase()
   if (!value) return
+  sessionStorage.setItem('maoyanSearch', globalQuery.value.trim())
   if (value.includes('告警') || value.includes('alert')) navigate('alerts')
   else if (value.includes('应用') || value.includes('app')) navigate('apps')
   else navigate('devices')
-  toast(`已进入对应页面继续搜索“${globalQuery.value.trim()}”`)
+  searchNonce.value++
+  toast(`正在搜索“${globalQuery.value.trim()}”`)
 }
 
 onMounted(async () => {
@@ -122,19 +125,19 @@ onBeforeUnmount(() => {
   </aside>
   <main class="app-main">
     <header class="topbar">
-      <button class="scope-picker" type="button" title="当前为全局设备范围">
+      <div class="scope-picker" title="当前为全局设备范围">
         <span>当前范围</span><b>全部设备 · {{ deviceCount }} 台</b>
-      </button>
+      </div>
       <span class="freshness-pill" :class="{ stale: staleCount }">数据新鲜 · {{ freshness }}</span>
       <form class="global-search" role="search" @submit.prevent="submitGlobalSearch">
         <AppIcon name="search" :size="16" />
         <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
       </form>
       <button class="icon-button" type="button" aria-label="通知" @click="navigate('alerts')"><AppIcon name="alerts" :size="17" /></button>
-      <button class="user-avatar" type="button" aria-label="当前用户">王</button>
+      <button class="user-avatar" type="button" aria-label="当前用户设置" @click="navigate('settings')">王</button>
     </header>
     <section id="content">
-      <component :is="pageComponent" :key="page" v-bind="pageProps" @toast="toast" />
+      <component :is="pageComponent" :key="`${page}-${searchNonce}`" v-bind="pageProps" @toast="toast" />
     </section>
   </main>
   <div id="toast" :class="{ show: toastMessage }">{{ toastMessage }}</div>

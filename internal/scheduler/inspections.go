@@ -49,18 +49,19 @@ func (s *InspectionScheduler) Run(ctx context.Context) {
 
 func (s *InspectionScheduler) tick(ctx context.Context) {
 	now := s.now().In(time.Local)
+	settings := s.store.OperationalSettings(ctx)
 	if latest, err := s.store.LatestMetricTimestamp(ctx); err != nil || now.Sub(latest.In(time.Local)) > 2*time.Minute {
 		s.logger.Warn("scheduled inspection waiting for fresh metrics", "latest", latest, "error", err)
 		return
 	}
-	if now.Weekday() == time.Sunday && now.Hour() >= 4 {
+	if now.Weekday() == time.Sunday && now.Hour() >= settings.WeeklyInspectionHour {
 		year, week := now.ISOWeek()
 		if s.runPeriod(ctx, "weekly", formatWeek(year, week), "scheduled-weekly") {
 			_ = s.store.SetSystemState(ctx, "inspection_schedule_daily", now.Format("2006-01-02"))
 		}
 		return
 	}
-	if now.Hour() >= 3 {
+	if now.Hour() >= settings.DailyInspectionHour {
 		s.runPeriod(ctx, "daily", now.Format("2006-01-02"), "scheduled-daily")
 	}
 }

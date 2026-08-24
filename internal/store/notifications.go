@@ -18,6 +18,39 @@ type PendingNotification struct {
 	Attempts         int
 }
 
+type NotificationSummary struct {
+	Pending int `json:"pending"`
+	Sent    int `json:"sent"`
+	Failed  int `json:"failed"`
+	Total   int `json:"total"`
+}
+
+func (s *Store) NotificationSummary(ctx context.Context) (NotificationSummary, error) {
+	var result NotificationSummary
+	rows, err := s.db.QueryContext(ctx, `SELECT status,COUNT(*) FROM notification_outbox GROUP BY status`)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return result, err
+		}
+		result.Total += count
+		switch status {
+		case "pending":
+			result.Pending = count
+		case "sent":
+			result.Sent = count
+		case "failed":
+			result.Failed = count
+		}
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) NextNotification(ctx context.Context) (PendingNotification, error) {
 	var n PendingNotification
 	err := s.db.QueryRowContext(ctx, `SELECT id,alert_fingerprint,transition,title,body,deeplink,attempts FROM notification_outbox WHERE status='pending' AND next_attempt_at<=? ORDER BY id LIMIT 1`, time.Now().UTC().Format(time.RFC3339Nano)).

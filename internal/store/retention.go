@@ -25,6 +25,7 @@ type rollupValues struct {
 
 func (s *Store) RunRetention(ctx context.Context, now time.Time) (RetentionResult, error) {
 	now = now.UTC()
+	settings := s.OperationalSettings(ctx)
 	currentHour := now.Truncate(time.Hour)
 	var lastRun string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM retention_state WHERE name='last_rollup_received_at'`).Scan(&lastRun)
@@ -103,10 +104,10 @@ func (s *Store) RunRetention(ctx context.Context, now time.Time) (RetentionResul
 		dest   *int
 	}
 	for _, item := range []cleanup{
-		{`DELETE FROM metrics WHERE collected_at<?`, now.Add(-30 * 24 * time.Hour), &result.RawDeleted},
-		{`DELETE FROM metric_rollups_hourly WHERE bucket_start<?`, now.Add(-365 * 24 * time.Hour), &result.RollupsDeleted},
-		{`DELETE FROM audit_log WHERE created_at<?`, now.Add(-180 * 24 * time.Hour), &result.AuditDeleted},
-		{`DELETE FROM inspections WHERE started_at<?`, now.Add(-365 * 24 * time.Hour), &result.InspectionsDeleted},
+		{`DELETE FROM metrics WHERE collected_at<?`, now.Add(-time.Duration(settings.RawRetentionDays) * 24 * time.Hour), &result.RawDeleted},
+		{`DELETE FROM metric_rollups_hourly WHERE bucket_start<?`, now.Add(-time.Duration(settings.RollupRetentionDays) * 24 * time.Hour), &result.RollupsDeleted},
+		{`DELETE FROM audit_log WHERE created_at<?`, now.Add(-time.Duration(settings.AuditRetentionDays) * 24 * time.Hour), &result.AuditDeleted},
+		{`DELETE FROM inspections WHERE started_at<?`, now.Add(-time.Duration(settings.InspectionRetentionDays) * 24 * time.Hour), &result.InspectionsDeleted},
 	} {
 		res, err := tx.ExecContext(ctx, item.query, item.cutoff.Format(time.RFC3339Nano))
 		if err != nil {

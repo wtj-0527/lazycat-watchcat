@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { usePolling, useRovingTabs } from '@/composables'
-import type { Device, Metric, Overview } from '@/types'
+import type { Capability, Device, Metric, Overview } from '@/types'
 import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
@@ -20,16 +20,33 @@ const detailDeviceId = ref('')
 const { selected: selectedTab, select: selectDetailTab, move: moveDetailTab } = useRovingTabs(detailTabs, 'overview', 'device-tab-')
 const detailLoading = ref(false)
 const detailError = ref('')
-const query = ref('')
+const query = ref(sessionStorage.getItem('maoyanSearch') || '')
 const statusFilter = ref('all')
-const { data, loading, error, refresh } = usePolling(() => api<Overview>('/api/v1/overview'))
+const connectivityFilter = ref('all')
+const capabilityFilter = ref('all')
+const groupFilter = ref('all')
+const trend = ref<Metric[]>([])
+const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail: Record<string, unknown>; createdAt: string }>>([])
+const deviceCapabilities = ref<Capability[]>([])
+interface SavedView { id: string; name: string; query: { query?: string; status?: string; connectivity?: string; capability?: string; group?: string } }
+interface Payload extends Overview { savedViews: SavedView[] }
+const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
+  const overview = await api<Overview & { savedViews?: SavedView[] }>('/api/v1/overview')
+  return { ...overview, devices: overview.devices || [], alerts: overview.alerts || [], savedViews: overview.savedViews || [] }
+})
 
 const filteredDevices = computed(() => (data.value?.devices || [])
   .filter((device) => {
     const text = `${device.name} ${device.hostname} ${device.osVersion}`.toLowerCase()
     const matchesQuery = text.includes(query.value.trim().toLowerCase())
-    const matchesStatus = statusFilter.value === 'all' || deviceState(device) === statusFilter.value
-    return matchesQuery && matchesStatus
+    const state = deviceState(device)
+    const matchesStatus = statusFilter.value === 'all' || (statusFilter.value === 'attention' ? state === 'critical' || state === 'warning' : state === statusFilter.value)
+    const connection = connectivityState(device)
+    const matchesConnection = connectivityFilter.value === 'all' || (connectivityFilter.value === 'unavailable' ? connection === 'offline' || connection === 'stale' : connection === connectivityFilter.value)
+    const capability = Object.keys(device.latest || {}).some((name) => name.startsWith('disk.') || name.startsWith('btrfs.')) ? 'full' : 'limited'
+    const matchesCapability = capabilityFilter.value === 'all' || capabilityFilter.value === capability
+    const matchesGroup = groupFilter.value === 'all' || (device.group || '') === groupFilter.value
+    return matchesQuery && matchesStatus && matchesConnection && matchesCapability && matchesGroup
   })
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
 
@@ -40,12 +57,47 @@ async function showDevice(id: string) {
   selectedTab.value = 'overview'
   try {
     selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(id)}`)
+    const [history, events, operations] = await Promise.all([
+      api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(id)}/metrics?name=system.memory.usage&hours=24`),
+      api<{ items: typeof deviceEvents.value }>(`/api/v1/devices/${encodeURIComponent(id)}/events`),
+      api<{ capabilities: Array<Capability & { deviceId?: string }> }>('/api/v1/operations'),
+    ])
+    trend.value = history.items || []
+    deviceEvents.value = events.items || []
+    deviceCapabilities.value = (operations.capabilities || []).filter((item) => !item.deviceId || item.deviceId === id)
   } catch (reason) {
     detailError.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
     detailLoading.value = false
   }
 }
+const groups = computed(() => [...new Set((data.value?.devices || []).map((item) => item.group).filter(Boolean))] as string[])
+function applyView(view: SavedView['query']) {
+  query.value = view.query || ''
+  statusFilter.value = view.status || 'all'
+  connectivityFilter.value = view.connectivity || 'all'
+  capabilityFilter.value = view.capability || 'all'
+  groupFilter.value = view.group || 'all'
+}
+async function saveView() {
+  const name = window.prompt('保存视图名称')
+  if (!name) return
+  await api('/api/v1/saved-views', {
+    method: 'POST',
+    body: JSON.stringify({ name, query: { query: query.value, status: statusFilter.value, connectivity: connectivityFilter.value, capability: capabilityFilter.value, group: groupFilter.value } }),
+  })
+  await refresh()
+}
+async function editMetadata() {
+  if (!selected.value) return
+  const group = window.prompt('设备组', selected.value.group || '') ?? (selected.value.group || '')
+  const location = window.prompt('位置', selected.value.location || '') ?? (selected.value.location || '')
+  await api(`/api/v1/devices/${encodeURIComponent(selected.value.id)}/metadata`, {
+    method: 'PUT', body: JSON.stringify({ group, location, labels: selected.value.labels || {} }),
+  })
+  selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(selected.value.id)}`)
+}
+function trendHeight(value: number) { return `${Math.max(2, Math.min(100, value))}%` }
 
 function closeDetail() {
   selected.value = undefined
@@ -85,7 +137,7 @@ const capabilityCount = computed(() => selected.value
           <div class="button-row">
             <StatusPill :status="deviceState(selected)" /><StatusPill :status="connectivityState(selected)" />
             <span class="pill unknown">{{ ago(selected.lastSeenAt) }}</span>
-            <button class="secondary-button" disabled>更多操作</button>
+            <button class="secondary-button" @click="editMetadata">编辑资料</button>
           </div>
         </section>
 
@@ -110,7 +162,8 @@ const capabilityCount = computed(() => selected.value
             <section class="card identity-card">
               <div class="section-title"><div><h2>设备身份</h2></div></div>
               <dl class="identity-list">
-                <div><dt>设备组</dt><dd>未分组</dd></div>
+                <div><dt>设备组</dt><dd>{{ selected.group || '未分组' }}</dd></div>
+                <div><dt>位置</dt><dd>{{ selected.location || '未设置' }}</dd></div>
                 <div><dt>系统</dt><dd>{{ selected.osVersion || '未知' }}</dd></div>
                 <div><dt>地址</dt><dd>{{ selected.hostname || '未知' }}</dd></div>
                 <div><dt>采集器</dt><dd>{{ selected.collectorVersion || '未知' }}</dd></div>
@@ -137,19 +190,21 @@ const capabilityCount = computed(() => selected.value
             </section>
             <aside class="card capability-summary-card">
               <div class="section-title"><div><h2>采集能力</h2></div><span class="pill healthy">{{ capabilityCount }} 可用</span></div>
-              <div v-for="prefix in ['系统指标', '容器指标', '存储池', '硬盘自检', '不间断电源']" :key="prefix" class="capability-line"><i :class="{ warning: prefix === '硬盘自检', unknown: prefix === '不间断电源' }" /><b>{{ prefix }}</b><span>{{ prefix === '不间断电源' ? '不支持' : prefix === '硬盘自检' ? '受限' : '可用' }}</span></div>
+              <div v-for="item in deviceCapabilities" :key="item.capability" class="capability-line"><i :class="{ warning: item.status === 'restricted', unknown: item.status === 'unsupported' || item.status === 'error' }" /><b>{{ item.capability }}</b><span>{{ item.status }}</span></div>
               <a href="#settings">查看权限原因与修复步骤 →</a>
             </aside>
             <section class="card resource-trend-card">
               <div class="section-title"><div><h2>24 小时资源趋势</h2><span class="muted">单轴显示内存使用率；点击系统页签查看原始历史数据。</span></div></div>
-              <div class="trend-placeholder"><i v-for="height in [22,31,28,47,39,58,65,51,72,64]" :key="height" :style="{ height: `${height}%` }" /></div>
+              <div v-if="trend.length" class="trend-placeholder"><i v-for="(point, index) in trend" :key="`${point.collectedAt}-${index}`" :style="{ height: trendHeight(point.value) }" :title="`${formatMetricValue(point.value, point.unit)} · ${dateTime(point.collectedAt)}`" /></div>
+              <div v-else class="inline-empty">最近 24 小时没有内存历史数据。</div>
             </section>
           </div>
         </div>
 
         <section v-else-if="selectedTab === 'events'" class="card">
           <div class="section-title"><div><h2>设备事件</h2><span class="muted">告警与审计事件</span></div></div>
-          <div class="contract-empty"><b>Contract gap</b><p>当前设备详情 API 未提供独立事件流。请在“告警”和“巡检”页面查看现有证据。</p></div>
+          <div v-if="deviceEvents.length" class="backup-list"><div v-for="item in deviceEvents" :key="item.id" class="backup-row"><div><b>{{ item.title }}</b><p>{{ dateTime(item.createdAt) }} · {{ item.type }}</p><code>{{ JSON.stringify(item.detail) }}</code></div></div></div>
+          <div v-else class="inline-empty">暂无设备事件。</div>
         </section>
 
         <section v-else class="card">
@@ -168,7 +223,7 @@ const capabilityCount = computed(() => selected.value
               </tr></tbody>
             </table>
           </div>
-          <div v-else class="contract-empty"><b>Unknown</b><p>当前 Collector 尚未提供此分类的指标，不能据此判断为健康。</p></div>
+          <div v-else class="inline-empty">当前没有此分类的采集指标。</div>
         </section>
         </div>
       </template>
@@ -179,13 +234,13 @@ const capabilityCount = computed(() => selected.value
     <div class="page-intro">
       <div><h2>设备</h2><p>用筛选和保存视图快速缩小范围；健康、连接、能力各自可筛选。</p></div>
     </div>
-    <div class="saved-views"><b>保存视图</b><button class="active">全部设备</button><button>需要处置 {{ filteredDevices.filter((item) => deviceState(item) === 'critical' || deviceState(item) === 'warning').length }}</button><button>能力受限</button><button>离线或陈旧</button><a href="#settings">管理视图</a></div>
+    <div class="saved-views"><b>保存视图</b><button @click="applyView({})">全部设备</button><button @click="applyView({ status: 'attention' })">需要处置</button><button @click="applyView({ capability: 'limited' })">能力受限</button><button @click="applyView({ connectivity: 'unavailable' })">离线或陈旧</button><button v-for="view in data?.savedViews" :key="view.id" @click="applyView(view.query)">{{ view.name }}</button></div>
     <div class="filter-bar">
       <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="按名称、位置或标签搜索"></label>
       <select v-model="statusFilter"><option value="all">健康状态</option><option value="critical">严重</option><option value="warning">警告</option><option value="healthy">健康</option><option value="offline">离线</option></select>
-      <select disabled><option>连接状态</option></select>
-      <select disabled><option>采集能力</option></select>
-      <select disabled><option>设备组</option></select><button class="secondary-button">保存当前视图</button>
+      <select v-model="connectivityFilter"><option value="all">连接状态</option><option value="online">在线</option><option value="stale">陈旧</option><option value="offline">离线</option></select>
+      <select v-model="capabilityFilter"><option value="all">采集能力</option><option value="full">完整</option><option value="limited">受限</option></select>
+      <select v-model="groupFilter"><option value="all">设备组</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select><button class="secondary-button" @click="saveView">保存当前视图</button>
     </div>
     <section class="card">
       <div class="section-title">

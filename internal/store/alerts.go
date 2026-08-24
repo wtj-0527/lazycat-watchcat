@@ -128,6 +128,11 @@ func recordAlertTransition(ctx context.Context, tx *sql.Tx, a AlertSignal, from,
 	if !notify {
 		return nil
 	}
+	var maintenance int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM maintenance_windows WHERE enabled=1 AND starts_at<=? AND ends_at>?`,
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)).Scan(&maintenance); err == nil && maintenance > 0 {
+		return nil
+	}
 	transition := to
 	title := "猫眼告警"
 	body := fmt.Sprintf("[%s] %s · %s：%s", a.Severity, a.DeviceName, a.Resource, a.Message)

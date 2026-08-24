@@ -10,6 +10,7 @@ export interface Metric {
   unit: string
   labels: Record<string, string> | null
   collectedAt: string
+  risk?: Health
 }
 
 export interface Device {
@@ -18,6 +19,10 @@ export interface Device {
   hostname: string
   osVersion: string
   collectorVersion: string
+  group?: string
+  location?: string
+  labels?: Record<string, string>
+  capabilities?: string[]
   status: string
   lastSeenAt: string
   online: boolean
@@ -66,6 +71,8 @@ export interface Inspection {
     source?: string
     latestMetricAt?: string
     checks?: Record<string, number>
+    applicationChecks?: { instances: number; running: number; paused: number; error: number }
+    notificationChecks?: { pending: number; sent: number; failed: number; total: number }
     devices?: Device[]
     alerts?: Alert[]
   }

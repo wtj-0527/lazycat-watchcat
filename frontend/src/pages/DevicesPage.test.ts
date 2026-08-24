@@ -53,8 +53,13 @@ describe('DevicesPage detail tabs', () => {
     let detailRequests = 0
     apiMock.mockImplementation(async (path: string) => {
       if (path === '/api/v1/overview') return overview
-      detailRequests++
-      if (detailRequests === 1) throw new Error('temporary detail failure')
+      if (path === '/api/v1/devices/d1') {
+        detailRequests++
+        if (detailRequests === 1) throw new Error('temporary detail failure')
+      }
+      if (path.includes('/metrics')) return { items: [] }
+      if (path.includes('/events')) return { items: [] }
+      if (path === '/api/v1/operations') return { capabilities: [] }
       return device
     })
 

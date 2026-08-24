@@ -9,8 +9,10 @@ import AppIcon from '@/components/AppIcon.vue'
 import PageState from '@/components/PageState.vue'
 
 const emit = defineEmits<{ toast: [message: string] }>()
-const query = ref('')
+const query = ref(sessionStorage.getItem('maoyanSearch') || '')
 const filter = ref('active')
+const severityFilter = ref('all')
+const timeFilter = ref('24')
 const actionEvidence = ref<{ status: 'success' | 'warning' | 'error'; message: string }>()
 const actionLoading = ref('')
 const selectedFingerprint = ref('')
@@ -27,13 +29,16 @@ const counts = computed(() => ({
 }))
 const filtered = computed(() => (data.value?.items || []).filter((alert) => {
   const matchesQuery = `${alert.deviceName} ${alert.resource} ${alert.message}`.toLowerCase().includes(query.value.trim().toLowerCase())
+  const matchesSeverity = severityFilter.value === 'all' || alert.severity === severityFilter.value
+  const observed = new Date(alert.lastSeenAt || alert.observedAt || alert.collectedAt || 0).getTime()
+  const matchesTime = timeFilter.value === 'all' || observed >= Date.now() - Number(timeFilter.value) * 60 * 60 * 1000
   let matchesFilter = false
   if (filter.value === 'all') matchesFilter = true
   else if (filter.value === 'active') matchesFilter = alert.status !== 'resolved'
   else if (filter.value === 'critical' || filter.value === 'warning') {
     matchesFilter = alert.severity === filter.value && alert.status !== 'resolved'
   } else matchesFilter = alert.status === filter.value
-  return matchesQuery && matchesFilter
+  return matchesQuery && matchesFilter && matchesSeverity && matchesTime
 }))
 const selectedAlert = computed(() => filtered.value.find((item) => item.fingerprint === selectedFingerprint.value) || filtered.value[0])
 
@@ -64,6 +69,13 @@ async function action(fingerprint: string, name: string) {
     actionLoading.value = ''
   }
 }
+async function bulkAcknowledge() {
+  const fingerprints = filtered.value.filter((item) => item.status !== 'resolved').map((item) => item.fingerprint)
+  if (!fingerprints.length || !window.confirm(`确认当前筛选下的 ${fingerprints.length} 个告警？`)) return
+  await api('/api/v1/alerts/bulk-acknowledge', { method: 'POST', body: JSON.stringify({ fingerprints }) })
+  await refresh()
+  emit('toast', `已确认 ${fingerprints.length} 个告警`)
+}
 </script>
 
 <template>
@@ -77,8 +89,10 @@ async function action(fingerprint: string, name: string) {
     </div>
     <div class="filter-bar alert-search-bar">
       <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索规则、设备或证据"></label>
-      <select><option>全部严重度</option></select><select><option>未分配</option></select><select><option>最近 24 小时</option></select>
-      <button class="secondary-button" disabled>批量确认</button>
+      <select v-model="severityFilter"><option value="all">全部严重度</option><option value="critical">严重</option><option value="warning">警告</option></select>
+      <span class="filter-note" title="当前为单用户模式">负责人：设备管理员</span>
+      <select v-model="timeFilter"><option value="24">最近 24 小时</option><option value="168">最近 7 天</option><option value="720">最近 30 天</option><option value="all">全部时间</option></select>
+      <button class="secondary-button" :disabled="!filtered.length" @click="bulkAcknowledge">批量确认</button>
     </div>
     <p v-if="actionEvidence" class="operation-evidence" :class="actionEvidence.status" role="status">{{ actionEvidence.message }}</p>
     <div class="alert-workbench">

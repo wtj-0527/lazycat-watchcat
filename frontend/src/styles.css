@@ -419,7 +419,7 @@ body { font-size: 12px; }
 .app-matrix-card { min-height: 520px; }
 .app-matrix { min-width: 980px; }
 .app-matrix th:not(:first-child) { min-width: 126px; }
-.matrix-cell { min-width: 112px; min-height: 44px; padding: 9px 12px; border-radius: 9px; background: var(--healthy-soft); color: var(--healthy); }
+.matrix-cell { min-width: 112px; min-height: 44px; padding: 9px 12px; border: 0; border-radius: 9px; background: var(--healthy-soft); color: var(--healthy); text-align: left; }
 .matrix-cell i { display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: currentColor; }
 .matrix-cell b { color: inherit; }
 .matrix-cell small { color: inherit; opacity: .78; }
@@ -527,3 +527,8 @@ body { font-size: 12px; }
 .onboarding-progress .done b, .onboarding-progress .active b { border-color: var(--primary); background: var(--primary); color: #fff; }
 .onboarding-progress .done::after { background: var(--primary); }
 .onboarding-progress span { font-weight: 700; }
+.maintenance-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(190px, 1fr) minmax(190px, 1fr) auto; gap: 12px; margin: 20px 0; }
+.maintenance-form input, .settings-grid input, .fleet-table input:not([type="checkbox"]) { width: 100%; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); }
+.settings-grid label { display: grid; align-content: center; gap: 7px; min-height: 84px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+.settings-grid label span { color: var(--muted); font-size: 12px; font-weight: 700; }
+@media (max-width: 900px) { .maintenance-form { grid-template-columns: 1fr; } }

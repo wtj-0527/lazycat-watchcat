@@ -3,19 +3,19 @@ import { computed } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { Capability, Metric } from '@/types'
-import { ago, formatMetricValue, metricLabel, storageRiskAdvice, storageRiskStatus } from '@/utils'
+import { ago, bytes, formatMetricValue, metricLabel, storageRiskAdvice, storageRiskStatus } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
-interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[] }
+interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[]; summary: { totalBytes: number; fillWithin30Days: number } }
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
   const [storage, operations] = await Promise.all([
-    api<{ items: Metric[] | null; updatedAt: string }>('/api/v1/storage'),
+    api<{ items: Metric[] | null; updatedAt: string; summary: { totalBytes: number; fillWithin30Days: number } }>('/api/v1/storage'),
     api<{ capabilities: Capability[] | null }>('/api/v1/operations')
       .catch(() => ({ capabilities: null })),
   ])
-  return { ...storage, items: storage.items || [], capabilities: operations.capabilities || [] }
+  return { ...storage, items: storage.items || [], summary: storage.summary || { totalBytes: 0, fillWithin30Days: 0 }, capabilities: operations.capabilities || [] }
 })
 const groups = computed(() => {
   const result: Record<string, Metric[]> = {}
@@ -23,17 +23,18 @@ const groups = computed(() => {
   return Object.values(result)
 })
 const disks = computed(() => new Set((data.value?.items || []).filter((item) => item.name.startsWith('disk.')).map((item) => `${item.deviceId}:${item.labels?.device || item.labels?.sensor || item.name}`)).size)
+const riskStatus = (item: Metric) => item.risk || storageRiskStatus(item)
 const riskItems = computed(() => (data.value?.items || [])
-  .filter((item) => storageRiskStatus(item))
+  .filter((item) => riskStatus(item))
   .sort((a, b) => {
-    const severity = Number(storageRiskStatus(a) === 'warning') - Number(storageRiskStatus(b) === 'warning')
+    const severity = Number(riskStatus(a) === 'warning') - Number(riskStatus(b) === 'warning')
     return severity || b.value - a.value
   }))
-const critical = computed(() => riskItems.value.filter((item) => storageRiskStatus(item) === 'critical').length)
+const critical = computed(() => riskItems.value.filter((item) => riskStatus(item) === 'critical').length)
 const find = (items: Metric[], names: string[]) => items.find((item) => names.some((name) => item.name === name || item.name.endsWith(name)))
 const display = (items: Metric[], names: string[], digits = 1) => {
   const point = find(items, names)
-  return point ? formatMetricValue(point.value, point.unit, digits) : 'Unknown'
+  return point ? formatMetricValue(point.value, point.unit, digits) : '暂无数据'
 }
 const capabilityStatus = (name: string) => data.value?.capabilities.find((item) => item.capability.includes(name))
 </script>
@@ -42,10 +43,10 @@ const capabilityStatus = (name: string) => data.value?.capabilities.find((item) 
   <PageState :loading="loading" :error="error" :empty="data?.items.length === 0" empty-title="尚无存储数据" empty-text="基础文件系统指标会自动上报；SMART 与 Btrfs 需要对应工具及只读权限。" @retry="refresh">
     <div class="page-intro"><div><h2>Fleet 存储健康</h2><p>按数据风险排序，不用平均值掩盖热点。</p></div><span class="muted">更新 {{ ago(data?.updatedAt) }}</span></div>
     <div class="stats four">
-      <StatCard label="物理磁盘" :value="disks || 'Unknown'" hint="基于已上报磁盘标签" />
-      <StatCard label="总容量" value="Unknown" hint="当前 API 未提供 Fleet 容量聚合" />
+      <StatCard label="物理磁盘" :value="disks" hint="基于实时磁盘标签" />
+      <StatCard label="总容量" :value="bytes(data?.summary.totalBytes || 0)" hint="基于文件系统可用量与使用率计算" />
       <StatCard label="Critical" :value="critical" hint="需要立即处理" :tone="critical ? 'red' : 'green'" />
-      <StatCard label="30 天内写满" value="Unknown" hint="缺少历史增长率契约" tone="amber" />
+      <StatCard label="30 天内写满" :value="data?.summary.fillWithin30Days || 0" hint="基于最近 30 天真实增长率" tone="amber" />
     </div>
 
     <section class="card storage-risk-card">
@@ -55,7 +56,7 @@ const capabilityStatus = (name: string) => data.value?.capabilities.find((item) 
           <tbody><tr v-for="item in riskItems" :key="`${item.deviceId}-${item.name}-${metricLabel(item)}`">
             <td class="device"><b>{{ item.deviceName || '未知设备' }}</b><small>{{ item.deviceId }}</small></td>
             <td>{{ metricLabel(item) }}<small><code>{{ item.name }}</code></small></td>
-            <td><StatusPill :status="storageRiskStatus(item) || 'unknown'" /></td>
+            <td><StatusPill :status="riskStatus(item) || 'unknown'" /></td>
             <td><b>{{ formatMetricValue(item.value, item.unit) }}</b></td>
             <td>{{ ago(item.collectedAt) }}</td>
             <td>{{ storageRiskAdvice(item) }}</td>
@@ -67,7 +68,7 @@ const capabilityStatus = (name: string) => data.value?.capabilities.find((item) 
 
     <div class="storage-grid">
       <section v-for="items in groups" :key="items[0]?.deviceId" class="card storage-device-card">
-        <div class="section-title compact"><div><h2>{{ items[0]?.deviceName || '未知设备' }}</h2><span class="muted">{{ items.length }} 项存储证据</span></div><StatusPill :status="items.some((item) => storageRiskStatus(item) === 'critical') ? 'critical' : items.some((item) => riskItems.includes(item)) ? 'warning' : 'healthy'" /></div>
+        <div class="section-title compact"><div><h2>{{ items[0]?.deviceName || '未知设备' }}</h2><span class="muted">{{ items.length }} 项存储证据</span></div><StatusPill :status="items.some((item) => riskStatus(item) === 'critical') ? 'critical' : items.some((item) => riskItems.includes(item)) ? 'warning' : 'healthy'" /></div>
         <div class="storage-measure"><span>根文件系统</span><b>{{ display(items, ['filesystem.root.usage', 'btrfs.usage']) }}</b></div>
         <div class="storage-measure"><span>磁盘温度</span><b>{{ display(items, ['disk.temperature'], 0) }}</b></div>
         <div class="storage-measure"><span>NVMe Media Errors</span><b>{{ display(items, ['disk.nvme.media_errors'], 0) }}</b></div>

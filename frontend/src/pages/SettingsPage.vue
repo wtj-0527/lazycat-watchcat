@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { usePolling, useRovingTabs } from '@/composables'
-import type { Backup, Capability, Stability } from '@/types'
+import type { Backup, Capability, Device, Stability } from '@/types'
 import { ago, backupType, bytes, dateTime, duration } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -11,11 +11,18 @@ interface Settings {
   appVersion: string; deploymentMode: string; embeddedCollector: boolean; singleUser: boolean; maxDevices: number
   collectIntervalSeconds: number; advancedIntervalSeconds: number; rawRetentionDays: number; rollupRetentionDays: number
   auditRetentionDays: number; inspectionRetentionDays: number; notificationChannel: string; notificationDelivery: string
+  dailyInspectionHour: number; weeklyInspectionHour: number
   storageStats: { rawMetricRows: number; rollupRows: number }
 }
 interface Operations { capabilities: Capability[]; schedule: { daily: { hour: number }; weekly: { hour: number }; timezone: string } }
 interface DatabaseStatus { databaseSize: number; integrityOk: boolean; integrityError?: string; backupCount: number; latestBackup?: Backup }
-interface Payload { settings: Settings; operations: Operations; database: DatabaseStatus; backups: Backup[]; stability: Stability }
+interface AlertRule { metric: string; label: string; warning: number; critical: number; enabled: boolean }
+interface MaintenanceWindow { id: string; name: string; startsAt: string; endsAt: string; enabled: boolean }
+interface AuditEntry { id: number; action: string; subjectType: string; subjectId: string; metadata: Record<string, unknown>; createdAt: string }
+interface Payload {
+  settings: Settings; operations: Operations; database: DatabaseStatus; backups: Backup[]; stability: Stability
+  devices: Device[]; rules: AlertRule[]; windows: MaintenanceWindow[]; audit: AuditEntry[]
+}
 interface PairingCode { code: string; expiresAt: string }
 interface RestoreResult { status: string; backup: string; message: string }
 interface OperationEvidence { status: 'success' | 'warning' | 'error'; message: string }
@@ -35,10 +42,18 @@ const backupEvidence = ref<OperationEvidence>()
 const restoreEvidence = ref<OperationEvidence>()
 const stabilityLoading = ref(false)
 const stabilityEvidence = ref<OperationEvidence>()
+const settingsEvidence = ref<OperationEvidence>()
+const maintenanceName = ref('')
+const maintenanceStart = ref('')
+const maintenanceEnd = ref('')
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
-  const [settings, operations, database, backups, stability] = await Promise.all([
+  const [settings, operations, database, backups, stability, devices, rules, windows, audit] = await Promise.all([
     api<Settings>('/api/v1/settings'), api<Operations>('/api/v1/operations'), api<DatabaseStatus>('/api/v1/database/status'),
     api<{ items: Backup[] }>('/api/v1/backups'), api<Stability>('/api/v1/stability'),
+    api<{ items: Device[] }>('/api/v1/devices').catch(() => ({ items: [] })),
+    api<{ items: AlertRule[] }>('/api/v1/alert-rules').catch(() => ({ items: [] })),
+    api<{ items: MaintenanceWindow[] }>('/api/v1/maintenance-windows').catch(() => ({ items: [] })),
+    api<{ items: AuditEntry[] }>('/api/v1/audit?limit=100').catch(() => ({ items: [] })),
   ])
   return {
     settings,
@@ -46,6 +61,10 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
     database,
     backups: backups.items || [],
     stability,
+    devices: devices.items || [],
+    rules: rules.items || [],
+    windows: windows.items || [],
+    audit: audit.items || [],
   }
 })
 const localCapability = computed(() => data.value?.operations.capabilities.filter((item) => !item.capability.startsWith('remote.')) || [])
@@ -57,6 +76,62 @@ async function createPairingCode() {
     emit('toast', '一次性配对码已生成')
   } catch (reason) { emit('toast', reason instanceof Error ? reason.message : String(reason)) }
   finally { pairingLoading.value = false }
+}
+async function saveDeviceMetadata(device: Device) {
+  await api(`/api/v1/devices/${encodeURIComponent(device.id)}/metadata`, {
+    method: 'PUT', body: JSON.stringify({ group: device.group || '', location: device.location || '', labels: device.labels || {} }),
+  })
+  settingsEvidence.value = { status: 'success', message: `${device.name} 的设备资料已保存` }
+  await refresh()
+}
+function updateLabels(device: Device, event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  device.labels = Object.fromEntries(value.split(',').map((item) => item.trim()).filter(Boolean).map((item) => {
+    const [key, ...rest] = item.split('=')
+    return [key, rest.join('=')]
+  }))
+}
+async function saveRules() {
+  if (!data.value) return
+  await api('/api/v1/alert-rules', { method: 'PUT', body: JSON.stringify({ items: data.value.rules }) })
+  settingsEvidence.value = { status: 'success', message: '告警阈值已保存并立即重新评估' }
+  await refresh()
+}
+async function addMaintenanceWindow() {
+  if (!maintenanceName.value || !maintenanceStart.value || !maintenanceEnd.value) return
+  await api('/api/v1/maintenance-windows', {
+    method: 'POST',
+    body: JSON.stringify({ name: maintenanceName.value, startsAt: new Date(maintenanceStart.value).toISOString(), endsAt: new Date(maintenanceEnd.value).toISOString(), enabled: true }),
+  })
+  maintenanceName.value = maintenanceStart.value = maintenanceEnd.value = ''
+  settingsEvidence.value = { status: 'success', message: '维护窗口已创建；窗口内告警通知将自动抑制' }
+  await refresh()
+}
+async function deleteMaintenanceWindow(id: string) {
+  await api(`/api/v1/maintenance-windows/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  await refresh()
+}
+async function sendTestNotification() {
+  await api('/api/v1/notifications/test', { method: 'POST' })
+  settingsEvidence.value = { status: 'success', message: '测试通知已进入持久投递队列' }
+  emit('toast', '测试通知已排队')
+}
+async function saveOperationalSettings() {
+  if (!data.value) return
+  const settings = data.value.settings
+  await api('/api/v1/settings', {
+    method: 'PUT',
+    body: JSON.stringify({
+      rawRetentionDays: settings.rawRetentionDays,
+      rollupRetentionDays: settings.rollupRetentionDays,
+      auditRetentionDays: settings.auditRetentionDays,
+      inspectionRetentionDays: settings.inspectionRetentionDays,
+      dailyInspectionHour: settings.dailyInspectionHour,
+      weeklyInspectionHour: settings.weeklyInspectionHour,
+    }),
+  })
+  settingsEvidence.value = { status: 'success', message: '巡检计划与数据保留设置已保存并立即生效' }
+  await refresh()
 }
 async function createBackup() {
   backupLoading.value = true
@@ -150,6 +225,7 @@ async function resetStability() {
     </div>
 
     <div v-if="data" id="settings-panel" role="tabpanel" :aria-labelledby="`settings-tab-${tab}`">
+    <p v-if="settingsEvidence" class="operation-evidence" :class="settingsEvidence.status" role="status">{{ settingsEvidence.message }}</p>
 
     <template v-if="data && tab === 'onboarding'">
       <div class="onboarding-layout">
@@ -176,29 +252,47 @@ async function resetStability() {
       </div>
     </template>
 
-    <section v-else-if="data && tab === 'groups'" class="card"><div class="section-title"><div><h2>设备组与标签</h2><span class="muted">Fleet inventory organization</span></div></div><div class="contract-empty"><b>Contract gap</b><p>当前后端尚未提供设备组、位置和标签的读写契约，因此此处不伪造原型示例。</p></div></section>
+    <section v-else-if="data && tab === 'groups'" class="card">
+      <div class="section-title"><div><h2>设备组与标签</h2></div></div>
+      <div class="table-scroll"><table class="fleet-table"><thead><tr><th>设备</th><th>设备组</th><th>位置</th><th>标签</th><th /></tr></thead><tbody>
+        <tr v-for="device in data.devices" :key="device.id">
+          <td><b>{{ device.name }}</b><small>{{ device.hostname }}</small></td>
+          <td><input v-model="device.group" aria-label="设备组"></td>
+          <td><input v-model="device.location" aria-label="位置"></td>
+          <td><input :value="Object.entries(device.labels || {}).map(([key, value]) => `${key}=${value}`).join(', ')" aria-label="标签" @change="updateLabels(device, $event)"></td>
+          <td><button class="secondary-button tiny" @click="saveDeviceMetadata(device)">保存</button></td>
+        </tr>
+      </tbody></table></div>
+    </section>
 
     <section v-else-if="data && tab === 'capabilities'" class="card">
       <div class="section-title"><div><h2>Collector 能力</h2><span class="muted">每项状态来自最近一次真实能力检查</span></div></div>
       <div class="capability-list"><div v-for="item in localCapability" :key="`${item.capability}-${item.checkedAt}`"><div><b>{{ item.capability }}</b><p>{{ item.detail }}</p><small>检查于 {{ ago(item.checkedAt) }}</small></div><StatusPill :status="item.status || 'unknown'" /></div></div>
     </section>
 
-    <section v-else-if="data && tab === 'thresholds'" class="card"><div class="section-title"><div><h2>告警阈值</h2><span class="muted">Rule configuration</span></div></div><div class="contract-empty"><b>只读 · Contract gap</b><p>当前告警规则由服务端生产配置执行，但尚无阈值查询/修改 API。页面不会硬编码代码中的阈值冒充可配置项。</p></div></section>
+    <section v-else-if="data && tab === 'thresholds'" class="card">
+      <div class="section-title"><div><h2>告警阈值</h2></div><button class="primary-button" @click="saveRules">保存并重新评估</button></div>
+      <div class="table-scroll"><table class="fleet-table"><thead><tr><th>规则</th><th>指标</th><th>Warning</th><th>Critical</th><th>启用</th></tr></thead><tbody>
+        <tr v-for="rule in data.rules" :key="rule.metric"><td><b>{{ rule.label }}</b></td><td><code>{{ rule.metric }}</code></td><td><input v-model.number="rule.warning" type="number" min="0"></td><td><input v-model.number="rule.critical" type="number" min="0"></td><td><input v-model="rule.enabled" type="checkbox"></td></tr>
+      </tbody></table></div>
+    </section>
 
     <section v-else-if="data && tab === 'notifications'" class="card">
-      <div class="section-title"><div><h2>通知渠道</h2><span class="muted">告警新发、升级、恢复与巡检结果</span></div></div>
+      <div class="section-title"><div><h2>通知渠道</h2><span class="muted">告警新发、升级、恢复与巡检结果</span></div><button class="secondary-button" @click="sendTestNotification">发送测试通知</button></div>
       <div class="settings-grid"><div><span>当前渠道</span><b>{{ data.settings.notificationChannel === 'lazycat' ? 'LazyCat 系统通知' : data.settings.notificationChannel }}</b><StatusPill status="available" /></div><div><span>投递策略</span><b>{{ data.settings.notificationDelivery === 'outbox-retry' ? '持久队列重试' : data.settings.notificationDelivery }}</b><StatusPill status="available" /></div><div><span>待发送</span><b>{{ data.stability.pendingNotifications }}</b><StatusPill :status="data.stability.pendingNotifications ? 'warning' : 'healthy'" /></div></div>
     </section>
 
     <section v-else-if="data && tab === 'maintenance'" class="card">
-      <div class="section-title"><div><h2>维护窗口与巡检计划</h2><span class="muted">Automatic inspection schedule</span></div></div>
-      <div class="settings-grid"><div><span>每日巡检</span><b>{{ data.operations.schedule.daily.hour }}:00</b><StatusPill status="available" /></div><div><span>每周巡检</span><b>周日 {{ data.operations.schedule.weekly.hour }}:00</b><StatusPill status="available" /></div><div><span>时区</span><b>{{ data.operations.schedule.timezone }}</b><StatusPill status="available" /></div></div>
-      <div class="contract-empty small"><b>维护窗口 Contract gap</b><p>当前 API 未提供告警抑制维护窗口配置。</p></div>
+      <div class="section-title"><div><h2>维护窗口与巡检计划</h2></div><button class="primary-button" @click="saveOperationalSettings">保存计划</button></div>
+      <div class="settings-grid"><label><span>每日巡检小时</span><input v-model.number="data.settings.dailyInspectionHour" type="number" min="0" max="23"></label><label><span>每周日巡检小时</span><input v-model.number="data.settings.weeklyInspectionHour" type="number" min="0" max="23"></label><div><span>时区</span><b>{{ data.operations.schedule.timezone }}</b><StatusPill status="available" /></div></div>
+      <div class="maintenance-form"><input v-model="maintenanceName" placeholder="窗口名称"><input v-model="maintenanceStart" type="datetime-local" aria-label="开始时间"><input v-model="maintenanceEnd" type="datetime-local" aria-label="结束时间"><button class="primary-button" @click="addMaintenanceWindow">创建窗口</button></div>
+      <div class="backup-list"><div v-for="item in data.windows" :key="item.id" class="backup-row"><div><b>{{ item.name }}</b><p>{{ dateTime(item.startsAt) }} — {{ dateTime(item.endsAt) }}</p></div><div><StatusPill :status="item.enabled ? 'available' : 'unknown'" /><button class="tiny danger-button" @click="deleteMaintenanceWindow(item.id)">删除</button></div></div><div v-if="!data.windows.length" class="inline-empty">尚无维护窗口。</div></div>
     </section>
 
     <template v-else-if="data && tab === 'retention'">
+      <div class="section-title"><div><h2>数据保留策略</h2></div><button class="primary-button" @click="saveOperationalSettings">保存保留策略</button></div>
       <div class="settings-grid retention-summary">
-        <div><span>基础采集</span><b>{{ data.settings.collectIntervalSeconds }} 秒</b></div><div><span>高级采集</span><b>{{ data.settings.advancedIntervalSeconds }} 秒</b></div><div><span>原始数据</span><b>{{ data.settings.rawRetentionDays }} 天</b></div><div><span>降采样数据</span><b>{{ data.settings.rollupRetentionDays }} 天</b></div>
+        <div><span>基础采集</span><b>{{ data.settings.collectIntervalSeconds }} 秒</b></div><div><span>高级采集</span><b>{{ data.settings.advancedIntervalSeconds }} 秒</b></div><label><span>原始数据（天）</span><input v-model.number="data.settings.rawRetentionDays" type="number" min="1" max="365"></label><label><span>降采样数据（天）</span><input v-model.number="data.settings.rollupRetentionDays" type="number" min="1" max="3650"></label><label><span>审计保留（天）</span><input v-model.number="data.settings.auditRetentionDays" type="number" min="1" max="3650"></label><label><span>巡检保留（天）</span><input v-model.number="data.settings.inspectionRetentionDays" type="number" min="1" max="3650"></label>
       </div>
       <div class="operations-layout">
         <section class="card">
@@ -210,7 +304,7 @@ async function resetStability() {
         </section>
         <aside class="card">
           <div class="section-title compact"><div><h2>7 天稳定性观测</h2><span class="muted">长期生产验证</span></div></div>
-          <dl class="definition-list"><div><dt>开始时间</dt><dd>{{ dateTime(data.stability.startedAt) }}</dd></div><div><dt>目标完成</dt><dd>{{ dateTime(data.stability.targetEndAt) }}</dd></div><div><dt>采样 / 失败</dt><dd>{{ data.stability.sampleCount }} / {{ data.stability.failureCount }}</dd></div><div><dt>数据库延迟</dt><dd>{{ data.stability.databaseLatencyMs }} ms</dd></div><div><dt>指标新鲜度</dt><dd>{{ data.stability.metricFreshnessSeconds == null ? 'Unknown' : `${data.stability.metricFreshnessSeconds} 秒` }}</dd></div></dl>
+          <dl class="definition-list"><div><dt>开始时间</dt><dd>{{ dateTime(data.stability.startedAt) }}</dd></div><div><dt>目标完成</dt><dd>{{ dateTime(data.stability.targetEndAt) }}</dd></div><div><dt>采样 / 失败</dt><dd>{{ data.stability.sampleCount }} / {{ data.stability.failureCount }}</dd></div><div><dt>数据库延迟</dt><dd>{{ data.stability.databaseLatencyMs }} ms</dd></div><div><dt>指标新鲜度</dt><dd>{{ data.stability.metricFreshnessSeconds == null ? '暂无数据' : `${data.stability.metricFreshnessSeconds} 秒` }}</dd></div></dl>
           <p :class="data.stability.qualified ? 'green' : 'amber'">{{ data.stability.qualified ? '已满足连续 7 天无失败资格' : `观测进行中，剩余约 ${duration(data.stability.remainingSeconds)}` }}</p><p v-if="stabilityEvidence" class="operation-evidence" :class="stabilityEvidence.status" role="status">{{ stabilityEvidence.message }}</p><button class="secondary-button" :disabled="stabilityLoading" @click="resetStability">{{ stabilityLoading ? '重置中…' : '重新开始 7 天观测' }}</button>
         </aside>
       </div>
@@ -218,7 +312,8 @@ async function resetStability() {
 
     <section v-else-if="data && tab === 'audit'" class="card">
       <div class="section-title"><div><h2>用户与审计</h2><span class="muted">Single-user production boundary</span></div></div>
-      <div class="settings-grid"><div><span>用户模式</span><b>单用户</b><StatusPill status="available" /></div><div><span>审计保留</span><b>{{ data.settings.auditRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>巡检保留</span><b>{{ data.settings.inspectionRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>审计浏览器</span><b>Contract gap</b><StatusPill status="unknown" /></div></div>
+      <div class="settings-grid"><div><span>用户模式</span><b>单用户</b><StatusPill status="available" /></div><div><span>审计保留</span><b>{{ data.settings.auditRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>巡检保留</span><b>{{ data.settings.inspectionRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>审计记录</span><b>{{ data.audit.length }} 条</b><StatusPill status="available" /></div></div>
+      <div class="table-scroll"><table class="fleet-table"><thead><tr><th>时间</th><th>操作</th><th>对象</th><th>详情</th></tr></thead><tbody><tr v-for="item in data.audit" :key="item.id"><td>{{ dateTime(item.createdAt) }}</td><td><code>{{ item.action }}</code></td><td>{{ item.subjectType }} · {{ item.subjectId }}</td><td><code>{{ JSON.stringify(item.metadata) }}</code></td></tr></tbody></table></div>
     </section>
     </div>
   </PageState>

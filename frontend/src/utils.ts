@@ -25,6 +25,7 @@ export function storageUsageMetric(device: Device): Metric | undefined {
 }
 
 export function storageRiskStatus(point: Metric): 'critical' | 'warning' | undefined {
+  if (point.risk === 'critical' || point.risk === 'warning') return point.risk
   switch (point.name) {
     case 'filesystem.root.usage':
     case 'btrfs.usage':

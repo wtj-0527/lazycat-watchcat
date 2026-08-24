@@ -23,7 +23,7 @@ function capabilitySummary(device: Device): string {
         <td><input type="checkbox" aria-label="选择设备" @click.stop></td>
         <td class="device device-with-mark">
           <span class="device-mark" :class="deviceState(device)" />
-          <span><button v-if="clickable" class="row-link" @click.stop="$emit('select', device.id)">{{ device.name }}</button><b v-else>{{ device.name }}</b><small>{{ device.hostname || '位置未知' }} · 未分组</small></span>
+          <span><button v-if="clickable" class="row-link" @click.stop="$emit('select', device.id)">{{ device.name }}</button><b v-else>{{ device.name }}</b><small>{{ device.location || device.hostname || '位置未设置' }} · {{ device.group || '未分组' }}</small></span>
         </td>
         <td><StatusPill :status="deviceState(device)" /></td>
         <td><b :class="device.online ? 'green' : 'red'">{{ device.online ? (device.stale ? '陈旧' : '在线') : '离线' }}</b></td>

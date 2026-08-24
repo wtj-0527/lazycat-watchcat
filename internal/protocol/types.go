@@ -29,15 +29,18 @@ type PairCollectorResponse struct {
 }
 
 type Device struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Hostname     string    `json:"hostname"`
-	OSVersion    string    `json:"osVersion,omitempty"`
-	CollectorVer string    `json:"collectorVersion"`
-	Capabilities []string  `json:"capabilities"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"createdAt"`
-	LastSeenAt   time.Time `json:"lastSeenAt"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Hostname     string            `json:"hostname"`
+	OSVersion    string            `json:"osVersion,omitempty"`
+	CollectorVer string            `json:"collectorVersion"`
+	Capabilities []string          `json:"capabilities"`
+	Group        string            `json:"group,omitempty"`
+	Location     string            `json:"location,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Status       string            `json:"status"`
+	CreatedAt    time.Time         `json:"createdAt"`
+	LastSeenAt   time.Time         `json:"lastSeenAt"`
 }
 
 type MetricPoint struct {

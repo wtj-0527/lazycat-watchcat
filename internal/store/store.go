@@ -171,6 +171,29 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(device_id,deploy_id)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_application_runtime_app ON application_runtime_state(app_id,instance_status);`,
+		`CREATE TABLE IF NOT EXISTS device_metadata (
+			device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+			group_name TEXT NOT NULL DEFAULT '',
+			location TEXT NOT NULL DEFAULT '',
+			labels_json TEXT NOT NULL DEFAULT '{}',
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS saved_views (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			query_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS maintenance_windows (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			starts_at TEXT NOT NULL,
+			ends_at TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, datetime('now'));`,
 	}
@@ -196,6 +219,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, datetime('now'))`)
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, datetime('now'))`)
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(7, datetime('now'))`)
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(8, datetime('now'))`)
 	return nil
 }
 

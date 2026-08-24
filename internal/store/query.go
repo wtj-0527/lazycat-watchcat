@@ -16,6 +16,7 @@ type LatestMetric struct {
 	Unit        string            `json:"unit"`
 	Labels      map[string]string `json:"labels"`
 	CollectedAt time.Time         `json:"collectedAt"`
+	Risk        string            `json:"risk,omitempty"`
 }
 type MetricSample struct {
 	Value       float64           `json:"value"`

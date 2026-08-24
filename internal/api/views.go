@@ -54,7 +54,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取实时状态")
 		return
 	}
-	_ = s.store.ReconcileAlerts(r.Context(), alertSignals(deriveAlerts(devices)))
+	_ = s.store.ReconcileAlerts(r.Context(), alertSignals(deriveAlertsWithRules(devices, s.loadAlertRules(r.Context()))))
 	alerts, _ := s.store.ListAlerts(r.Context(), false)
 	stats := map[string]int{"devices": len(devices), "online": 0, "offline": 0, "critical": 0, "warning": 0, "healthy": 0}
 	for _, d := range devices {
@@ -65,7 +65,8 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		}
 		stats[d.Health]++
 	}
-	writeJSON(w, 200, map[string]any{"stats": stats, "devices": devices, "alerts": alerts, "updatedAt": latestTimestamp(metrics)})
+	savedViews, _ := s.store.ListSavedViews(r.Context())
+	writeJSON(w, 200, map[string]any{"stats": stats, "devices": devices, "alerts": alerts, "savedViews": savedViews, "updatedAt": latestTimestamp(metrics)})
 }
 func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -83,7 +84,10 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取指标")
 		return
 	}
-	view := buildDeviceViews([]protocol.Device{device}, metrics)[0]
+	meta, _ := s.store.DeviceMetadataMap(r.Context())
+	deviceList := []protocol.Device{device}
+	attachMetadata(deviceList, meta)
+	view := buildDeviceViewsWithRules(deviceList, metrics, s.loadAlertRules(r.Context()))[0]
 	writeJSON(w, 200, view)
 }
 func (s *Server) metricHistory(w http.ResponseWriter, r *http.Request) {
@@ -264,13 +268,43 @@ func (s *Server) storageView(w http.ResponseWriter, r *http.Request) {
 		names[d.ID] = d.Name
 	}
 	var items []map[string]any
+	totalBytes := float64(0)
+	fillWithin30Days := 0
+	rules := s.loadAlertRules(r.Context())
+	availableByVolume := map[string]float64{}
+	for _, metric := range metrics {
+		if metric.Name == "filesystem.root.available" {
+			availableByVolume[metric.DeviceID+"\x00"+metric.Labels["mount"]+"\x00"+metric.Labels["device"]] = metric.Value
+		}
+	}
 	for _, m := range metrics {
 		if !(strings.HasPrefix(m.Name, "filesystem.") || strings.HasPrefix(m.Name, "btrfs.") || strings.HasPrefix(m.Name, "disk.")) {
 			continue
 		}
-		items = append(items, map[string]any{"deviceId": m.DeviceID, "deviceName": names[m.DeviceID], "name": m.Name, "value": m.Value, "unit": m.Unit, "labels": m.Labels, "collectedAt": m.CollectedAt})
+		severity, _ := metricAlertWithRules(m.Name, m.Value, m.Unit, m.Labels, rules)
+		items = append(items, map[string]any{"deviceId": m.DeviceID, "deviceName": names[m.DeviceID], "name": m.Name, "value": m.Value, "unit": m.Unit, "labels": m.Labels, "collectedAt": m.CollectedAt, "risk": severity})
+		if m.Name == "filesystem.root.usage" && m.Value >= 0 && m.Value < 100 {
+			key := m.DeviceID + "\x00" + m.Labels["mount"] + "\x00" + m.Labels["device"]
+			if available := availableByVolume[key]; available > 0 {
+				totalBytes += available / (1 - m.Value/100)
+			}
+			history, historyErr := s.store.MetricHistory(r.Context(), m.DeviceID, m.Name, time.Now().UTC().Add(-30*24*time.Hour), 5000)
+			if historyErr == nil && len(history) >= 2 {
+				first, last := history[0], history[len(history)-1]
+				days := last.CollectedAt.Sub(first.CollectedAt).Hours() / 24
+				if days > 0 {
+					growth := (last.Value - first.Value) / days
+					if growth > 0 && (100-last.Value)/growth <= 30 {
+						fillWithin30Days++
+					}
+				}
+			}
+		}
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "count": len(items), "updatedAt": latestTimestamp(metrics)})
+	writeJSON(w, 200, map[string]any{
+		"items": items, "count": len(items), "updatedAt": latestTimestamp(metrics),
+		"summary": map[string]any{"totalBytes": totalBytes, "fillWithin30Days": fillWithin30Days},
+	})
 }
 func (s *Server) alertsView(w http.ResponseWriter, r *http.Request) {
 	devices, _, err := s.snapshot(r)
@@ -278,7 +312,7 @@ func (s *Server) alertsView(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取告警状态")
 		return
 	}
-	if err := s.store.ReconcileAlerts(r.Context(), alertSignals(deriveAlerts(devices))); err != nil {
+	if err := s.store.ReconcileAlerts(r.Context(), alertSignals(deriveAlertsWithRules(devices, s.loadAlertRules(r.Context())))); err != nil {
 		problem(w, 500, "internal_error", "无法更新告警状态")
 		return
 	}
@@ -357,19 +391,35 @@ func (s *Server) RunInspection(ctx context.Context, trigger string) (store.Inspe
 	if err != nil {
 		return store.Inspection{}, fmt.Errorf("无法读取巡检数据")
 	}
-	derived := deriveAlerts(devices)
+	derived := deriveAlertsWithRules(devices, s.loadAlertRulesContext(ctx))
 	if err := s.store.ReconcileAlerts(ctx, alertSignals(derived)); err != nil {
 		return store.Inspection{}, fmt.Errorf("无法更新告警状态")
 	}
 	checks := inspectionChecks(devices)
+	applications, _ := s.store.ListRuntimeApplications(ctx)
+	appChecks := map[string]int{"instances": len(applications), "running": 0, "paused": 0, "error": 0}
+	for _, application := range applications {
+		switch application.InstanceStatus {
+		case "running":
+			appChecks["running"]++
+		case "paused":
+			appChecks["paused"]++
+		default:
+			appChecks["error"]++
+		}
+	}
+	notificationChecks, _ := s.store.NotificationSummary(ctx)
 	report := map[string]any{
-		"schemaVersion":  1,
-		"generatedAt":    time.Now().UTC(),
-		"source":         "collector-snapshot",
-		"checks":         checks,
-		"devices":        devices,
-		"alerts":         derived,
-		"latestMetricAt": latestTimestamp(metrics),
+		"schemaVersion":      2,
+		"generatedAt":        time.Now().UTC(),
+		"source":             "collector-snapshot",
+		"checks":             checks,
+		"applicationChecks":  appChecks,
+		"notificationChecks": notificationChecks,
+		"devices":            devices,
+		"alerts":             derived,
+		"applications":       applications,
+		"latestMetricAt":     latestTimestamp(metrics),
 	}
 	change := inspectionChange(s.store, ctx, derived, checks)
 	report["change"] = change
@@ -403,8 +453,22 @@ func (s *Server) inspectionDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, item)
 }
 func (s *Server) settingsView(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		var settings store.OperationalSettings
+		if decodeJSON(r, &settings) != nil {
+			problem(w, 400, "invalid_settings", "设置参数无效")
+			return
+		}
+		if err := s.store.SetOperationalSettings(r.Context(), settings); err != nil {
+			problem(w, 400, "invalid_settings", err.Error())
+			return
+		}
+		writeJSON(w, 200, settings)
+		return
+	}
 	stats, _ := s.store.RetentionStats(r.Context())
-	writeJSON(w, 200, map[string]any{"appVersion": buildinfo.Version, "singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": 30, "rollupRetentionDays": 365, "auditRetentionDays": 180, "inspectionRetentionDays": 365, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
+	settings := s.store.OperationalSettings(r.Context())
+	writeJSON(w, 200, map[string]any{"appVersion": buildinfo.Version, "singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": settings.RawRetentionDays, "rollupRetentionDays": settings.RollupRetentionDays, "auditRetentionDays": settings.AuditRetentionDays, "inspectionRetentionDays": settings.InspectionRetentionDays, "dailyInspectionHour": settings.DailyInspectionHour, "weeklyInspectionHour": settings.WeeklyInspectionHour, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
 }
 func (s *Server) operationsView(w http.ResponseWriter, r *http.Request) {
 	capabilities, err := s.store.ListCapabilityStatuses(r.Context())
@@ -417,12 +481,13 @@ func (s *Server) operationsView(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "internal_error", "无法读取运维状态")
 		return
 	}
+	settings := s.store.OperationalSettings(r.Context())
 	writeJSON(w, 200, map[string]any{
 		"capabilities": capabilities,
 		"states":       states,
 		"schedule": map[string]any{
-			"daily":    map[string]any{"enabled": true, "hour": 3},
-			"weekly":   map[string]any{"enabled": true, "weekday": "Sunday", "hour": 4},
+			"daily":    map[string]any{"enabled": true, "hour": settings.DailyInspectionHour},
+			"weekly":   map[string]any{"enabled": true, "weekday": "Sunday", "hour": settings.WeeklyInspectionHour},
 			"timezone": time.Now().Format("MST (UTCZ07:00)"),
 		},
 	})
@@ -437,7 +502,10 @@ func (s *Server) SyncAlerts(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.store.ReconcileAlerts(ctx, alertSignals(deriveAlerts(buildDeviceViews(devices, metrics))))
+	meta, _ := s.store.DeviceMetadataMap(ctx)
+	attachMetadata(devices, meta)
+	rules := s.loadAlertRulesContext(ctx)
+	return s.store.ReconcileAlerts(ctx, alertSignals(deriveAlertsWithRules(buildDeviceViewsWithRules(devices, metrics, rules), rules)))
 }
 
 func alertSignals(alerts []alertView) []store.AlertSignal {
@@ -463,7 +531,21 @@ func (s *Server) snapshotContext(ctx context.Context) ([]deviceView, []store.Lat
 	if err != nil {
 		return nil, nil, err
 	}
-	return buildDeviceViews(devices, metrics), metrics, nil
+	meta, _ := s.store.DeviceMetadataMap(ctx)
+	attachMetadata(devices, meta)
+	return buildDeviceViewsWithRules(devices, metrics, s.loadAlertRulesContext(ctx)), metrics, nil
+}
+
+func (s *Server) loadAlertRulesContext(ctx context.Context) []alertRule {
+	return s.loadAlertRules(ctx)
+}
+
+func attachMetadata(devices []protocol.Device, metadata map[string]store.DeviceMetadata) {
+	for index := range devices {
+		if item, ok := metadata[devices[index].ID]; ok {
+			devices[index].Group, devices[index].Location, devices[index].Labels = item.Group, item.Location, item.Labels
+		}
+	}
 }
 
 func inspectionChange(st *store.Store, ctx context.Context, current []alertView, checks map[string]int) map[string]any {
@@ -506,8 +588,12 @@ func inspectionChange(st *store.Store, ctx context.Context, current []alertView,
 }
 
 func buildDeviceViews(devices []protocol.Device, metrics []store.LatestMetric) []deviceView {
+	return buildDeviceViewsWithRules(devices, metrics, defaultAlertRules())
+}
+func buildDeviceViewsWithRules(devices []protocol.Device, metrics []store.LatestMetric, rules []alertRule) []deviceView {
 	byDevice := map[string]map[string][]store.LatestMetric{}
 	for _, m := range metrics {
+		m.Risk, _ = metricAlertWithRules(m.Name, m.Value, m.Unit, m.Labels, rules)
 		if byDevice[m.DeviceID] == nil {
 			byDevice[m.DeviceID] = map[string][]store.LatestMetric{}
 		}
@@ -522,7 +608,7 @@ func buildDeviceViews(devices []protocol.Device, metrics []store.LatestMetric) [
 		view := deviceView{Device: d, Online: online, Stale: stale, Latest: latest, Health: "unknown"}
 		if online && hasFreshHealthEvidence(latest, now) {
 			view.Health = "healthy"
-			for _, a := range deriveDeviceAlerts(view) {
+			for _, a := range deriveDeviceAlertsWithRules(view, rules) {
 				if a.Severity == "critical" {
 					view.Health = "critical"
 					break
@@ -562,9 +648,12 @@ func isHealthMetric(name string) bool {
 }
 
 func deriveAlerts(devices []deviceView) []alertView {
+	return deriveAlertsWithRules(devices, defaultAlertRules())
+}
+func deriveAlertsWithRules(devices []deviceView, rules []alertRule) []alertView {
 	var out []alertView
 	for _, d := range devices {
-		out = append(out, deriveDeviceAlerts(d)...)
+		out = append(out, deriveDeviceAlertsWithRules(d, rules)...)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		rank := map[string]int{"critical": 0, "warning": 1}
@@ -576,13 +665,16 @@ func deriveAlerts(devices []deviceView) []alertView {
 	return out
 }
 func deriveDeviceAlerts(d deviceView) []alertView {
+	return deriveDeviceAlertsWithRules(d, defaultAlertRules())
+}
+func deriveDeviceAlertsWithRules(d deviceView, rules []alertRule) []alertView {
 	var out []alertView
 	if !d.Online {
 		out = append(out, alertView{Fingerprint: d.ID + ":offline", DeviceID: d.ID, DeviceName: d.Name, Severity: "warning", Resource: "collector", Message: "设备未在 90 秒内上报", CollectedAt: d.LastSeenAt})
 	}
 	for name, list := range d.Latest {
 		for _, m := range list {
-			severity, msg := metricAlert(name, m.Value, m.Unit, m.Labels)
+			severity, msg := metricAlertWithRules(name, m.Value, m.Unit, m.Labels, rules)
 			if severity == "" || time.Since(m.CollectedAt) > 10*time.Minute {
 				continue
 			}
@@ -607,28 +699,21 @@ func deriveDeviceAlerts(d deviceView) []alertView {
 	return out
 }
 func metricAlert(name string, value float64, unit string, labels map[string]string) (string, string) {
+	return metricAlertWithRules(name, value, unit, labels, defaultAlertRules())
+}
+func metricAlertWithRules(name string, value float64, unit string, labels map[string]string, rules []alertRule) (string, string) {
+	for _, rule := range rules {
+		if rule.Enabled && rule.Metric == name {
+			if value >= rule.Critical {
+				return "critical", fmt.Sprintf("%s %.1f%s", rule.Label, value, unit)
+			}
+			if value >= rule.Warning {
+				return "warning", fmt.Sprintf("%s %.1f%s", rule.Label, value, unit)
+			}
+			return "", ""
+		}
+	}
 	switch name {
-	case "system.cpu.usage":
-		if value >= 95 {
-			return "critical", fmt.Sprintf("CPU 使用率 %.1f%%", value)
-		}
-		if value >= 85 {
-			return "warning", fmt.Sprintf("CPU 使用率 %.1f%%", value)
-		}
-	case "filesystem.root.usage", "btrfs.usage":
-		if value >= 95 {
-			return "critical", fmt.Sprintf("存储使用率 %.1f%%", value)
-		}
-		if value >= 85 {
-			return "warning", fmt.Sprintf("存储使用率 %.1f%%", value)
-		}
-	case "system.memory.usage":
-		if value >= 95 {
-			return "critical", fmt.Sprintf("内存使用率 %.1f%%", value)
-		}
-		if value >= 90 {
-			return "warning", fmt.Sprintf("内存使用率 %.1f%%", value)
-		}
 	case "system.temperature":
 		sensor := strings.ToLower(labels["sensor"])
 		switch {
@@ -663,20 +748,6 @@ func metricAlert(name string, value float64, unit string, labels map[string]stri
 		}
 		if value >= 80 {
 			return "warning", fmt.Sprintf("系统温度 %.0f°C", value)
-		}
-	case "container.memory.usage_percent":
-		if value >= 95 {
-			return "critical", fmt.Sprintf("容器内存使用率 %.1f%%", value)
-		}
-		if value >= 90 {
-			return "warning", fmt.Sprintf("容器内存使用率 %.1f%%", value)
-		}
-	case "disk.temperature":
-		if value >= 80 {
-			return "critical", fmt.Sprintf("磁盘温度 %.0f°C", value)
-		}
-		if value >= 70 {
-			return "warning", fmt.Sprintf("磁盘温度 %.0f°C", value)
 		}
 	case "disk.nvme.media_errors":
 		if value > 0 {

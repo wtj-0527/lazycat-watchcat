@@ -21,6 +21,8 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
 })
 const latest = computed(() => selected.value || data.value?.detail || data.value?.items[0])
 const reportChecks = computed(() => latest.value?.report?.checks || {})
+const applicationChecks = computed(() => latest.value?.report?.applicationChecks)
+const notificationChecks = computed(() => latest.value?.report?.notificationChecks)
 const connectivityCheckState = computed(() => {
   const online = reportChecks.value.online
   const devices = reportChecks.value.devices
@@ -53,6 +55,9 @@ async function selectReport(item: Inspection) {
     detailLoading.value = false
   }
 }
+function exportReport(format: 'json' | 'pdf') {
+  if (latest.value) location.href = `/api/v1/inspections/${encodeURIComponent(latest.value.id)}/export?format=${format}`
+}
 </script>
 
 <template>
@@ -69,12 +74,12 @@ async function selectReport(item: Inspection) {
           <p>执行时间 {{ dateTime(latest.startedAt) }} · {{ latest.triggerType === 'manual' ? '手动巡检' : latest.triggerType }}</p>
           <small>证据 SHA-256：<code>{{ latest.evidenceSha256 }}</code></small>
         </div>
-        <div class="button-row"><button class="secondary-button" disabled>导出 JSON</button><button class="secondary-button" disabled>导出 PDF 报告</button></div>
+        <div class="button-row"><button class="secondary-button" @click="exportReport('json')">导出 JSON</button><button class="secondary-button" @click="exportReport('pdf')">导出 PDF 报告</button></div>
       </section>
 
       <div class="stats four">
         <StatCard label="巡检设备" :value="latest.deviceCount" hint="全部设备" />
-        <StatCard label="通过" :value="latest.healthyCount" :hint="latest.deviceCount ? `${(latest.healthyCount / latest.deviceCount * 100).toFixed(1)}%` : 'Unknown'" tone="green" />
+        <StatCard label="通过" :value="latest.healthyCount" :hint="latest.deviceCount ? `${(latest.healthyCount / latest.deviceCount * 100).toFixed(1)}%` : '暂无设备'" tone="green" />
         <StatCard label="Warning" :value="latest.warningCount" :hint="`较上次 ${signed(latest.changeSummary?.warningDelta)}`" tone="amber" />
         <StatCard label="Critical" :value="latest.criticalCount" :hint="`较上次 ${signed(latest.changeSummary?.criticalDelta)}`" tone="red" />
       </div>
@@ -82,17 +87,17 @@ async function selectReport(item: Inspection) {
       <div class="inspection-layout">
         <section class="card inspection-results">
           <div class="section-title"><div><h2>分类检查结果</h2><span class="muted">来自已保存报告，不使用模拟检查项</span></div></div>
-          <div class="check-row"><div><b>设备连接</b><span>在线设备与设备总数</span></div><strong>{{ reportChecks.online ?? 'Unknown' }} / {{ reportChecks.devices ?? latest.deviceCount }}</strong><StatusPill :status="connectivityCheckState" /></div>
+          <div class="check-row"><div><b>设备连接</b><span>在线设备与设备总数</span></div><strong>{{ reportChecks.online ?? '暂无证据' }} / {{ reportChecks.devices ?? latest.deviceCount }}</strong><StatusPill :status="connectivityCheckState" /></div>
           <div class="check-row"><div><b>健康规则</b><span>Collector 阈值判断</span></div><strong>{{ reportChecks.healthy ?? latest.healthyCount }} 通过</strong><StatusPill :status="inspectionState(latest)" /></div>
-          <div class="check-row"><div><b>存储与 SMART</b><span>报告内设备原始指标可追溯</span></div><strong>{{ latest.report?.devices ? '已包含快照' : 'Unknown' }}</strong><StatusPill :status="latest.report?.devices ? 'available' : 'unknown'" /></div>
-          <div class="check-row"><div><b>应用与容器</b><span>独立分类结果</span></div><strong>Contract gap</strong><StatusPill status="unknown" /></div>
-          <div class="check-row"><div><b>通知投递</b><span>巡检报告未包含通知回执</span></div><strong>Contract gap</strong><StatusPill status="unknown" /></div>
+          <div class="check-row"><div><b>存储与 SMART</b><span>报告内设备原始指标可追溯</span></div><strong>{{ latest.report?.devices ? '已包含快照' : '旧版报告无此证据' }}</strong><StatusPill :status="latest.report?.devices ? 'available' : 'unknown'" /></div>
+          <div class="check-row"><div><b>应用与容器</b><span>LazyCat Runtime 实例快照</span></div><strong>{{ applicationChecks ? `${applicationChecks.running} 运行 / ${applicationChecks.paused} 暂停 / ${applicationChecks.error} 异常` : '旧版报告无此证据' }}</strong><StatusPill :status="applicationChecks ? (applicationChecks.error ? 'critical' : applicationChecks.paused ? 'warning' : 'healthy') : 'unknown'" /></div>
+          <div class="check-row"><div><b>通知投递</b><span>持久通知队列回执</span></div><strong>{{ notificationChecks ? `${notificationChecks.sent} 已送达 / ${notificationChecks.pending} 待发送 / ${notificationChecks.failed} 失败` : '旧版报告无此证据' }}</strong><StatusPill :status="notificationChecks ? (notificationChecks.failed ? 'critical' : notificationChecks.pending ? 'warning' : 'healthy') : 'unknown'" /></div>
         </section>
         <aside class="card evidence-panel">
           <div class="section-title compact"><div><h2>证据摘要</h2><span class="muted">Immutable report evidence</span></div></div>
           <dl class="definition-list">
-            <div><dt>Schema</dt><dd>v{{ latest.report?.schemaVersion ?? 'Unknown' }}</dd></div>
-            <div><dt>Source</dt><dd>{{ latest.report?.source || 'Unknown' }}</dd></div>
+            <div><dt>Schema</dt><dd>{{ latest.report?.schemaVersion ? `v${latest.report.schemaVersion}` : '旧版' }}</dd></div>
+            <div><dt>Source</dt><dd>{{ latest.report?.source || '旧版报告' }}</dd></div>
             <div><dt>生成时间</dt><dd>{{ dateTime(latest.report?.generatedAt) }}</dd></div>
             <div><dt>最近指标</dt><dd>{{ ago(latest.report?.latestMetricAt) }}</dd></div>
             <div><dt>新增告警</dt><dd>{{ latest.changeSummary?.newAlerts?.length || 0 }}</dd></div>
