@@ -259,6 +259,13 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .pairing-code-box { display: flex; flex-direction: column; align-items: center; margin-top: 18px; padding: 18px; border: 1px dashed #93c5fd; border-radius: 10px; background: #eff6ff; }
 .pairing-code-box span, .pairing-code-box small { color: var(--muted); font-size: 11px; }
 .pairing-code-box strong { margin: 6px 0; color: #1d4ed8; font: 26px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+.pairing-code-box button { margin-top: 10px; }
+.collector-setup-launcher { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 16px; align-items: end; margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: #f8fafc; }
+.collector-setup-launcher > div { grid-column: 1 / -1; }
+.collector-setup-launcher p { margin: 5px 0 0; color: var(--muted); line-height: 1.6; }
+.collector-setup-launcher label { display: grid; gap: 7px; min-width: 0; color: var(--muted); font-size: 12px; }
+.collector-setup-launcher input { width: 100%; }
+.collector-setup-launcher > small { grid-column: 1 / -1; color: var(--muted); line-height: 1.55; }
 .production-note { margin: 16px 0 0; padding: 12px; border-radius: 8px; background: var(--healthy-soft); color: var(--healthy); font-size: 11px; }
 .capability-list > div { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--border-subtle); }
 .capability-list > div:last-child { border-bottom: 0; }
@@ -316,6 +323,8 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
   .metric-summary-grid, .settings-grid, .retention-summary, .image-cleanup-summary, .capability-grid { grid-template-columns: 1fr; }
   .onboarding-steps li { grid-template-columns: 34px 1fr; }
   .onboarding-steps li > :last-child { grid-column: 2; justify-self: start; }
+  .collector-setup-launcher { grid-template-columns: 1fr; }
+  .collector-setup-launcher > div, .collector-setup-launcher > small { grid-column: 1; }
   .alert-row { grid-template-columns: 1fr; }
   .check-row { grid-template-columns: 1fr auto; }
   .check-row .pill { grid-column: 2; }

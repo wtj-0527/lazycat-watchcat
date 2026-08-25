@@ -45,6 +45,7 @@ const emit = defineEmits<{ toast: [message: string] }>()
 const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, props.initialTab || 'onboarding', 'settings-tab-')
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
+const collectorSetupURL = ref(localStorage.getItem('maoyanCollectorSetupURL') || 'http://192.168.124.18:18090')
 const backupLoading = ref(false)
 const backupEvidence = ref<OperationEvidence>()
 const restoreEvidence = ref<OperationEvidence>()
@@ -107,6 +108,22 @@ async function createPairingCode() {
     emit('toast', '一次性配对码已生成')
   } catch (reason) { emit('toast', reason instanceof Error ? reason.message : String(reason)) }
   finally { pairingLoading.value = false }
+}
+async function copyPairingCode() {
+  if (!pairing.value) return
+  await navigator.clipboard.writeText(pairing.value.code)
+  emit('toast', '配对码已复制')
+}
+function openCollectorSetup() {
+  const value = collectorSetupURL.value.trim()
+  try {
+    const target = new URL(value)
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('invalid protocol')
+    localStorage.setItem('maoyanCollectorSetupURL', target.toString())
+    window.open(target.toString(), '_blank', 'noopener,noreferrer')
+  } catch {
+    emit('toast', '请输入有效的 Collector 配置页地址')
+  }
 }
 async function saveDeviceMetadata(device: Device) {
   await api(`/api/v1/devices/${encodeURIComponent(device.id)}/metadata`, {
@@ -329,7 +346,22 @@ async function deleteUnusedImage(image: UnusedImage) {
             <li><span>2</span><div><b>一次性配对码</b><p>配对码由真实 API 生成，只能使用一次并具有到期时间。</p></div><button class="primary-button" :disabled="pairingLoading" @click="createPairingCode">{{ pairingLoading ? '生成中…' : '生成配对码' }}</button></li>
             <li><span>3</span><div><b>首次数据上报</b><p>完成身份验证后等待第一批真实系统指标。</p></div><StatusPill status="unknown" /></li>
           </ol>
-          <div v-if="pairing" class="pairing-code-box"><span>一次性配对码</span><strong>{{ pairing.code }}</strong><small>有效期至 {{ dateTime(pairing.expiresAt) }}</small></div>
+          <div v-if="pairing" class="pairing-code-box">
+            <span>一次性配对码</span><strong>{{ pairing.code }}</strong><small>有效期至 {{ dateTime(pairing.expiresAt) }}</small>
+            <button class="secondary-button tiny" @click="copyPairingCode">复制配对码</button>
+          </div>
+          <div class="collector-setup-launcher">
+            <div>
+              <b>打开 canway Collector 配置页</b>
+              <p>在配置页填写设备名称、配对入口、mTLS 指标入口和上方配对码，无需编辑环境变量。</p>
+            </div>
+            <label>
+              <span>配置页地址</span>
+              <input v-model="collectorSetupURL" type="url" placeholder="http://192.168.124.18:18090">
+            </label>
+            <button class="primary-button" @click="openCollectorSetup">打开配置页</button>
+            <small>Collector 默认只监听本机回环地址；请按你的要求手动配置访问转发，猫眼不会自行开放端口。</small>
+          </div>
         </section>
         <aside class="card deployment-card">
           <div class="section-title compact"><div><h2>当前部署</h2><span class="muted">Production profile</span></div></div>
