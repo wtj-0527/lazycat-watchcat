@@ -34,7 +34,8 @@ type Embedded struct {
 	syncAlerts func(context.Context) error
 }
 
-func (e *Embedded) DeviceID() string { return e.deviceID }
+func (e *Embedded) DeviceID() string         { return e.deviceID }
+func (e *Embedded) Docker() *DockerCollector { return e.docker }
 
 func NewEmbedded(ctx context.Context, st *store.Store, logger *slog.Logger, syncAlerts func(context.Context) error) (*Embedded, error) {
 	hostname := envValue("LAZYCAT_BOX_NAME", "")

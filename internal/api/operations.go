@@ -1,11 +1,18 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
 )
+
+type dockerMaintenance interface {
+	UnusedImages(context.Context) (collector.UnusedImageSummary, error)
+	PruneUnusedImages(context.Context) (collector.ImagePruneResult, error)
+}
 
 func (s *Server) versionView(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"version": buildinfo.Version})
@@ -63,7 +70,58 @@ func (s *Server) databaseStatus(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusServiceUnavailable, "backup_unavailable", "备份服务未配置")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.backup.Status(r.Context()))
+	status := s.backup.Status(r.Context())
+	if s.stability != nil {
+		observed := s.stability.Current()
+		status.IntegrityOK = observed.DatabaseIntegrityOK
+		if observed.DatabaseIntegrityAt != nil {
+			status.CheckedAt = *observed.DatabaseIntegrityAt
+		} else {
+			status.IntegrityError = "数据库完整性检查尚未完成"
+		}
+	} else {
+		status.IntegrityError = "稳定性观测未配置"
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) unusedDockerImages(w http.ResponseWriter, r *http.Request) {
+	if s.docker == nil {
+		problem(w, http.StatusServiceUnavailable, "docker_maintenance_unavailable", "Docker 镜像维护服务未配置")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	result, err := s.docker.UnusedImages(ctx)
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, "docker_images_failed", "无法读取未引用镜像")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) pruneDockerImages(w http.ResponseWriter, r *http.Request) {
+	if s.docker == nil {
+		problem(w, http.StatusServiceUnavailable, "docker_maintenance_unavailable", "Docker 镜像维护服务未配置")
+		return
+	}
+	select {
+	case s.dockerPrune <- struct{}{}:
+		defer func() { <-s.dockerPrune }()
+	default:
+		problem(w, http.StatusConflict, "docker_prune_in_progress", "镜像清理正在执行")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := s.docker.PruneUnusedImages(ctx)
+	if err != nil {
+		_ = s.store.RecordAudit(r.Context(), "docker.images.prune_failed", "device", s.localDeviceID, map[string]any{"error": err.Error()})
+		problem(w, http.StatusInternalServerError, "docker_prune_failed", "未引用镜像清理失败")
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "docker.images.pruned", "device", s.localDeviceID, result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) stabilityStatus(w http.ResponseWriter, _ *http.Request) {

@@ -65,6 +65,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer embedded.Close()
+	handlers.ConfigureDockerMaintenance(embedded.Docker(), embedded.DeviceID())
 	runtimeCtx, runtimeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	runtimeSource, runtimeErr := runtimeapps.New(runtimeCtx)
 	runtimeCancel()

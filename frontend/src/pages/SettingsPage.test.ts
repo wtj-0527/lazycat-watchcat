@@ -111,4 +111,39 @@ describe('SettingsPage tabs', () => {
     expect(wrapper.text()).toContain('SHA-256 aaaaaaaaaaaaaaaa…')
     wrapper.unmount()
   })
+
+  it('previews and confirms cleanup before pruning unused images', async () => {
+    const base = apiMock.getMockImplementation()!
+    let pruned = false
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/docker/images/unused') {
+        return pruned
+          ? { available: true, count: 0, totalSize: 0, items: [] }
+          : {
+              available: true, count: 2, totalSize: 3072,
+              items: [{ id: 'sha256:unused', tags: ['unused:old'], size: 3072, createdAt: now }],
+            }
+      }
+      if (path === '/api/v1/docker/images/prune' && options?.method === 'POST') {
+        pruned = true
+        return { imagesDeleted: 2, referencesUntagged: 1, spaceReclaimed: 2048 }
+      }
+      return base(path)
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+    await wrapper.get('#settings-tab-retention').trigger('click')
+
+    expect(wrapper.text()).toContain('清理 2 个镜像')
+    expect(wrapper.text()).toContain('unused:old')
+    await wrapper.get('.image-cleanup-card .danger-button').trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(apiMock).toHaveBeenCalledWith('/api/v1/docker/images/prune', { method: 'POST' })
+    expect(wrapper.text()).toContain('删除 2 个镜像')
+    expect(wrapper.text()).toContain('没有可清理镜像')
+    wrapper.unmount()
+  })
 })

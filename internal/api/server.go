@@ -13,6 +13,7 @@ import (
 
 	"github.com/wtj-0527/lazycat-maoyan/internal/backup"
 	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/runtimeapps"
@@ -32,10 +33,15 @@ type Server struct {
 	runtimeApps   *runtimeapps.Source
 	localDeviceID string
 	analytics     chan struct{}
+	docker        dockerMaintenance
+	dockerPrune   chan struct{}
 }
 
 func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
-	s := &Server{store: st, ca: ca, webDir: webDir, pairingTTL: pairingTTL, mux: http.NewServeMux(), analytics: make(chan struct{}, 1)}
+	s := &Server{
+		store: st, ca: ca, webDir: webDir, pairingTTL: pairingTTL, mux: http.NewServeMux(),
+		analytics: make(chan struct{}, 1), dockerPrune: make(chan struct{}, 1),
+	}
 	s.routes()
 	return s
 }
@@ -44,6 +50,9 @@ func (s *Server) ConfigureOperations(manager *backup.Manager, monitor *stability
 }
 func (s *Server) ConfigureRuntimeApps(source *runtimeapps.Source, localDeviceID string) {
 	s.runtimeApps, s.localDeviceID = source, localDeviceID
+}
+func (s *Server) ConfigureDockerMaintenance(docker *collector.DockerCollector, localDeviceID string) {
+	s.docker, s.localDeviceID = docker, localDeviceID
 }
 func (s *Server) Handler() http.Handler { return securityHeaders(s.mux) }
 func (s *Server) CollectorHandler() http.Handler {
@@ -85,6 +94,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/backups", s.createBackup)
 	s.mux.HandleFunc("POST /api/v1/backups/{name}/restore", s.restoreBackup)
 	s.mux.HandleFunc("GET /api/v1/database/status", s.databaseStatus)
+	s.mux.HandleFunc("GET /api/v1/docker/images/unused", s.unusedDockerImages)
+	s.mux.HandleFunc("POST /api/v1/docker/images/prune", s.pruneDockerImages)
 	s.mux.HandleFunc("GET /api/v1/stability", s.stabilityStatus)
 	s.mux.HandleFunc("POST /api/v1/stability/reset", s.resetStability)
 	s.mux.HandleFunc("POST /api/v1/devices/{id}/revoke", s.revokeDevice)

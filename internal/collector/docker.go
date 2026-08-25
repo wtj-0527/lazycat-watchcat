@@ -52,6 +52,44 @@ type dockerContainerInspect struct {
 	Image string `json:"Image"`
 }
 
+type dockerImage struct {
+	ID         string   `json:"Id"`
+	RepoTags   []string `json:"RepoTags"`
+	RepoDigest []string `json:"RepoDigests"`
+	Created    int64    `json:"Created"`
+	Size       int64    `json:"Size"`
+}
+
+type dockerImageDelete struct {
+	Deleted  string `json:"Deleted"`
+	Untagged string `json:"Untagged"`
+}
+
+type dockerImagePruneResponse struct {
+	ImagesDeleted  []dockerImageDelete `json:"ImagesDeleted"`
+	SpaceReclaimed uint64              `json:"SpaceReclaimed"`
+}
+
+type UnusedImage struct {
+	ID        string    `json:"id"`
+	Tags      []string  `json:"tags"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+}
+
+type UnusedImageSummary struct {
+	Available bool          `json:"available"`
+	Count     int           `json:"count"`
+	TotalSize int64         `json:"totalSize"`
+	Items     []UnusedImage `json:"items"`
+}
+
+type ImagePruneResult struct {
+	ImagesDeleted      int    `json:"imagesDeleted"`
+	ReferencesUntagged int    `json:"referencesUntagged"`
+	SpaceReclaimed     uint64 `json:"spaceReclaimed"`
+}
+
 type dockerCreateResponse struct {
 	ID       string   `json:"Id"`
 	Warnings []string `json:"Warnings"`
@@ -149,6 +187,94 @@ func NewDockerCollector(socket string) *DockerCollector {
 func (d *DockerCollector) Available() bool {
 	info, err := os.Stat(d.socket)
 	return err == nil && info.Mode()&os.ModeSocket != 0
+}
+
+func (d *DockerCollector) UnusedImages(ctx context.Context) (UnusedImageSummary, error) {
+	if !d.Available() {
+		return UnusedImageSummary{}, fmt.Errorf("docker socket unavailable: %s", d.socket)
+	}
+	var images []dockerImage
+	if err := d.getJSON(ctx, "/images/json?all=1", &images); err != nil {
+		return UnusedImageSummary{}, err
+	}
+	var containers []dockerContainer
+	if err := d.getJSON(ctx, "/containers/json?all=1", &containers); err != nil {
+		return UnusedImageSummary{}, err
+	}
+	return summarizeUnusedImages(images, containers), nil
+}
+
+func summarizeUnusedImages(images []dockerImage, containers []dockerContainer) UnusedImageSummary {
+	referenced := make(map[string]bool, len(containers))
+	for _, item := range containers {
+		if item.ImageID != "" {
+			referenced[item.ImageID] = true
+		}
+	}
+	result := UnusedImageSummary{Available: true}
+	for _, image := range images {
+		if image.ID == "" || referenced[image.ID] {
+			continue
+		}
+		tags := append([]string(nil), image.RepoTags...)
+		if len(tags) == 0 {
+			tags = append(tags, image.RepoDigest...)
+		}
+		if len(tags) == 0 {
+			tags = []string{"<none>:<none>"}
+		}
+		sort.Strings(tags)
+		item := UnusedImage{ID: image.ID, Tags: tags, Size: image.Size}
+		if image.Created > 0 {
+			item.CreatedAt = time.Unix(image.Created, 0).UTC()
+		}
+		result.Items = append(result.Items, item)
+		if image.Size > 0 {
+			result.TotalSize += image.Size
+		}
+	}
+	sort.Slice(result.Items, func(i, j int) bool {
+		if result.Items[i].Size != result.Items[j].Size {
+			return result.Items[i].Size > result.Items[j].Size
+		}
+		return result.Items[i].ID < result.Items[j].ID
+	})
+	result.Count = len(result.Items)
+	return result
+}
+
+func (d *DockerCollector) PruneUnusedImages(ctx context.Context) (ImagePruneResult, error) {
+	if !d.Available() {
+		return ImagePruneResult{}, fmt.Errorf("docker socket unavailable: %s", d.socket)
+	}
+	filters, err := json.Marshal(map[string][]string{"dangling": {"false"}})
+	if err != nil {
+		return ImagePruneResult{}, err
+	}
+	raw, err := d.doJSON(ctx, http.MethodPost, "/images/prune?filters="+url.QueryEscape(string(filters)), nil, http.StatusOK)
+	if err != nil {
+		return ImagePruneResult{}, err
+	}
+	var response dockerImagePruneResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return ImagePruneResult{}, fmt.Errorf("decode docker image prune response: %w", err)
+	}
+	return summarizeImagePrune(response), nil
+}
+
+func summarizeImagePrune(response dockerImagePruneResponse) ImagePruneResult {
+	deleted := map[string]bool{}
+	result := ImagePruneResult{SpaceReclaimed: response.SpaceReclaimed}
+	for _, item := range response.ImagesDeleted {
+		if item.Deleted != "" {
+			deleted[item.Deleted] = true
+		}
+		if item.Untagged != "" {
+			result.ReferencesUntagged++
+		}
+	}
+	result.ImagesDeleted = len(deleted)
+	return result
 }
 
 func (d *DockerCollector) Collect(ctx context.Context, now time.Time) ([]protocol.MetricPoint, error) {

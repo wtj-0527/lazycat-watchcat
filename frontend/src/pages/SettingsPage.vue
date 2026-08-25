@@ -19,9 +19,12 @@ interface DatabaseStatus { databaseSize: number; integrityOk: boolean; integrity
 interface AlertRule { metric: string; label: string; warning: number; critical: number; enabled: boolean }
 interface MaintenanceWindow { id: string; name: string; startsAt: string; endsAt: string; enabled: boolean }
 interface AuditEntry { id: number; action: string; subjectType: string; subjectId: string; metadata: Record<string, unknown>; createdAt: string }
+interface UnusedImage { id: string; tags: string[]; size: number; createdAt?: string }
+interface UnusedImages { available: boolean; count: number; totalSize: number; items: UnusedImage[]; error?: string }
+interface ImagePruneResult { imagesDeleted: number; referencesUntagged: number; spaceReclaimed: number }
 interface Payload {
   settings: Settings; operations: Operations; database: DatabaseStatus; backups: Backup[]; stability: Stability
-  devices: Device[]; rules: AlertRule[]; windows: MaintenanceWindow[]; audit: AuditEntry[]
+  devices: Device[]; rules: AlertRule[]; windows: MaintenanceWindow[]; audit: AuditEntry[]; unusedImages: UnusedImages
 }
 interface PairingCode { code: string; expiresAt: string }
 interface RestoreResult { status: string; backup: string; message: string }
@@ -42,18 +45,24 @@ const backupEvidence = ref<OperationEvidence>()
 const restoreEvidence = ref<OperationEvidence>()
 const stabilityLoading = ref(false)
 const stabilityEvidence = ref<OperationEvidence>()
+const imageCleanupLoading = ref(false)
+const imageCleanupEvidence = ref<OperationEvidence>()
 const settingsEvidence = ref<OperationEvidence>()
 const maintenanceName = ref('')
 const maintenanceStart = ref('')
 const maintenanceEnd = ref('')
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
-  const [settings, operations, database, backups, stability, devices, rules, windows, audit] = await Promise.all([
+  const [settings, operations, database, backups, stability, devices, rules, windows, audit, unusedImages] = await Promise.all([
     api<Settings>('/api/v1/settings'), api<Operations>('/api/v1/operations'), api<DatabaseStatus>('/api/v1/database/status'),
     api<{ items: Backup[] }>('/api/v1/backups'), api<Stability>('/api/v1/stability'),
     api<{ items: Device[] }>('/api/v1/devices').catch(() => ({ items: [] })),
     api<{ items: AlertRule[] }>('/api/v1/alert-rules').catch(() => ({ items: [] })),
     api<{ items: MaintenanceWindow[] }>('/api/v1/maintenance-windows').catch(() => ({ items: [] })),
     api<{ items: AuditEntry[] }>('/api/v1/audit?limit=100').catch(() => ({ items: [] })),
+    api<UnusedImages>('/api/v1/docker/images/unused').catch((reason) => ({
+      available: false, count: 0, totalSize: 0, items: [],
+      error: reason instanceof Error ? reason.message : String(reason),
+    })),
   ])
   return {
     settings,
@@ -65,6 +74,7 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
     rules: rules.items || [],
     windows: windows.items || [],
     audit: audit.items || [],
+    unusedImages: { ...unusedImages, items: unusedImages.items || [] },
   }
 })
 const localCapability = computed(() => data.value?.operations.capabilities.filter((item) => !item.capability.startsWith('remote.')) || [])
@@ -192,6 +202,30 @@ async function resetStability() {
     stabilityLoading.value = false
   }
 }
+async function pruneUnusedImages() {
+  if (!data.value?.unusedImages.available || data.value.unusedImages.count === 0) return
+  const preview = data.value.unusedImages
+  if (!window.confirm(
+    `确定清理 ${preview.count} 个未被任何容器引用的镜像？\n\n镜像逻辑大小约 ${bytes(preview.totalSize)}，实际释放空间以 Docker 返回结果为准。停止状态容器引用的镜像不会删除。`,
+  )) return
+  imageCleanupLoading.value = true
+  imageCleanupEvidence.value = undefined
+  try {
+    const result = await api<ImagePruneResult>('/api/v1/docker/images/prune', { method: 'POST' })
+    imageCleanupEvidence.value = {
+      status: 'success',
+      message: `清理完成：删除 ${result.imagesDeleted} 个镜像，释放 ${bytes(result.spaceReclaimed)}，解除 ${result.referencesUntagged} 个旧标签引用`,
+    }
+    emit('toast', `已释放 ${bytes(result.spaceReclaimed)}`)
+    await refresh()
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    imageCleanupEvidence.value = { status: 'error', message }
+    emit('toast', message)
+  } finally {
+    imageCleanupLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -308,6 +342,32 @@ async function resetStability() {
           <p :class="data.stability.qualified ? 'green' : 'amber'">{{ data.stability.qualified ? '已满足连续 7 天无失败资格' : `观测进行中，剩余约 ${duration(data.stability.remainingSeconds)}` }}</p><p v-if="stabilityEvidence" class="operation-evidence" :class="stabilityEvidence.status" role="status">{{ stabilityEvidence.message }}</p><button class="secondary-button" :disabled="stabilityLoading" @click="resetStability">{{ stabilityLoading ? '重置中…' : '重新开始 7 天观测' }}</button>
         </aside>
       </div>
+      <section class="card image-cleanup-card">
+        <div class="section-title">
+          <div>
+            <h2>未引用镜像清理</h2>
+            <span class="muted">仅删除没有任何运行或停止状态容器引用的 Docker 镜像；当前应用镜像不会被删除。</span>
+          </div>
+          <button
+            class="danger-button"
+            :disabled="imageCleanupLoading || !data.unusedImages.available || data.unusedImages.count === 0"
+            @click="pruneUnusedImages"
+          >{{ imageCleanupLoading ? '清理中…' : data.unusedImages.count ? `清理 ${data.unusedImages.count} 个镜像` : '没有可清理镜像' }}</button>
+        </div>
+        <p v-if="imageCleanupEvidence" class="operation-evidence" :class="imageCleanupEvidence.status" role="status">{{ imageCleanupEvidence.message }}</p>
+        <p v-if="!data.unusedImages.available" class="operation-evidence warning" role="status">镜像维护不可用：{{ data.unusedImages.error || 'LazyCat Docker 接口未授权或不可用' }}</p>
+        <div v-else class="settings-grid image-cleanup-summary">
+          <div><span>候选镜像</span><b>{{ data.unusedImages.count }} 个</b></div>
+          <div><span>镜像逻辑大小</span><b>{{ bytes(data.unusedImages.totalSize) }}</b></div>
+          <div><span>删除边界</span><b>无容器引用</b><StatusPill status="available" /></div>
+        </div>
+        <div v-if="data.unusedImages.items.length" class="backup-list">
+          <div v-for="image in data.unusedImages.items.slice(0, 8)" :key="image.id" class="backup-row">
+            <div><b>{{ image.tags.join(', ') }}</b><p>{{ image.id.slice(0, 19) }} · {{ bytes(image.size) }}<template v-if="image.createdAt"> · {{ dateTime(image.createdAt) }}</template></p></div>
+          </div>
+          <div v-if="data.unusedImages.items.length > 8" class="inline-empty">另有 {{ data.unusedImages.items.length - 8 }} 个候选镜像未展开。</div>
+        </div>
+      </section>
     </template>
 
     <section v-else-if="data && tab === 'audit'" class="card">

@@ -102,13 +102,6 @@ func (m *Manager) Status(ctx context.Context) Status {
 	if info, err := os.Stat(m.dbPath); err == nil {
 		status.DatabaseSize = info.Size()
 	}
-	if m.store == nil {
-		status.IntegrityError = "database is not open"
-	} else if err := m.store.IntegrityCheck(ctx); err != nil {
-		status.IntegrityError = err.Error()
-	} else {
-		status.IntegrityOK = true
-	}
 	if items, err := m.List(); err == nil {
 		status.BackupCount = len(items)
 		if len(items) > 0 {
@@ -169,7 +162,12 @@ func (m *Manager) List() ([]Manifest, error) {
 		if json.Unmarshal(raw, &item) != nil || item.Name == "" {
 			continue
 		}
-		item.Verified = m.verifyManifest(item) == nil
+		// Full SHA-256 and SQLite verification is intentionally performed when
+		// a backup is created and again before restore. Listing must remain
+		// metadata-only; re-reading every multi-gigabyte backup blocked the
+		// settings page for minutes.
+		info, statErr := os.Stat(filepath.Join(m.dir, item.Name+".db"))
+		item.Verified = item.Verified && statErr == nil && info.Size() == item.Size
 		out = append(out, item)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
