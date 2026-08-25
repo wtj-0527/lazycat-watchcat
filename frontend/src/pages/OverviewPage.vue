@@ -56,7 +56,7 @@ function capabilityDetail(device: Device): string {
         <DonutChart :items="healthDistribution" center-label="设备" />
       </section>
       <section class="card">
-        <div class="section-title"><div><h2>容量使用率</h2><span class="muted">按风险与当前使用率排序</span></div></div>
+        <div class="section-title"><div><h2>存储卷使用率</h2><span class="muted">各设备存储卷的已用容量占比，使用率高的排在前面</span></div></div>
         <BarChart :items="capacityBars" unit="%" />
       </section>
     </div>
