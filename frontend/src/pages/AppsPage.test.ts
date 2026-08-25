@@ -129,13 +129,16 @@ describe('AppsPage', () => {
 
   it('sorts applications by the selected metric and opens the all-app comparison', async () => {
     apiMock.mockImplementation(async (path: string) => {
-      if (path.includes('/metrics/compare')) return {
-        metric: 'memory', from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z', bucketSeconds: 300,
+      if (path.includes('/metrics/compare')) {
+        const metric = new URL(`https://example.test${path}`).searchParams.get('metric') || 'cpu'
+        return {
+        metric, from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z', bucketSeconds: 300,
         items: [
           { appId: 'small', value: 1024, unit: 'bytes', points: [] },
           { appId: 'large', value: 4096, unit: 'bytes', points: [] },
         ],
         updatedAt: new Date().toISOString(),
+      }
       }
       if (path.includes('/metrics')) return {
         appId: 'large', from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z', bucketSeconds: 300,
@@ -158,10 +161,17 @@ describe('AppsPage', () => {
 
     await wrapper.findAll('.view-toggle button')[1].trigger('click')
     await flushPromises()
-    expect(apiMock.mock.calls.some(([path]) => String(path).includes('/metrics/compare?metric=memory'))).toBe(true)
+    for (const metric of ['cpu', 'memory', 'network', 'disk']) {
+      expect(apiMock.mock.calls.some(([path]) => String(path).includes(`/metrics/compare?metric=${metric}`))).toBe(true)
+    }
     expect(wrapper.text()).toContain('所有应用对比')
-    expect(wrapper.findAll('.app-comparison-table tbody tr')).toHaveLength(2)
-    expect(wrapper.findAll('.app-comparison-table tbody tr')[0].text()).toContain('大内存应用')
+    expect(wrapper.findAll('.all-app-metric-panel')).toHaveLength(4)
+    expect(wrapper.find('.app-comparison-table').exists()).toBe(false)
+    expect(wrapper.text()).toContain('所有应用 CPU')
+    expect(wrapper.text()).toContain('所有应用内存')
+    expect(wrapper.text()).toContain('所有应用网络流量')
+    expect(wrapper.text()).toContain('所有应用磁盘 I/O')
+    expect(wrapper.findAll('.all-app-metric-panel .bar-chart-row')).toHaveLength(8)
     wrapper.unmount()
   })
 })

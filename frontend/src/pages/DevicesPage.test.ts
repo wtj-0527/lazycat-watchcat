@@ -99,4 +99,49 @@ describe('DevicesPage detail tabs', () => {
     expect(wrapper.text()).not.toContain('数据加载失败')
     wrapper.unmount()
   })
+
+  it('shows charts instead of raw metric tables and supports a custom trend range', async () => {
+    const collectedAt = '2026-08-25T10:00:00Z'
+    const detailed = {
+      ...device,
+      latest: {
+        'system.cpu.usage': [{ name: 'system.cpu.usage', value: 18, unit: '%', labels: {}, collectedAt }],
+        'system.memory.usage': [{ name: 'system.memory.usage', value: 42, unit: '%', labels: {}, collectedAt }],
+        'system.load.1m': [{ name: 'system.load.1m', value: 1.5, unit: '', labels: {}, collectedAt }],
+        'system.temperature': [{ name: 'system.temperature', value: 50, unit: 'celsius', labels: { sensor: 'cpu' }, collectedAt }],
+      },
+    }
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/overview') return overview
+      if (path === '/api/v1/devices/d1') return detailed
+      if (path.includes('/events')) return { items: [{ id: 'e1', type: 'alert.opened', title: '告警触发', detail: {}, createdAt: collectedAt }] }
+      if (path === '/api/v1/operations') return { capabilities: [] }
+      if (path.includes('/metrics')) return { items: [{ name: 'system.cpu.usage', value: 18, unit: '%', labels: {}, collectedAt }] }
+      return detailed
+    })
+
+    const wrapper = mount(DevicesPage)
+    await flushPromises()
+    await wrapper.get('button.row-link').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('hours=24'))).toBe(true)
+    const overviewText = wrapper.get('.device-overview-grid').text()
+    expect(overviewText.indexOf('资源趋势')).toBeLessThan(overviewText.indexOf('活动风险'))
+
+    await wrapper.get('#device-tab-system').trigger('click')
+    expect(wrapper.find('.raw-metrics').exists()).toBe(false)
+    expect(wrapper.findAll('.metric-chart-panel').length).toBeGreaterThan(0)
+
+    await wrapper.get('#device-tab-overview').trigger('click')
+    await wrapper.findAll('.range-tabs button').find((button) => button.text() === '自定义')!.trigger('click')
+    const inputs = wrapper.findAll('.device-trend-custom-range input')
+    await inputs[0].setValue('2026-08-23T00:00')
+    await inputs[1].setValue('2026-08-24T00:00')
+    await wrapper.get('.device-trend-custom-range button').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('&from=') && String(path).includes('&to='))).toBe(true)
+    wrapper.unmount()
+  })
 })

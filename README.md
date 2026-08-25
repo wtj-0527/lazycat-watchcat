@@ -20,8 +20,8 @@
 ```bash
 docker build \
   --label org.opencontainers.image.version=1.14.1 \
-  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.14.4 .
-docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.14.4
+  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.15.0 .
+docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.15.0
 # 将 lzc-manifest.yml 的 image 固定为 push 返回的 sha256 digest
 lzc-cli project lint .
 lzc-cli project deploy --release

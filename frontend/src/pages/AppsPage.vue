@@ -5,6 +5,7 @@ import { usePolling } from '@/composables'
 import type { ApplicationItem } from '@/types'
 import { ago, bytes, formatNumber, percent } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
+import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -34,9 +35,10 @@ interface HistoryPayload {
     blockWriteRate: HistoryPoint[]
   }
 }
+type ComparisonMetric = 'cpu' | 'memory' | 'network' | 'disk'
 interface ComparisonItem { appId: string; value: number; unit: string; points: HistoryPoint[] }
 interface ComparisonPayload {
-  metric: 'cpu' | 'memory' | 'network' | 'disk'
+  metric: ComparisonMetric
   from: string
   to: string
   bucketSeconds: number
@@ -61,7 +63,7 @@ const customRangeError = ref('')
 const history = ref<HistoryPayload>()
 const historyLoading = ref(false)
 const historyError = ref('')
-const comparison = ref<ComparisonPayload>()
+const comparisons = ref<Partial<Record<ComparisonMetric, ComparisonPayload>>>({})
 const comparisonLoading = ref(false)
 const comparisonError = ref('')
 let historyRequest = 0
@@ -95,10 +97,6 @@ watch(selectedAppId, loadHistory)
 watch(historyHours, () => {
   if (historyMode.value === 'preset') loadCurrentView()
 })
-watch(sortMetric, () => {
-  if (viewMode.value === 'compare') loadComparison()
-})
-
 async function loadHistory() {
   if (!selectedAppId.value) return
   const request = ++historyRequest
@@ -127,11 +125,14 @@ async function loadComparison() {
     const range = historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
       ? `from=${encodeURIComponent(appliedCustomFrom.value)}&to=${encodeURIComponent(appliedCustomTo.value)}`
       : `hours=${historyHours.value}`
-    const result = await api<ComparisonPayload>(`/api/v1/applications/metrics/compare?metric=${sortMetric.value}&${range}`)
-    if (request === comparisonRequest) comparison.value = result
+    const next: Partial<Record<ComparisonMetric, ComparisonPayload>> = {}
+    for (const metric of ['cpu', 'memory', 'network', 'disk'] as ComparisonMetric[]) {
+      next[metric] = await api<ComparisonPayload>(`/api/v1/applications/metrics/compare?metric=${metric}&${range}`)
+      if (request === comparisonRequest) comparisons.value = { ...next }
+    }
   } catch (reason) {
     if (request === comparisonRequest) {
-      comparison.value = undefined
+      comparisons.value = {}
       comparisonError.value = reason instanceof Error ? reason.message : String(reason)
     }
   } finally {
@@ -204,33 +205,38 @@ const blockSeries = computed<ChartSeries[]>(() => [
   { name: '读取', color: '#2563eb', points: chartPoints(history.value?.series.blockReadRate, 1024) },
   { name: '写入', color: '#c51d23', points: chartPoints(history.value?.series.blockWriteRate, 1024) },
 ])
-const comparisonScale = computed(() => sortMetric.value === 'memory' ? 1024 * 1024 : sortMetric.value === 'network' || sortMetric.value === 'disk' ? 1024 : 1)
-const comparisonUnit = computed(() => ({ cpu: '%', memory: ' MiB', network: ' KiB/s', disk: ' KiB/s' } as const)[sortMetric.value])
-const comparisonLabel = computed(() => ({ cpu: 'CPU 平均使用率', memory: '内存平均使用量', network: '网络流量总和', disk: '磁盘 IO 总和' } as const)[sortMetric.value])
 const customHistoryRangeLabel = computed(() => historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
   ? `${new Date(appliedCustomFrom.value).toLocaleString('zh-CN')} 至 ${new Date(appliedCustomTo.value).toLocaleString('zh-CN')}`
   : '')
-const comparisonItems = computed(() => {
-  const names = new Map((data.value?.items || []).map((item) => [item.id, item.title || item.id]))
-  const visible = new Set(filtered.value.map((item) => item.id))
-  return [...(comparison.value?.items || [])]
-    .filter((item) => visible.has(item.appId))
-    .map((item) => ({ ...item, title: names.get(item.appId) || item.appId }))
+function comparisonItems(metric: ComparisonMetric) {
+  const payload = comparisons.value[metric]
+  if (!payload) return []
+  const values = new Map(payload.items.map((item) => [item.appId, item]))
+  return filtered.value
+    .map((application) => ({
+      ...(values.get(application.id) || { appId: application.id, value: 0, unit: '', points: [] }),
+      title: application.title || application.id,
+    }))
     .sort((a, b) => (sortDescending.value ? b.value - a.value : a.value - b.value))
-})
-const comparisonSeries = computed<ChartSeries[]>(() => {
-  const colors = ['#2563eb', '#c51d23', '#15803d', '#c05600', '#7c3aed', '#0891b2', '#db2777', '#475569']
-  return comparisonItems.value.slice(0, 8).map((item, index) => ({
-    name: item.title,
-    color: colors[index],
-    points: chartPoints(item.points, comparisonScale.value),
+}
+const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: string; unit: string; color: string; loaded: boolean; items: BarItem[] }>>(() => {
+  const definitions: Array<{ metric: ComparisonMetric; title: string; unit: string; color: string; scale: number }> = [
+    { metric: 'cpu', title: '所有应用 CPU', unit: '%', color: '#2563eb', scale: 1 },
+    { metric: 'memory', title: '所有应用内存', unit: ' MiB', color: '#7c3aed', scale: 1024 ** 2 },
+    { metric: 'network', title: '所有应用网络流量', unit: ' MiB', color: '#15803d', scale: 1024 ** 2 },
+    { metric: 'disk', title: '所有应用磁盘 I/O', unit: ' MiB', color: '#c05600', scale: 1024 ** 2 },
+  ]
+  return definitions.map((definition) => ({
+    ...definition,
+    loaded: Boolean(comparisons.value[definition.metric]),
+    items: comparisonItems(definition.metric).map((item) => ({
+      label: item.title,
+      value: Number((item.value / definition.scale).toFixed(item.value / definition.scale >= 10 ? 1 : 2)),
+      color: definition.color,
+      hint: `${item.appId} · ${item.points.length ? (definition.metric === 'cpu' ? `${formatNumber(item.value)}%` : bytes(item.value)) : '当前时间范围无历史数据'}`,
+    })),
   }))
 })
-function comparisonValue(item: ComparisonItem) {
-  if (sortMetric.value === 'cpu') return `${formatNumber(item.value)}%`
-  if (sortMetric.value === 'memory') return bytes(item.value)
-  return bytes(item.value)
-}
 </script>
 
 <template>
@@ -318,22 +324,18 @@ function comparisonValue(item: ComparisonItem) {
     </div>
 
     <section v-else class="card app-comparison-card">
-      <div class="section-title">
-        <div><h2>所有应用对比</h2><span class="muted">{{ comparisonLabel }} · 图表展示前 8 名，表格包含全部有历史数据的应用</span></div>
-      </div>
-      <div v-if="comparisonLoading" class="history-loading">正在计算所有应用对比数据…</div>
-      <div v-else-if="comparisonError" class="inline-empty">对比数据加载失败：{{ comparisonError }} <button class="row-link" @click="loadComparison">重试</button></div>
+      <div class="section-title"><div><h2>所有应用对比</h2></div></div>
+      <p v-if="comparisonLoading" class="operation-evidence">正在依次计算 CPU、内存、网络流量和磁盘 I/O…</p>
+      <div v-if="comparisonError" class="inline-empty">对比数据加载失败：{{ comparisonError }} <button class="row-link" @click="loadComparison">重试</button></div>
       <template v-else>
-        <div class="comparison-chart"><LineChart :series="comparisonSeries" :min="0" :unit="comparisonUnit" :height="280" /></div>
-        <div class="table-scroll">
-          <table class="fleet-table app-comparison-table">
-            <thead><tr><th>排名</th><th>应用</th><th>{{ comparisonLabel }}</th><th>历史点数</th></tr></thead>
-            <tbody><tr v-for="(item, index) in comparisonItems" :key="item.appId">
-              <td>{{ index + 1 }}</td><td><b>{{ item.title }}</b><small>{{ item.appId }}</small></td><td><strong>{{ comparisonValue(item) }}</strong></td><td>{{ item.points.length }}</td>
-            </tr></tbody>
-          </table>
+        <div class="all-app-metric-grid">
+          <section v-for="group in comparisonGroups" :key="group.metric" class="all-app-metric-panel">
+            <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.items.length }} 个应用</span></div>
+            <div v-if="!group.loaded" class="metric-panel-loading">正在计算…</div>
+            <BarChart v-else :items="group.items" :unit="group.unit" />
+          </section>
         </div>
-        <div v-if="!comparisonItems.length" class="inline-empty">当前时间范围内没有可对比的应用指标。</div>
+        <div v-if="!comparisonLoading && comparisonGroups.every((group) => !group.items.length)" class="inline-empty">当前时间范围内没有可对比的应用指标。</div>
       </template>
     </section>
   </PageState>

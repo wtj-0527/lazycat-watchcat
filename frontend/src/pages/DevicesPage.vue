@@ -5,6 +5,7 @@ import { usePolling, useRovingTabs } from '@/composables'
 import type { Capability, Device, Metric, Overview } from '@/types'
 import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
+import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
@@ -28,6 +29,14 @@ const capabilityFilter = ref('all')
 const groupFilter = ref('all')
 const selectedView = ref('all')
 const trend = ref<Record<string, Metric[]>>({})
+const trendMode = ref<'preset' | 'custom'>('preset')
+const trendHours = ref(24)
+const trendCustomFrom = ref('')
+const trendCustomTo = ref('')
+const trendAppliedFrom = ref('')
+const trendAppliedTo = ref('')
+const trendLoading = ref(false)
+const trendError = ref('')
 const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail: Record<string, unknown>; createdAt: string }>>([])
 const deviceCapabilities = ref<Capability[]>([])
 interface SavedView { id: string; name: string; query: { query?: string; status?: string; connectivity?: string; capability?: string; group?: string } }
@@ -59,23 +68,73 @@ async function showDevice(id: string) {
   selectedTab.value = 'overview'
   try {
     selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(id)}`)
-    const metricNames = ['system.cpu.usage', 'system.memory.usage', 'filesystem.root.usage']
-    const [histories, events, operations] = await Promise.all([
-      Promise.all(metricNames.map(async (name) => {
-        const result = await api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(id)}/metrics?name=${encodeURIComponent(name)}&hours=24`)
-        return [name, result.items || []] as const
-      })),
+    const [events, operations] = await Promise.all([
       api<{ items: typeof deviceEvents.value }>(`/api/v1/devices/${encodeURIComponent(id)}/events`),
       api<{ capabilities: Array<Capability & { deviceId?: string }> }>('/api/v1/operations'),
     ])
-    trend.value = Object.fromEntries(histories)
     deviceEvents.value = events.items || []
     deviceCapabilities.value = (operations.capabilities || []).filter((item) => !item.deviceId || item.deviceId === id)
+    await loadTrend(id)
   } catch (reason) {
     detailError.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
     detailLoading.value = false
   }
+}
+function trendRangeQuery() {
+  return trendMode.value === 'custom' && trendAppliedFrom.value && trendAppliedTo.value
+    ? `from=${encodeURIComponent(trendAppliedFrom.value)}&to=${encodeURIComponent(trendAppliedTo.value)}`
+    : `hours=${trendHours.value}`
+}
+async function loadTrend(id = selected.value?.id || detailDeviceId.value) {
+  if (!id) return
+  trendLoading.value = true
+  trendError.value = ''
+  try {
+    const metricNames = ['system.cpu.usage', 'system.memory.usage', 'filesystem.root.usage']
+    const histories = await Promise.all(metricNames.map(async (name) => {
+      const result = await api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(id)}/metrics?name=${encodeURIComponent(name)}&${trendRangeQuery()}`)
+      return [name, result.items || []] as const
+    }))
+    trend.value = Object.fromEntries(histories)
+  } catch (reason) {
+    trendError.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    trendLoading.value = false
+  }
+}
+function selectTrendPreset(hours: number) {
+  trendMode.value = 'preset'
+  trendHours.value = hours
+  void loadTrend()
+}
+function showTrendCustomRange() {
+  trendMode.value = 'custom'
+  if (!trendCustomTo.value) {
+    const now = new Date()
+    trendCustomTo.value = toLocalInput(now)
+    trendCustomFrom.value = toLocalInput(new Date(now.getTime() - 24 * 60 * 60 * 1000))
+  }
+}
+function toLocalInput(date: Date) {
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+function applyTrendCustomRange() {
+  const from = new Date(trendCustomFrom.value)
+  const to = new Date(trendCustomTo.value)
+  if (!trendCustomFrom.value || !trendCustomTo.value || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
+    trendError.value = '请选择有效的开始和结束时间'
+    return
+  }
+  if (to.getTime() - from.getTime() > 30 * 24 * 60 * 60 * 1000) {
+    trendError.value = '单次查询范围不能超过 30 天'
+    return
+  }
+  trendAppliedFrom.value = from.toISOString()
+  trendAppliedTo.value = to.toISOString()
+  trendError.value = ''
+  void loadTrend()
 }
 const groups = computed(() => [...new Set((data.value?.devices || []).map((item) => item.group).filter(Boolean))] as string[])
 function applyView(view: SavedView['query']) {
@@ -149,6 +208,71 @@ function categoryMetrics(device: Device, category: DetailTab): Metric[] {
   if (!prefixes[category].length) return metrics(device)
   return metrics(device).filter((point) => prefixes[category].some((prefix) => point.name.startsWith(prefix)))
 }
+function metricResource(point: Metric): string {
+  return point.labels?.app || point.labels?.container || point.labels?.device || point.labels?.mount
+    || point.labels?.sensor || point.labels?.interface || point.name.split('.').slice(-2).join('.')
+}
+function latestByResource(items: Metric[]): Metric[] {
+  const latest = new Map<string, Metric>()
+  for (const point of items) {
+    const key = `${point.name}:${metricResource(point)}`
+    const current = latest.get(key)
+    if (!current || new Date(point.collectedAt).getTime() > new Date(current.collectedAt).getTime()) latest.set(key, point)
+  }
+  return [...latest.values()]
+}
+function chartItems(items: Metric[], transform: (value: number) => number = (value) => value): BarItem[] {
+  return latestByResource(items).map((point) => ({
+    label: metricResource(point),
+    value: Number(transform(point.value).toFixed(Math.abs(transform(point.value)) >= 10 ? 1 : 2)),
+    color: storageRiskStatus(point) === 'critical' ? '#c51d23' : storageRiskStatus(point) === 'warning' ? '#c05600' : '#2563eb',
+    hint: `${point.name} · ${formatMetricValue(point.value, point.unit)} · ${dateTime(point.collectedAt)}`,
+  })).sort((a, b) => b.value - a.value).slice(0, 16)
+}
+interface MetricChartGroup { title: string; unit: string; items: BarItem[] }
+const metricChartGroups = computed<MetricChartGroup[]>(() => {
+  if (!selected.value) return []
+  const items = categoryMetrics(selected.value, selectedTab.value)
+  const groups: MetricChartGroup[] = []
+  const add = (title: string, unit: string, values: Metric[], transform?: (value: number) => number) => {
+    const bars = chartItems(values, transform)
+    if (bars.length) groups.push({ title, unit, items: bars })
+  }
+  if (selectedTab.value === 'system') {
+    add('资源使用率', '%', items.filter((point) => point.unit === '%' && point.name.includes('usage')))
+    add('系统负载', '', items.filter((point) => point.name.startsWith('system.load.')))
+    add('温度传感器', ' ℃', items.filter((point) => point.unit === 'celsius'))
+    add('运行与交换空间', ' GiB', items.filter((point) => point.unit === 'bytes'), (value) => value / 1024 ** 3)
+  } else if (selectedTab.value === 'storage') {
+    add('存储卷使用率', '%', items.filter((point) => point.unit === '%' && point.name.includes('usage')))
+    add('磁盘温度', ' ℃', items.filter((point) => point.name === 'disk.temperature'))
+    add('容量与可用空间', ' GiB', items.filter((point) => point.unit === 'bytes' && (point.name.includes('size') || point.name.includes('capacity') || point.name.includes('available') || point.name.includes('free'))), (value) => value / 1024 ** 3)
+    add('SMART 与 Btrfs 错误', '', items.filter((point) => point.unit === 'count' || point.unit === 'bitmask'))
+  } else if (selectedTab.value === 'apps') {
+    add('容器 CPU', '%', items.filter((point) => point.unit === '%' && point.name.includes('cpu')))
+    add('容器内存', ' MiB', items.filter((point) => point.unit === 'bytes' && point.name.includes('memory')), (value) => value / 1024 ** 2)
+    add('容器状态', '', items.filter((point) => point.name === 'container.running' || point.unit === 'bool' || point.unit === 'count'))
+    add('容器 I/O 与流量', ' MiB', items.filter((point) => point.unit === 'bytes' && !point.name.includes('memory')), (value) => value / 1024 ** 2)
+  } else if (selectedTab.value === 'network') {
+    add('网络流量', ' MiB', items.filter((point) => point.unit === 'bytes'), (value) => value / 1024 ** 2)
+    add('丢包与错误', '', items.filter((point) => point.unit === 'count'))
+  }
+  return groups
+})
+const eventTypeItems = computed<BarItem[]>(() => {
+  const counts = new Map<string, number>()
+  for (const item of deviceEvents.value) counts.set(item.type || '其他', (counts.get(item.type || '其他') || 0) + 1)
+  return [...counts.entries()].map(([label, value]) => ({ label, value, color: '#2563eb' })).sort((a, b) => b.value - a.value)
+})
+const eventTimelineItems = computed<BarItem[]>(() => {
+  const counts = new Map<string, number>()
+  for (const item of deviceEvents.value) {
+    const date = new Date(item.createdAt)
+    const key = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  return [...counts.entries()].map(([label, value]) => ({ label, value, color: '#7c3aed' })).slice(-14)
+})
 const riskMetrics = computed(() => selected.value ? metrics(selected.value).filter((point) => {
   if (storageRiskStatus(point)) return true
   return (point.name === 'system.cpu.usage' || point.name === 'system.memory.usage') && point.value >= 85
@@ -166,7 +290,6 @@ const capabilityCount = computed(() => selected.value
         <section class="device-hero">
           <div>
             <div class="device-title-line"><h2>{{ selected.name }}</h2></div>
-            <p>健康与连接状态独立呈现；每项风险都能追溯到采集证据。</p>
           </div>
           <div class="button-row">
             <StatusPill :status="deviceState(selected)" /><StatusPill :status="connectivityState(selected)" />
@@ -212,6 +335,23 @@ const capabilityCount = computed(() => selected.value
                 <div><span>存储</span><strong>{{ metricValueAny(selected, ['filesystem.root.usage', 'btrfs.usage']) }}</strong><i><em :style="{ width: metricValueAny(selected, ['filesystem.root.usage', 'btrfs.usage']) }" /></i></div>
               </div>
             </section>
+            <section class="card resource-trend-card">
+              <div class="section-title device-trend-title">
+                <div><h2>资源趋势</h2></div>
+                <div class="range-tabs" aria-label="设备资源趋势时间范围">
+                  <button v-for="option in [{ h: 1, l: '1 小时' }, { h: 6, l: '6 小时' }, { h: 24, l: '24 小时' }, { h: 168, l: '7 天' }]" :key="option.h" :class="{ active: trendMode === 'preset' && trendHours === option.h }" @click="selectTrendPreset(option.h)">{{ option.l }}</button>
+                  <button :class="{ active: trendMode === 'custom' }" @click="showTrendCustomRange">自定义</button>
+                </div>
+              </div>
+              <div v-if="trendMode === 'custom'" class="device-trend-custom-range">
+                <label>开始<input v-model="trendCustomFrom" type="datetime-local"></label>
+                <label>结束<input v-model="trendCustomTo" type="datetime-local"></label>
+                <button class="secondary-button" @click="applyTrendCustomRange">应用</button>
+              </div>
+              <p v-if="trendError" class="operation-evidence warning">{{ trendError }}</p>
+              <div v-if="trendLoading" class="inline-empty">正在读取资源历史…</div>
+              <LineChart v-else :series="trendSeries" :min="0" :max="100" unit="%" :height="230" />
+            </section>
             <section class="card active-risk-card">
               <div class="section-title"><div><h2>活动风险</h2></div><span class="pill critical">{{ riskMetrics.length }} 个严重</span></div>
               <div v-if="riskMetrics.length" class="risk-evidence-list" role="table" aria-label="活动风险">
@@ -229,34 +369,25 @@ const capabilityCount = computed(() => selected.value
               <div v-for="item in deviceCapabilities" :key="item.capability" class="capability-line"><i :class="{ warning: item.status === 'restricted', unknown: item.status === 'unsupported' || item.status === 'error' }" /><b>{{ item.capability }}</b><span>{{ item.status }}</span></div>
               <a href="#settings">查看权限原因与修复步骤 →</a>
             </aside>
-            <section class="card resource-trend-card">
-              <div class="section-title"><div><h2>24 小时资源趋势</h2><span class="muted">处理器、内存和根文件系统均来自历史指标 API。</span></div></div>
-              <LineChart :series="trendSeries" :min="0" :max="100" unit="%" :height="210" />
-            </section>
           </div>
         </div>
 
         <section v-else-if="selectedTab === 'events'" class="card">
-          <div class="section-title"><div><h2>设备事件</h2><span class="muted">告警与审计事件</span></div></div>
-          <div v-if="deviceEvents.length" class="backup-list"><div v-for="item in deviceEvents" :key="item.id" class="backup-row"><div><b>{{ item.title }}</b><p>{{ dateTime(item.createdAt) }} · {{ item.type }}</p><code>{{ JSON.stringify(item.detail) }}</code></div></div></div>
+          <div class="section-title"><div><h2>设备事件</h2></div></div>
+          <div v-if="deviceEvents.length" class="device-metric-chart-grid">
+            <section class="metric-chart-panel"><h3>事件类型构成</h3><BarChart :items="eventTypeItems" /></section>
+            <section class="metric-chart-panel"><h3>最近事件趋势</h3><BarChart :items="eventTimelineItems" /></section>
+          </div>
           <div v-else class="inline-empty">暂无设备事件。</div>
         </section>
 
         <section v-else class="card">
-          <div class="section-title">
-            <div><h2>{{ detailTabs.find(([key]) => key === selectedTab)?.[1] }}指标</h2><span class="muted">名称、值、标签和采集时间均来自真实 API</span></div>
-          </div>
-          <div v-if="categoryMetrics(selected, selectedTab).length" class="table-scroll">
-            <table class="fleet-table raw-metrics">
-              <thead><tr><th>指标</th><th>资源</th><th>值</th><th>标签</th><th>采集时间</th></tr></thead>
-              <tbody><tr v-for="point in categoryMetrics(selected, selectedTab)" :key="`${point.name}-${JSON.stringify(point.labels)}`">
-                <td><code>{{ point.name }}</code></td>
-                <td>{{ point.labels?.device || point.labels?.mount || point.labels?.app || point.labels?.sensor || '系统资源' }}</td>
-                <td><b>{{ formatMetricValue(point.value, point.unit) }}</b></td>
-                <td>{{ Object.entries(point.labels || {}).map(([key, value]) => `${key}=${value}`).join(', ') || '无标签' }}</td>
-                <td>{{ ago(point.collectedAt) }}<small>{{ dateTime(point.collectedAt) }}</small></td>
-              </tr></tbody>
-            </table>
+          <div class="section-title"><div><h2>{{ detailTabs.find(([key]) => key === selectedTab)?.[1] }}指标</h2></div></div>
+          <div v-if="metricChartGroups.length" class="device-metric-chart-grid">
+            <section v-for="group in metricChartGroups" :key="group.title" class="metric-chart-panel">
+              <h3>{{ group.title }}</h3>
+              <BarChart :items="group.items" :unit="group.unit" />
+            </section>
           </div>
           <div v-else class="inline-empty">当前没有此分类的采集指标。</div>
         </section>
