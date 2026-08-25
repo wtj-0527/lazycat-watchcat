@@ -35,7 +35,7 @@ func TestFrontendSetupPairsAndDoesNotPersistCode(t *testing.T) {
 		status: &status, configPath: filepath.Join(dir, "setup.json"), credsPath: filepath.Join(dir, "credentials.json"),
 		ready: ready, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
-	body := `{"hubUrl":"` + hub.URL + `","collectorUrl":"https://maoyan-hub:18443","deviceName":"canway","pairingCode":"one-time-secret"}`
+	body := `{"hubUrl":"` + hub.URL + `","pairingCode":"one-time-secret"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(body))
 	recorder := httptest.NewRecorder()
 	server.configure(recorder, request)
@@ -44,7 +44,7 @@ func TestFrontendSetupPairsAndDoesNotPersistCode(t *testing.T) {
 	}
 	select {
 	case paired := <-ready:
-		if paired.creds.DeviceID != "remote-1" || paired.config.DeviceName != "canway" {
+		if paired.creds.DeviceID != "remote-1" || paired.config.DeviceName == "" {
 			t.Fatalf("paired=%+v", paired)
 		}
 	default:
@@ -70,5 +70,15 @@ func TestRuntimeConfigValidationRequiresMTLSHTTPS(t *testing.T) {
 	err := validateRuntimeConfig(runtimeConfig{HubURL: "http://hub:18080", CollectorURL: "http://hub:18443", DeviceName: "canway"}, "code")
 	if err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDeriveCollectorURLUsesSameHostAndStandardForwardPort(t *testing.T) {
+	got, err := deriveCollectorURL("http://192.168.124.27:18080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://192.168.124.27:18443" {
+		t.Fatalf("collector URL=%q", got)
 	}
 }

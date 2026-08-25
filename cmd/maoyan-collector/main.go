@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,6 +60,9 @@ func main() {
 	hostname, _ := os.Hostname()
 	if config.DeviceName == "" {
 		config.DeviceName = env("MAOYAN_DEVICE_NAME", hostname)
+	}
+	if config.CollectorURL == "" && config.HubURL != "" {
+		config.CollectorURL, _ = deriveCollectorURL(config.HubURL)
 	}
 	ready := make(chan pairedRuntime, 1)
 	setup := &setupServer{status: &status, configPath: configPath, credsPath: credsPath, current: config, ready: ready, logger: logger}
@@ -174,16 +178,14 @@ func (s *setupServer) setupStatus(w http.ResponseWriter, _ *http.Request) {
 	defer s.mu.Unlock()
 	writeSetupJSON(w, http.StatusOK, map[string]any{
 		"paired": s.paired, "pairing": s.pairing, "setupRequired": !s.paired,
-		"hubUrl": s.current.HubURL, "collectorUrl": s.current.CollectorURL, "deviceName": s.current.DeviceName,
+		"hubUrl": s.current.HubURL,
 	})
 }
 
 func (s *setupServer) configure(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		HubURL       string `json:"hubUrl"`
-		CollectorURL string `json:"collectorUrl"`
-		DeviceName   string `json:"deviceName"`
-		PairingCode  string `json:"pairingCode"`
+		HubURL      string `json:"hubUrl"`
+		PairingCode string `json:"pairingCode"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	decoder.DisallowUnknownFields()
@@ -191,7 +193,14 @@ func (s *setupServer) configure(w http.ResponseWriter, r *http.Request) {
 		writeSetupProblem(w, http.StatusBadRequest, "配置格式无效")
 		return
 	}
-	config := runtimeConfig{HubURL: strings.TrimRight(strings.TrimSpace(request.HubURL), "/"), CollectorURL: strings.TrimRight(strings.TrimSpace(request.CollectorURL), "/"), DeviceName: strings.TrimSpace(request.DeviceName)}
+	hubURL := strings.TrimRight(strings.TrimSpace(request.HubURL), "/")
+	collectorURL, err := deriveCollectorURL(hubURL)
+	if err != nil {
+		writeSetupProblem(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	hostname, _ := os.Hostname()
+	config := runtimeConfig{HubURL: hubURL, CollectorURL: collectorURL, DeviceName: hostname}
 	if err := validateRuntimeConfig(config, request.PairingCode); err != nil {
 		writeSetupProblem(w, http.StatusBadRequest, err.Error())
 		return
@@ -211,7 +220,6 @@ func (s *setupServer) configure(w http.ResponseWriter, r *http.Request) {
 	s.status.Store("pairing")
 	s.mu.Unlock()
 
-	hostname, _ := os.Hostname()
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	creds, err := collector.Pair(ctx, http.DefaultClient, config.HubURL, strings.TrimSpace(request.PairingCode), config.DeviceName, hostname, buildinfo.Version)
 	cancel()
@@ -246,6 +254,16 @@ func (s *setupServer) markPaired(config runtimeConfig) {
 }
 
 func pairAndSave(config runtimeConfig, code, hostname, configPath, credsPath string) (pairedRuntime, error) {
+	if config.DeviceName == "" {
+		config.DeviceName = hostname
+	}
+	if config.CollectorURL == "" {
+		var err error
+		config.CollectorURL, err = deriveCollectorURL(config.HubURL)
+		if err != nil {
+			return pairedRuntime{}, err
+		}
+	}
 	if err := validateRuntimeConfig(config, code); err != nil {
 		return pairedRuntime{}, err
 	}
@@ -265,8 +283,8 @@ func pairAndSave(config runtimeConfig, code, hostname, configPath, credsPath str
 }
 
 func validateRuntimeConfig(config runtimeConfig, pairingCode string) error {
-	if config.HubURL == "" || config.CollectorURL == "" || config.DeviceName == "" || strings.TrimSpace(pairingCode) == "" {
-		return errors.New("配对入口、指标入口、设备名称和配对码均为必填项")
+	if config.HubURL == "" || strings.TrimSpace(pairingCode) == "" {
+		return errors.New("猫眼地址和配对码均为必填项")
 	}
 	hub, err := url.Parse(config.HubURL)
 	if err != nil || hub.Host == "" || (hub.Scheme != "http" && hub.Scheme != "https") {
@@ -277,6 +295,14 @@ func validateRuntimeConfig(config runtimeConfig, pairingCode string) error {
 		return errors.New("指标入口必须是有效的 HTTPS 地址")
 	}
 	return nil
+}
+
+func deriveCollectorURL(hubURL string) (string, error) {
+	hub, err := url.Parse(strings.TrimSpace(hubURL))
+	if err != nil || hub.Hostname() == "" || (hub.Scheme != "http" && hub.Scheme != "https") {
+		return "", errors.New("猫眼地址必须是有效的 HTTP 或 HTTPS 地址")
+	}
+	return (&url.URL{Scheme: "https", Host: net.JoinHostPort(hub.Hostname(), "18443")}).String(), nil
 }
 
 func loadRuntimeConfig(path string) runtimeConfig {
@@ -330,10 +356,11 @@ func (s *setupServer) page(w http.ResponseWriter, _ *http.Request) {
 }
 
 const setupPage = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>猫眼 Collector 配置</title><style>
-:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#162033;background:#f5f7fb}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}.shell{width:min(680px,100%)}.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}.logo{width:44px;height:44px;border-radius:14px;background:#111827;color:#fff;display:grid;place-items:center;font-size:24px}.brand h1{font-size:22px;margin:0}.brand p{margin:3px 0 0;color:#667085}.card{background:#fff;border:1px solid #e5e9f2;border-radius:18px;padding:26px;box-shadow:0 18px 45px rgba(34,51,84,.08)}.status{padding:12px 14px;border-radius:10px;background:#f3f6fb;margin-bottom:20px}.status.ok{background:#ecfdf3;color:#087443}.status.bad{background:#fff1f2;color:#b42318}label{display:block;margin:15px 0 0;font-weight:650}input{display:block;width:100%;margin-top:7px;border:1px solid #ccd4e0;border-radius:9px;padding:11px 12px;font:inherit}small{display:block;color:#667085;margin-top:5px;line-height:1.55}button{width:100%;margin-top:22px;border:0;border-radius:10px;padding:12px 16px;background:#2563eb;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.note{margin-top:18px;padding-top:16px;border-top:1px solid #edf0f5;color:#667085;line-height:1.65}code{background:#f3f4f6;padding:2px 5px;border-radius:5px}</style></head><body><main class="shell"><div class="brand"><div class="logo">◉</div><div><h1>猫眼 Collector 配置</h1><p>一次完成远端设备配对与安全上报配置</p></div></div><section class="card"><div id="status" class="status">正在读取状态…</div><form id="form"><label>设备名称<input id="deviceName" required placeholder="例如：canway"></label><label>配对入口<input id="hubUrl" required placeholder="http://192.168.124.27:18080"></label><small>用于提交一次性配对码，指向 nasw 猫眼的普通 HTTP API。</small><label>指标入口<input id="collectorUrl" required placeholder="https://maoyan-hub:18443"></label><small>用于日常 mTLS 上报，主机名必须与猫眼证书匹配。</small><label>一次性配对码<input id="pairingCode" required autocomplete="one-time-code" placeholder="在 nasw 猫眼“接入”页面生成"></label><button id="submit" type="submit">验证并完成配对</button></form><div class="note">配对成功后，证书和非敏感连接配置保存在 Collector 数据目录；配对码不会保存。若需重新配对，必须先删除本机 <code>credentials.json</code>。</div></section></main><script>
+:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#162033;background:#f5f7fb}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}.shell{width:min(620px,100%)}.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}.logo{width:44px;height:44px;border-radius:14px;background:#111827;color:#fff;display:grid;place-items:center;font-size:24px}.brand h1{font-size:22px;margin:0}.brand p{margin:3px 0 0;color:#667085}.card{background:#fff;border:1px solid #e5e9f2;border-radius:18px;padding:26px;box-shadow:0 18px 45px rgba(34,51,84,.08)}.status{padding:12px 14px;border-radius:10px;background:#f3f6fb;margin-bottom:20px}.status.ok{background:#ecfdf3;color:#087443}.status.bad{background:#fff1f2;color:#b42318}label{display:block;margin:15px 0 0;font-weight:650}input{display:block;width:100%;margin-top:7px;border:1px solid #ccd4e0;border-radius:9px;padding:11px 12px;font:inherit}small{display:block;color:#667085;margin-top:5px;line-height:1.55}button{width:100%;margin-top:22px;border:0;border-radius:10px;padding:12px 16px;background:#2563eb;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.note{margin-top:18px;padding-top:16px;border-top:1px solid #edf0f5;color:#667085;line-height:1.65}code{background:#f3f4f6;padding:2px 5px;border-radius:5px}</style></head><body><main class="shell"><div class="brand"><div class="logo">◉</div><div><h1>猫眼 Collector 配置</h1><p>填写猫眼地址和一次性配对码即可接入</p></div></div><section class="card"><div id="status" class="status">正在读取状态…</div><form id="form"><label>猫眼地址<input id="hubUrl" required placeholder="http://192.168.124.27:18080"></label><small>填写 nasw 上手动开放的猫眼配对入口；mTLS 上报地址将自动使用同一主机的 18443 端口。</small><label>一次性配对码<input id="pairingCode" required autocomplete="one-time-code" placeholder="在 nasw 猫眼“接入”页面生成"></label><button id="submit" type="submit">验证并完成配对</button></form><div class="note">设备名称自动读取当前主机名；证书和非敏感连接配置会保存在 Collector 数据目录，配对码不会保存。</div></section></main><script>
 const statusEl=document.querySelector('#status'),form=document.querySelector('#form'),button=document.querySelector('#submit');
-async function load(){try{const r=await fetch('/api/v1/setup'),d=await r.json();document.querySelector('#deviceName').value=d.deviceName||'';document.querySelector('#hubUrl').value=d.hubUrl||'';document.querySelector('#collectorUrl').value=d.collectorUrl||'';if(d.paired){statusEl.className='status ok';statusEl.textContent='已完成配对，Collector 正在使用证书上报数据。';form.hidden=true}else{statusEl.textContent=d.pairing?'正在配对…':'尚未配对，请填写以下配置。'}}catch(e){statusEl.className='status bad';statusEl.textContent='无法读取 Collector 状态：'+e.message}}
-form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;button.textContent='正在验证并配对…';statusEl.className='status';statusEl.textContent='正在连接猫眼服务并签发证书…';try{const r=await fetch('/api/v1/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceName:deviceName.value,hubUrl:hubUrl.value,collectorUrl:collectorUrl.value,pairingCode:pairingCode.value})}),d=await r.json();if(!r.ok)throw new Error(d.error?.message||('HTTP '+r.status));statusEl.className='status ok';statusEl.textContent='配对成功，设备 ID：'+d.deviceId;form.hidden=true}catch(e){statusEl.className='status bad';statusEl.textContent=e.message;button.disabled=false;button.textContent='验证并完成配对'}});load();
+function prefill(){const p=new URLSearchParams(location.hash.slice(1));if(p.get('hub'))hubUrl.value=p.get('hub');if(p.get('code'))pairingCode.value=p.get('code');if(location.hash)history.replaceState(null,'',location.pathname+location.search)}
+async function load(){prefill();try{const r=await fetch('/api/v1/setup'),d=await r.json();if(!hubUrl.value)hubUrl.value=d.hubUrl||'';if(d.paired){statusEl.className='status ok';statusEl.textContent='已完成配对，Collector 正在使用证书上报数据。';form.hidden=true}else{statusEl.textContent=d.pairing?'正在配对…':'尚未配对，请填写猫眼地址和配对码。'}}catch(e){statusEl.className='status bad';statusEl.textContent='无法读取 Collector 状态：'+e.message}}
+form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;button.textContent='正在验证并配对…';statusEl.className='status';statusEl.textContent='正在连接猫眼服务并签发证书…';try{const r=await fetch('/api/v1/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hubUrl:hubUrl.value,pairingCode:pairingCode.value})}),d=await r.json();if(!r.ok)throw new Error(d.error?.message||('HTTP '+r.status));statusEl.className='status ok';statusEl.textContent='配对成功，设备 ID：'+d.deviceId;form.hidden=true}catch(e){statusEl.className='status bad';statusEl.textContent=e.message;button.disabled=false;button.textContent='验证并完成配对'}});load();
 </script></body></html>`
 
 func flush(logger *slog.Logger, q *collector.Queue, client *http.Client, hub string, creds collector.Credentials) {

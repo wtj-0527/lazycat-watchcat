@@ -46,6 +46,7 @@ const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, 
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
 const collectorSetupURL = ref(localStorage.getItem('maoyanCollectorSetupURL') || 'http://192.168.124.18:18090')
+const collectorHubURL = ref(localStorage.getItem('maoyanCollectorHubURL') || 'http://192.168.124.27:18080')
 const backupLoading = ref(false)
 const backupEvidence = ref<OperationEvidence>()
 const restoreEvidence = ref<OperationEvidence>()
@@ -115,14 +116,21 @@ async function copyPairingCode() {
   emit('toast', '配对码已复制')
 }
 function openCollectorSetup() {
-  const value = collectorSetupURL.value.trim()
+  if (!pairing.value) {
+    emit('toast', '请先生成一次性配对码')
+    return
+  }
   try {
-    const target = new URL(value)
+    const target = new URL(collectorSetupURL.value.trim())
+    const hub = new URL(collectorHubURL.value.trim())
     if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('invalid protocol')
+    if (hub.protocol !== 'http:' && hub.protocol !== 'https:') throw new Error('invalid protocol')
     localStorage.setItem('maoyanCollectorSetupURL', target.toString())
+    localStorage.setItem('maoyanCollectorHubURL', hub.toString())
+    target.hash = new URLSearchParams({ hub: hub.toString(), code: pairing.value.code }).toString()
     window.open(target.toString(), '_blank', 'noopener,noreferrer')
   } catch {
-    emit('toast', '请输入有效的 Collector 配置页地址')
+    emit('toast', '请输入有效的 Collector 配置页和猫眼接入地址')
   }
 }
 async function saveDeviceMetadata(device: Device) {
@@ -352,15 +360,19 @@ async function deleteUnusedImage(image: UnusedImage) {
           </div>
           <div class="collector-setup-launcher">
             <div>
-              <b>打开 canway Collector 配置页</b>
-              <p>在配置页填写设备名称、配对入口、mTLS 指标入口和上方配对码，无需编辑环境变量。</p>
+              <b>前往 canway 完成配对</b>
+              <p>将猫眼地址和一次性配对码安全预填到 canway；远端页面只需确认并提交。</p>
             </div>
             <label>
-              <span>配置页地址</span>
+              <span>canway 配置页</span>
               <input v-model="collectorSetupURL" type="url" placeholder="http://192.168.124.18:18090">
             </label>
-            <button class="primary-button" @click="openCollectorSetup">打开配置页</button>
-            <small>Collector 默认只监听本机回环地址；请按你的要求手动配置访问转发，猫眼不会自行开放端口。</small>
+            <label>
+              <span>nasw 猫眼接入地址</span>
+              <input v-model="collectorHubURL" type="url" placeholder="http://192.168.124.27:18080">
+            </label>
+            <button class="primary-button" :disabled="!pairing" @click="openCollectorSetup">打开并预填配对信息</button>
+            <small>配对信息放在 URL 的 <code>#</code> 片段中，不会发送到服务器访问日志。Collector 自动读取主机名，并将指标入口推导为同一 nasw 地址的 18443 端口。</small>
           </div>
         </section>
         <aside class="card deployment-card">

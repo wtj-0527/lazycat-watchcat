@@ -265,6 +265,7 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .collector-setup-launcher p { margin: 5px 0 0; color: var(--muted); line-height: 1.6; }
 .collector-setup-launcher label { display: grid; gap: 7px; min-width: 0; color: var(--muted); font-size: 12px; }
 .collector-setup-launcher input { width: 100%; }
+.collector-setup-launcher > button { grid-column: 1 / -1; }
 .collector-setup-launcher > small { grid-column: 1 / -1; color: var(--muted); line-height: 1.55; }
 .production-note { margin: 16px 0 0; padding: 12px; border-radius: 8px; background: var(--healthy-soft); color: var(--healthy); font-size: 11px; }
 .capability-list > div { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--border-subtle); }
@@ -324,7 +325,7 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
   .onboarding-steps li { grid-template-columns: 34px 1fr; }
   .onboarding-steps li > :last-child { grid-column: 2; justify-self: start; }
   .collector-setup-launcher { grid-template-columns: 1fr; }
-  .collector-setup-launcher > div, .collector-setup-launcher > small { grid-column: 1; }
+  .collector-setup-launcher > div, .collector-setup-launcher > button, .collector-setup-launcher > small { grid-column: 1; }
   .alert-row { grid-template-columns: 1fr; }
   .check-row { grid-template-columns: 1fr auto; }
   .check-row .pill { grid-column: 2; }

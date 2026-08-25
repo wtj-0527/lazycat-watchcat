@@ -28,6 +28,7 @@ type Credentials struct {
 	CertificatePEM       string    `json:"certificatePem"`
 	PrivateKeyPEM        string    `json:"privateKeyPem"`
 	CACertificatePEM     string    `json:"caCertificatePem"`
+	TLSServerName        string    `json:"tlsServerName,omitempty"`
 	CertificateExpiresAt time.Time `json:"certificateExpiresAt"`
 }
 
@@ -184,7 +185,11 @@ func Pair(ctx context.Context, client *http.Client, hubURL, code, name, hostname
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return Credentials{}, err
 	}
-	return Credentials{DeviceID: out.DeviceID, Token: out.Token, CertificatePEM: out.CertificatePEM, PrivateKeyPEM: out.PrivateKeyPEM, CACertificatePEM: out.CACertificatePEM, CertificateExpiresAt: out.CertificateExpiresAt}, nil
+	return Credentials{
+		DeviceID: out.DeviceID, Token: out.Token, CertificatePEM: out.CertificatePEM,
+		PrivateKeyPEM: out.PrivateKeyPEM, CACertificatePEM: out.CACertificatePEM,
+		TLSServerName: "maoyan-hub", CertificateExpiresAt: out.CertificateExpiresAt,
+	}, nil
 }
 func Send(ctx context.Context, client *http.Client, hubURL string, creds Credentials, batch protocol.MetricBatch) error {
 	body, _ := json.Marshal(batch)
@@ -243,6 +248,7 @@ func NewMTLSClient(creds Credentials) (*http.Client, error) {
 			MinVersion:   tls.VersionTLS13,
 			Certificates: []tls.Certificate{certificate},
 			RootCAs:      roots,
+			ServerName:   creds.TLSServerName,
 		},
 	}
 	return &http.Client{Transport: transport, Timeout: 15 * time.Second}, nil
