@@ -18,7 +18,6 @@ beforeEach(() => {
       collectIntervalSeconds: 30, advancedIntervalSeconds: 300, rawRetentionDays: 7, rollupRetentionDays: 90,
       auditRetentionDays: 180, inspectionRetentionDays: 180, backupRetentionCount: 20,
       notificationChannel: 'lazycat', notificationDelivery: 'outbox-retry',
-      storageStats: { rawMetricRows: 1, rollupRows: 1 },
     }
     if (path === '/api/v1/operations') return { capabilities: [], schedule: { daily: { hour: 2 }, weekly: { hour: 3 }, timezone: 'Asia/Shanghai' } }
     if (path === '/api/v1/database/status') return { databaseSize: 1024, integrityOk: true, backupCount: 0 }

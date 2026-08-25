@@ -89,6 +89,10 @@ func TestPlatformConfigurationAndExports(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"dailyInspectionHour":2`) {
 		t.Fatalf("settings status=%d body=%s", response.StatusCode, raw)
 	}
+	response, raw = requestJSON(http.MethodGet, "/api/v1/settings", nil)
+	if response.StatusCode != http.StatusOK || strings.Contains(string(raw), `"storageStats"`) {
+		t.Fatalf("settings GET must not run synchronous raw-metric counts: status=%d body=%s", response.StatusCode, raw)
+	}
 
 	now := time.Now().UTC()
 	response, raw = requestJSON(http.MethodPost, "/api/v1/maintenance-windows", map[string]any{

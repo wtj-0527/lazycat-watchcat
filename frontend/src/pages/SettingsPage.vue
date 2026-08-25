@@ -13,7 +13,6 @@ interface Settings {
   auditRetentionDays: number; inspectionRetentionDays: number; backupRetentionCount: number
   notificationChannel: string; notificationDelivery: string
   dailyInspectionHour: number; weeklyInspectionHour: number
-  storageStats: { rawMetricRows: number; rollupRows: number }
 }
 interface Operations { capabilities: Capability[]; schedule: { daily: { hour: number }; weekly: { hour: number }; timezone: string } }
 interface DatabaseStatus { databaseSize: number; integrityOk: boolean; integrityError?: string; backupCount: number; latestBackup?: Backup }
