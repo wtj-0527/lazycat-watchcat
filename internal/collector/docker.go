@@ -29,6 +29,8 @@ const smartHelperLabel = "community.lazycat.app.maoyan.smart-helper"
 
 var smartBlockDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 var dockerImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var safeBtrfsMount = regexp.MustCompile(`^/lzcsys/(?:data|var|run/mnt/[A-Za-z0-9._-]+|storage/[A-Za-z0-9._-]+)$`)
+var safeBtrfsDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+[0-9]+|nvme[0-9]+n[0-9]+p[0-9]+|mapper/[A-Za-z0-9._+-]+)$`)
 
 type DockerCollector struct {
 	socket           string
@@ -658,6 +660,185 @@ func (d *DockerCollector) CollectSMART(ctx context.Context, now time.Time) ([]pr
 		points = append(points, parsed...)
 	}
 	return points, warnings
+}
+
+func (d *DockerCollector) CollectStorageInventory(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
+	if !d.Available() {
+		return nil, []string{"docker storage: Docker socket unavailable"}
+	}
+	image, err := d.helperImage(ctx)
+	if err != nil {
+		return nil, []string{"docker storage: " + err.Error()}
+	}
+	const script = `for p in /host-sys/class/block/*; do
+ n=${p##*/}; case "$n" in sd[a-z]|nvme[0-9]n[0-9]) ;; *) continue;; esac
+ [ -e "$p/partition" ] && continue
+ sectors=$(cat "$p/size" 2>/dev/null || echo 0)
+ rota=$(cat "$p/queue/rotational" 2>/dev/null || echo 0)
+ model=$(cat "$p/device/model" 2>/dev/null | tr '\t\n' '  ')
+ serial=$(cat "$p/device/serial" 2>/dev/null | tr '\t\n' '  ')
+ link=$(readlink -f "$p")
+ transport=sata; case "$n:$link" in nvme*:*) transport=nvme;; *:*usb*) transport=usb;; esac
+ printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$sectors" "$rota" "$transport" "$model" "$serial"
+done`
+	cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", script})
+	cfg.HostConfig.Binds = []string{"/sys:/host-sys:ro"}
+	raw, code, err := d.runHelper(ctx, cfg)
+	if err != nil || code != 0 {
+		return nil, []string{fmt.Sprintf("docker storage inventory exited %d: %v", code, err)}
+	}
+	var points []protocol.MetricPoint
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 6 {
+			continue
+		}
+		sectors, _ := strconv.ParseFloat(strings.TrimSpace(fields[1]), 64)
+		if sectors <= 0 {
+			continue
+		}
+		media := "ssd"
+		if strings.TrimSpace(fields[2]) == "1" {
+			media = "hdd"
+		}
+		labels := map[string]string{
+			"device": strings.TrimSpace(fields[0]), "media": media,
+			"transport": strings.TrimSpace(fields[3]), "model": strings.TrimSpace(fields[4]),
+			"serial": strings.TrimSpace(fields[5]), "source": "lazycat-docker-helper",
+		}
+		points = append(points, protocol.MetricPoint{Name: "disk.capacity", Value: sectors * 512, Unit: "bytes", Labels: labels, CollectedAt: now})
+	}
+	btrfsPoints, btrfsWarnings := d.collectBtrfs(ctx, image, now)
+	return append(points, btrfsPoints...), btrfsWarnings
+}
+
+type btrfsMount struct {
+	path   string
+	device string
+}
+
+func (d *DockerCollector) discoverBtrfsMounts(ctx context.Context, image string) ([]btrfsMount, error) {
+	const script = `awk '$0 ~ / - btrfs / {print $5 "\t" $(NF-1)}' /host-mountinfo`
+	cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", script})
+	cfg.HostConfig.Binds = []string{"/proc/1/mountinfo:/host-mountinfo:ro"}
+	raw, code, err := d.runHelper(ctx, cfg)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("mount discovery exited %d: %w", code, err)
+	}
+	byRoot := map[string]btrfsMount{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(fields) != 2 {
+			continue
+		}
+		mount := strings.ReplaceAll(fields[0], `\040`, " ")
+		device := strings.ReplaceAll(fields[1], `\040`, " ")
+		if !safeBtrfsMount.MatchString(mount) || !safeBtrfsDevice.MatchString(device) {
+			continue
+		}
+		key := mount
+		switch {
+		case mount == "/lzcsys/data":
+			key = "data"
+		case mount == "/lzcsys/var":
+			key = "system"
+		case strings.HasPrefix(mount, "/lzcsys/storage/"):
+			key = "storage:" + filepath.Base(mount)
+		case strings.HasPrefix(mount, "/lzcsys/run/mnt/"):
+			key = "mount:" + filepath.Base(mount)
+		}
+		if old, ok := byRoot[key]; !ok || len(mount) < len(old.path) {
+			byRoot[key] = btrfsMount{path: mount, device: device}
+		}
+	}
+	out := make([]btrfsMount, 0, len(byRoot))
+	for _, mount := range byRoot {
+		out = append(out, mount)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
+	return out, nil
+}
+
+func (d *DockerCollector) collectBtrfs(ctx context.Context, image string, now time.Time) ([]protocol.MetricPoint, []string) {
+	mounts, err := d.discoverBtrfsMounts(ctx, image)
+	if err != nil {
+		return nil, []string{"docker btrfs: " + err.Error()}
+	}
+	var points []protocol.MetricPoint
+	var warnings []string
+	for _, target := range mounts {
+		mount := target.path
+		script := `echo __USAGE__; btrfs filesystem usage -b --raw /volume; echo __STATS__; btrfs device stats /volume; echo __SCRUB__; btrfs scrub status /volume`
+		cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", script})
+		cfg.HostConfig.Binds = []string{mount + ":/volume:ro"}
+		cfg.HostConfig.CapAdd = []string{"SYS_ADMIN"}
+		cfg.HostConfig.Devices = []dockerDeviceMapping{{
+			PathOnHost: target.device, PathInContainer: target.device, CgroupPermissions: "r",
+		}}
+		raw, code, runErr := d.runHelper(ctx, cfg)
+		if runErr != nil || !strings.Contains(string(raw), "__USAGE__") {
+			warnings = append(warnings, fmt.Sprintf("docker btrfs %s exited %d: %v", mount, code, runErr))
+			continue
+		}
+		if code != 0 {
+			warnings = append(warnings, fmt.Sprintf("docker btrfs %s: scrub history unavailable", mount))
+		}
+		points = append(points, parseBtrfsHelper(string(raw), mount, now)...)
+	}
+	return points, warnings
+}
+
+func parseBtrfsHelper(raw, mount string, now time.Time) []protocol.MetricPoint {
+	labels := map[string]string{"mount": mount, "source": "lazycat-docker-helper"}
+	add := func(out *[]protocol.MetricPoint, name string, value float64, unit string) {
+		*out = append(*out, protocol.MetricPoint{Name: name, Value: value, Unit: unit, Labels: labels, CollectedAt: now})
+	}
+	var out []protocol.MetricPoint
+	number := func(line string) float64 {
+		m := numberPattern.FindStringSubmatch(line)
+		if len(m) < 2 {
+			return 0
+		}
+		v, _ := strconv.ParseFloat(m[1], 64)
+		return v
+	}
+	var size, used float64
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "Device size:"):
+			size = number(line)
+			add(&out, "btrfs.size", size, "bytes")
+		case strings.HasPrefix(line, "Device allocated:"):
+			add(&out, "btrfs.allocated", number(line), "bytes")
+		case strings.HasPrefix(line, "Device unallocated:"):
+			add(&out, "btrfs.unallocated", number(line), "bytes")
+		case strings.HasPrefix(line, "Device missing:"):
+			add(&out, "btrfs.device_missing", number(line), "bytes")
+		case strings.HasPrefix(line, "Used:"):
+			used = number(line)
+		case strings.HasPrefix(line, "Free (estimated):"):
+			add(&out, "btrfs.free_estimated", number(line), "bytes")
+		case strings.Contains(line, ".write_io_errs"):
+			add(&out, "btrfs.write_io_errors", number(line[strings.LastIndex(line, " ")+1:]), "count")
+		case strings.Contains(line, ".read_io_errs"):
+			add(&out, "btrfs.read_io_errors", number(line[strings.LastIndex(line, " ")+1:]), "count")
+		case strings.Contains(line, ".flush_io_errs"):
+			add(&out, "btrfs.flush_io_errors", number(line[strings.LastIndex(line, " ")+1:]), "count")
+		case strings.Contains(line, ".corruption_errs"):
+			add(&out, "btrfs.corruption_errors", number(line[strings.LastIndex(line, " ")+1:]), "count")
+		case strings.Contains(line, ".generation_errs"):
+			add(&out, "btrfs.generation_errors", number(line[strings.LastIndex(line, " ")+1:]), "count")
+		case strings.Contains(line, "no stats available"):
+			add(&out, "btrfs.scrub.known", 0, "bool")
+		case strings.HasPrefix(line, "Error summary:"):
+			add(&out, "btrfs.scrub.errors", 0, "count")
+		}
+	}
+	if size > 0 {
+		add(&out, "btrfs.usage", used/size*100, "%")
+	}
+	return out
 }
 
 func dockerLabels(item dockerContainer) map[string]string {

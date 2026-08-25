@@ -142,6 +142,11 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 					break
 				}
 			}
+			callCtx, cancel = context.WithTimeout(ctx, 60*time.Second)
+			storagePoints, storageWarnings := e.docker.CollectStorageInventory(callCtx, now)
+			cancel()
+			batch.Points = append(batch.Points, storagePoints...)
+			warnings = append(warnings, storageWarnings...)
 		}
 		callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		points, advancedWarnings := CollectAdvanced(callCtx, e.advanced, now)
@@ -195,7 +200,7 @@ func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points
 	items = append(items,
 		smartCapability("smart", evidence.smartAttempted || len(e.advanced.SmartDevices) > 0, has("disk.temperature", "disk.power_on_hours", "disk.nvme.", "disk.ata."), evidence.smartRestricted, smartWarnings, "通过短生命周期、无网络、只读根文件系统的 Docker helper 读取 SMART；仅附加 SYS_RAWIO 与单设备映射", now),
 		smartCapability("nvme", evidence.smartAttempted || len(nvmeDevices) > 0, has("disk.nvme."), evidence.smartRestricted, nvmeWarnings, "通过受控 Docker helper 读取 NVMe SMART", now),
-		capabilityFromConfig("btrfs", len(e.advanced.BtrfsMounts) > 0, has("btrfs."), btrfsWarnings, "宿主机 Btrfs 挂载未映射给应用；当前不生成 Btrfs 健康结论", now),
+		capabilityFromConfig("btrfs", evidence.dockerMapped || len(e.advanced.BtrfsMounts) > 0, has("btrfs."), btrfsWarnings, "通过受控 Docker helper 只读映射白名单挂载点，采集 usage、device stats 与 scrub 状态", now),
 	)
 	if e.advanced.LPKStatusFile != "" {
 		items = append(items, capabilityFromConfig("lpk.runtime.file", true, has("lpk."), warnings, "状态文件不可用", now))

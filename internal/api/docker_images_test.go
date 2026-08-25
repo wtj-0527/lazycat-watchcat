@@ -12,6 +12,7 @@ import (
 
 	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
+	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
 
@@ -34,6 +35,10 @@ func (f *fakeDockerMaintenance) DeleteUnusedImage(_ context.Context, imageID str
 	result := f.deleted
 	result.ImageID = imageID
 	return result, f.err
+}
+
+func (f *fakeDockerMaintenance) CollectStorageInventory(context.Context, time.Time) ([]protocol.MetricPoint, []string) {
+	return nil, nil
 }
 
 func TestDockerImagePreviewAndPruneAreAudited(t *testing.T) {

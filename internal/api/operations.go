@@ -7,16 +7,39 @@ import (
 
 	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
 	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
+	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 )
 
 type dockerMaintenance interface {
 	UnusedImages(context.Context) (collector.UnusedImageSummary, error)
 	PruneUnusedImages(context.Context) (collector.ImagePruneResult, error)
 	DeleteUnusedImage(context.Context, string) (collector.ImageDeleteResult, error)
+	CollectStorageInventory(context.Context, time.Time) ([]protocol.MetricPoint, []string)
 }
 
 func (s *Server) versionView(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"version": buildinfo.Version})
+}
+
+func (s *Server) storageCheck(w http.ResponseWriter, r *http.Request) {
+	if s.docker == nil || s.localDeviceID == "" {
+		problem(w, http.StatusServiceUnavailable, "storage_check_unavailable", "存储只读检查服务未配置")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+	points, warnings := s.docker.CollectStorageInventory(ctx, now)
+	if len(points) == 0 {
+		problem(w, http.StatusServiceUnavailable, "storage_check_failed", "未获得物理磁盘或 Btrfs 数据")
+		return
+	}
+	if err := s.store.IngestMetrics(ctx, protocol.MetricBatch{DeviceID: s.localDeviceID, Points: points}); err != nil {
+		problem(w, http.StatusInternalServerError, "storage_check_store_failed", "无法保存存储检查结果")
+		return
+	}
+	_ = s.store.RecordAudit(ctx, "storage.check.completed", "device", s.localDeviceID, map[string]any{"points": len(points), "warnings": warnings})
+	writeJSON(w, http.StatusOK, map[string]any{"points": len(points), "warnings": warnings, "checkedAt": now})
 }
 
 func (s *Server) listBackups(w http.ResponseWriter, _ *http.Request) {

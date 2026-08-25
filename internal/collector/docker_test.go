@@ -52,6 +52,45 @@ func TestDockerSmartDeviceWhitelist(t *testing.T) {
 	}
 }
 
+func TestBtrfsDeviceWhitelist(t *testing.T) {
+	for _, device := range []string{"/dev/sdb1", "/dev/nvme0n1p1", "/dev/mapper/nvme0n1p1"} {
+		if !safeBtrfsDevice.MatchString(device) {
+			t.Fatalf("valid Btrfs device rejected: %s", device)
+		}
+	}
+	for _, device := range []string{"/dev/sdb", "/dev/nvme0n1", "/dev/mapper/data/child", "/dev/mapper/data;reboot", "../../dev/sdb1"} {
+		if safeBtrfsDevice.MatchString(device) {
+			t.Fatalf("unsafe Btrfs device accepted: %s", device)
+		}
+	}
+}
+
+func TestParseBtrfsHelperDoesNotReportPresentDeviceAsMissing(t *testing.T) {
+	now := time.Now()
+	raw := `Overall:
+    Device size: 2048390070272
+    Device allocated: 1852229812224
+    Device unallocated: 196160258048
+    Device missing: 0
+    Used: 1628847173632
+    Free (estimated): 387067351040
+[/dev/mapper/nvme0n1p1].write_io_errs 0
+[/dev/mapper/nvme0n1p1].read_io_errs 0
+Scrub status for fb3c3a32
+    Error summary: no errors found
+`
+	points := parseBtrfsHelper(raw, "/lzcsys/data", now)
+	for _, point := range points {
+		if point.Name == "btrfs.device_missing" {
+			if point.Value != 0 || point.Unit != "bytes" {
+				t.Fatalf("missing device metric=%+v", point)
+			}
+			return
+		}
+	}
+	t.Fatal("missing btrfs.device_missing metric")
+}
+
 func TestSummarizeUnusedImagesExcludesAllContainerReferences(t *testing.T) {
 	images := []dockerImage{
 		{ID: "sha256:used-running", RepoTags: []string{"running:1"}, Size: 10},
