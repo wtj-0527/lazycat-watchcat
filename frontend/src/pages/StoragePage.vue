@@ -232,7 +232,7 @@ async function runStorageCheck() {
 
 <template>
   <PageState :loading="loading" :error="error" :empty="data?.items.length === 0" empty-title="尚无存储数据" empty-text="等待物理磁盘、文件系统与 SMART 指标。" @retry="refresh">
-    <div class="page-intro"><div><h2>存储与 Btrfs</h2><p>从物理磁盘进入卷、容量趋势和 Btrfs 健康状态。</p></div><div class="intro-actions"><span class="muted">更新 {{ ago(data?.updatedAt) }}</span><button class="secondary-button" :disabled="checking" @click="runStorageCheck">{{ checking ? '检查中…' : '立即只读检查' }}</button></div></div>
+    <div class="page-intro"><div><h2>存储与 Btrfs</h2></div><div class="intro-actions"><span class="muted">更新 {{ ago(data?.updatedAt) }}</span><button class="secondary-button" :disabled="checking" @click="runStorageCheck">{{ checking ? '检查中…' : '立即只读检查' }}</button></div></div>
     <p v-if="checkMessage" class="operation-evidence" role="status">{{ checkMessage }}</p>
     <div class="stats four">
       <StatCard label="物理磁盘" :value="physicalDisks.length" hint="不包含 dm 加密映射设备" />
@@ -242,7 +242,7 @@ async function runStorageCheck() {
     </div>
 
     <section class="card storage-resource-card">
-      <div class="section-title storage-expanded-title"><div><h2>存储资源</h2><span class="muted">全部物理磁盘、下属卷和历史图表已展开显示</span></div><div class="range-tabs"><button v-for="option in [{ h: 24, l: '24小时' }, { h: 168, l: '7天' }, { h: 336, l: '14天' }, { h: 720, l: '30天' }]" :key="option.h" :class="{ active: historyMode === 'preset' && historyHours === option.h }" @click="setPreset(option.h)">{{ option.l }}</button><button :class="{ active: historyMode === 'custom' }" @click="showCustomRange">自定义</button></div></div>
+      <div class="section-title storage-expanded-title"><div><h2>存储资源</h2></div><div class="range-tabs"><button v-for="option in [{ h: 24, l: '24小时' }, { h: 168, l: '7天' }, { h: 336, l: '14天' }, { h: 720, l: '30天' }]" :key="option.h" :class="{ active: historyMode === 'preset' && historyHours === option.h }" @click="setPreset(option.h)">{{ option.l }}</button><button :class="{ active: historyMode === 'custom' }" @click="showCustomRange">自定义</button></div></div>
       <div v-if="historyMode === 'custom'" class="storage-custom-range"><label>开始<input v-model="customFrom" type="datetime-local" /></label><label>结束<input v-model="customTo" type="datetime-local" /></label><button class="secondary-button" @click="applyCustomRange">应用</button></div>
       <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
       <div v-if="historyLoading" class="inline-empty">正在读取全部磁盘与卷的历史数据…</div>
@@ -272,11 +272,11 @@ async function runStorageCheck() {
       </div>
     </section>
 
-    <section class="card btrfs-health-card"><div class="section-title"><div><h2>Btrfs 健康中心</h2><span class="muted">整体空间、已分配空间、设备错误和 Scrub 分开判断</span></div><StatusPill :status="capabilityStatus('btrfs')?.status || 'unknown'" /></div>
+    <section class="card btrfs-health-card"><div class="section-title"><div><h2>Btrfs 健康中心</h2></div><StatusPill :status="capabilityStatus('btrfs')?.status || 'unknown'" /></div>
       <div class="btrfs-grid"><article v-for="volume in btrfsVolumes" :key="volume.mount" class="btrfs-volume"><div><b>{{ volumeName(volume.mount) }}</b><StatusPill :status="volume.status" /></div><small class="muted">{{ volume.mount }}</small><dl><span><dt>整体使用率</dt><dd>{{ volume.usage.value.toFixed(1) }}%</dd></span><span><dt>预计可用</dt><dd>{{ bytes(volume.free) }}</dd></span><span><dt>已分配</dt><dd>{{ bytes(volume.allocated) }}</dd></span><span><dt>未分配</dt><dd>{{ bytes(volume.unallocated) }}</dd></span><span><dt>设备错误</dt><dd>{{ volume.errors }}</dd></span><span><dt>缺失设备空间</dt><dd>{{ volume.missing ? bytes(volume.missing) : '0 B' }}</dd></span></dl><p :class="volume.scrubKnown ? 'muted' : 'operation-evidence warning'">{{ volume.scrubKnown ? '已有 Scrub 状态记录' : '尚无 Scrub 历史，不能判定最近校验时间' }}</p></article><div v-if="!btrfsVolumes.length" class="inline-empty">Btrfs 只读采集尚未返回；点击“立即只读检查”。</div></div>
     </section>
 
-    <section class="card storage-risk-card"><div class="section-title"><div><h2>需要处理的存储风险</h2><span class="muted">只列出达到规则阈值的证据</span></div></div><div v-if="riskItems.length" class="table-scroll"><table class="fleet-table"><thead><tr><th>设备</th><th>资源</th><th>风险</th><th>当前值</th><th>采集时间</th><th>建议</th></tr></thead><tbody><tr v-for="item in riskItems" :key="`${item.deviceId}-${item.name}-${metricLabel(item)}`"><td>{{ item.deviceName || '未知设备' }}</td><td>{{ metricLabel(item) }}<small><code>{{ item.name }}</code></small></td><td><StatusPill :status="riskStatus(item) || 'unknown'" /></td><td><b>{{ formatMetricValue(item.value, item.unit) }}</b></td><td>{{ ago(item.collectedAt) }}</td><td>{{ storageRiskAdvice(item) }}</td></tr></tbody></table></div><div v-else class="healthy-empty horizontal"><span>✓</span><div><b>当前没有达到阈值的存储风险</b></div></div></section>
+    <section class="card storage-risk-card"><div class="section-title"><div><h2>需要处理的存储风险</h2></div></div><div v-if="riskItems.length" class="table-scroll"><table class="fleet-table"><thead><tr><th>设备</th><th>资源</th><th>风险</th><th>当前值</th><th>采集时间</th><th>建议</th></tr></thead><tbody><tr v-for="item in riskItems" :key="`${item.deviceId}-${item.name}-${metricLabel(item)}`"><td>{{ item.deviceName || '未知设备' }}</td><td>{{ metricLabel(item) }}<small><code>{{ item.name }}</code></small></td><td><StatusPill :status="riskStatus(item) || 'unknown'" /></td><td><b>{{ formatMetricValue(item.value, item.unit) }}</b></td><td>{{ ago(item.collectedAt) }}</td><td>{{ storageRiskAdvice(item) }}</td></tr></tbody></table></div><div v-else class="healthy-empty horizontal"><span>✓</span><div><b>当前没有达到阈值的存储风险</b></div></div></section>
 
     <section class="card capability-card"><div class="section-title"><div><h2>存储采集能力</h2></div></div><div class="capability-grid"><div v-for="name in ['filesystem','btrfs','smart','nvme']" :key="name"><span>{{ name.toUpperCase() }}</span><StatusPill :status="capabilityStatus(name)?.status || 'unknown'" /><small>{{ capabilityStatus(name)?.detail || '当前 API 未返回此能力状态' }}</small></div></div></section>
   </PageState>

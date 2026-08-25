@@ -187,10 +187,6 @@ function applyCustomRange() {
   showCustomRange.value = false
   loadCurrentView()
 }
-const historyRangeLabel = computed(() => {
-  if (historyMode.value !== 'custom' || !appliedCustomFrom.value || !appliedCustomTo.value) return `最近 ${historyHours.value} 小时`
-  return `${new Date(appliedCustomFrom.value).toLocaleString('zh-CN')} 至 ${new Date(appliedCustomTo.value).toLocaleString('zh-CN')}`
-})
 function chartPoints(items: HistoryPoint[] | undefined, scale = 1) {
   return (items || []).map((item) => ({
     value: item.value / scale,
@@ -211,6 +207,9 @@ const blockSeries = computed<ChartSeries[]>(() => [
 const comparisonScale = computed(() => sortMetric.value === 'memory' ? 1024 * 1024 : sortMetric.value === 'network' || sortMetric.value === 'disk' ? 1024 : 1)
 const comparisonUnit = computed(() => ({ cpu: '%', memory: ' MiB', network: ' KiB/s', disk: ' KiB/s' } as const)[sortMetric.value])
 const comparisonLabel = computed(() => ({ cpu: 'CPU 平均使用率', memory: '内存平均使用量', network: '网络流量总和', disk: '磁盘 IO 总和' } as const)[sortMetric.value])
+const customHistoryRangeLabel = computed(() => historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
+  ? `${new Date(appliedCustomFrom.value).toLocaleString('zh-CN')} 至 ${new Date(appliedCustomTo.value).toLocaleString('zh-CN')}`
+  : '')
 const comparisonItems = computed(() => {
   const names = new Map((data.value?.items || []).map((item) => [item.id, item.title || item.id]))
   const visible = new Set(filtered.value.map((item) => item.id))
@@ -250,9 +249,7 @@ function comparisonValue(item: ComparisonItem) {
     </div>
 
     <section class="card application-time-controls">
-      <div>
-        <b>统计时间</b><span class="muted">{{ historyRangeLabel }}</span>
-      </div>
+      <div><b>统计时间</b><span v-if="customHistoryRangeLabel" class="muted">{{ customHistoryRangeLabel }}</span></div>
       <div class="history-range" aria-label="历史时间范围">
         <button v-for="item in [1, 6, 24]" :key="item" :class="{ active: historyMode === 'preset' && historyHours === item }" @click="selectPreset(item)">{{ item }} 小时</button>
         <button :class="{ active: historyMode === 'custom' }" @click="showCustomRange = !showCustomRange">自定义</button>
@@ -294,9 +291,7 @@ function comparisonValue(item: ComparisonItem) {
         </section>
 
         <section class="card app-history-card">
-          <div class="section-title">
-            <div><h2>资源历史</h2><span class="muted">{{ historyRangeLabel }} · CPU、内存、网络吞吐和磁盘 IO</span></div>
-          </div>
+          <div class="section-title"><div><h2>资源历史</h2></div></div>
           <div v-if="historyLoading" class="history-loading">正在读取历史指标…</div>
           <div v-else-if="historyError" class="inline-empty">历史指标加载失败：{{ historyError }} <button class="row-link" @click="loadHistory">重试</button></div>
           <div v-else class="app-history-grid">
@@ -308,7 +303,7 @@ function comparisonValue(item: ComparisonItem) {
         </section>
 
         <section class="card">
-          <div class="section-title compact"><div><h2>运行实例</h2><span class="muted">当前 Package Manager 状态</span></div></div>
+          <div class="section-title compact"><div><h2>运行实例</h2></div></div>
           <div class="table-scroll">
             <table class="fleet-table app-instance-table">
               <thead><tr><th>设备</th><th>状态</th><th>版本</th><th>部署 ID</th><th>更新时间</th></tr></thead>

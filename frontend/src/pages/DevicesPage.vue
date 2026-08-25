@@ -290,9 +290,7 @@ const capabilityCount = computed(() => selected.value
       <button class="secondary-button save-view-button" @click="saveView">保存当前视图</button>
     </div>
     <section class="card">
-      <div class="section-title">
-        <div><h2>设备清单</h2><span class="muted">已显示 {{ filteredDevices.length }} / {{ data?.devices.length ?? 0 }} 台设备 · 按严重度排序</span></div>
-      </div>
+      <div class="section-title"><div><h2>设备清单</h2></div></div>
       <DeviceTable v-if="filteredDevices.length" :items="filteredDevices" clickable @select="showDevice" />
       <div v-else class="inline-empty">没有符合当前筛选条件的设备。</div>
     </section>

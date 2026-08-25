@@ -14,7 +14,7 @@ const emit = defineEmits<{ toast: [message: string] }>()
 const query = ref(sessionStorage.getItem('maoyanSearch') || '')
 const filter = ref('active')
 const severityFilter = ref('all')
-const timeFilter = ref('24')
+const timeFilter = ref('168')
 const actionEvidence = ref<{ status: 'success' | 'warning' | 'error'; message: string }>()
 const actionLoading = ref('')
 const selectedFingerprint = ref('')
@@ -106,7 +106,7 @@ async function bulkAcknowledge() {
 
 <template>
   <PageState :loading="loading" :error="error" @retry="refresh">
-    <div class="page-intro"><div><h2>告警处置</h2><p>按生命周期组织工作，不把“已确认”误认为“已恢复”。</p></div></div>
+    <div class="page-intro"><div><h2>告警处置</h2></div></div>
     <div class="alert-filter-tabs">
       <button :class="{ active: filter === 'active' }" @click="filter = 'active'">触发中 <b>{{ counts.critical + counts.warning }}</b></button>
       <button :class="{ active: filter === 'acknowledged' }" @click="filter = 'acknowledged'">已确认 <b>{{ counts.acknowledged }}</b></button>
@@ -117,17 +117,17 @@ async function bulkAcknowledge() {
       <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索规则、设备或证据"></label>
       <select v-model="severityFilter"><option value="all">全部严重度</option><option value="critical">严重</option><option value="warning">警告</option></select>
       <span class="filter-note" title="当前为单用户模式">负责人：设备管理员</span>
-      <select v-model="timeFilter"><option value="24">最近 24 小时</option><option value="168">最近 7 天</option><option value="720">最近 30 天</option><option value="all">全部时间</option></select>
+      <select v-model="timeFilter"><option value="168">最近 7 天</option><option value="720">最近 30 天</option><option value="all">全部时间</option></select>
       <button class="secondary-button" :disabled="!filtered.length" @click="bulkAcknowledge">批量确认</button>
     </div>
     <p v-if="actionEvidence" class="operation-evidence" :class="actionEvidence.status" role="status">{{ actionEvidence.message }}</p>
     <div class="chart-panel-grid">
       <section class="card">
-        <div class="section-title"><div><h2>告警生命周期构成</h2><span class="muted">触发、确认、静默与恢复分别统计</span></div></div>
+        <div class="section-title"><div><h2>告警生命周期构成</h2></div></div>
         <DonutChart :items="lifecycleDistribution" center-label="告警" />
       </section>
       <section class="card">
-        <div class="section-title"><div><h2>最近事件分布</h2><span class="muted">按最后一次观测时间聚合</span></div></div>
+        <div class="section-title"><div><h2>最近事件分布</h2></div></div>
         <BarChart :items="severityByTime" />
       </section>
     </div>
@@ -142,7 +142,7 @@ async function bulkAcknowledge() {
         <div v-else class="healthy-empty"><span>✓</span><b>当前筛选下没有告警</b><small>Empty 不等同于未采集能力已健康。</small></div>
       </section>
       <section v-if="selectedAlert" class="card alert-detail-panel">
-        <div class="section-title"><div><h2>{{ selectedAlert.message }}</h2><span class="muted">规则：{{ selectedAlert.resource }} · 设备 {{ selectedAlert.deviceName }}</span></div><StatusPill :status="selectedAlert.status === 'firing' ? selectedAlert.severity : selectedAlert.status" /></div>
+        <div class="section-title"><div><h2>{{ selectedAlert.message }}</h2></div><StatusPill :status="selectedAlert.status === 'firing' ? selectedAlert.severity : selectedAlert.status" /></div>
         <div class="evidence-box"><span>最新证据</span><strong>{{ selectedAlert.resource }} = {{ selectedAlert.unit ? formatMetricValue(selectedAlert.value, selectedAlert.unit) : '状态异常' }}</strong><small>采集于 {{ ago(selectedAlert.lastSeenAt || selectedAlert.observedAt || selectedAlert.collectedAt) }} · 来源：内置采集器</small></div>
         <div class="lifecycle"><b>生命周期</b><div><span class="done">触发中</span><span :class="{ done: selectedAlert.status === 'acknowledged' }">已确认</span><span>已恢复</span></div></div>
         <label class="owner-field"><span>负责人</span><input value="设备管理员" readonly></label>

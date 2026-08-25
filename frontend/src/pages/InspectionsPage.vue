@@ -83,7 +83,7 @@ function exportReport(format: 'json' | 'pdf') {
 <template>
   <PageState :loading="loading" :error="error" @retry="refresh">
     <div class="page-intro">
-      <div><h2>巡检报告</h2><p>Fleet 全量巡检 · 固定快照与原始证据。</p></div>
+      <div><h2>巡检报告</h2></div>
       <button class="primary-button" :disabled="running" @click="start">{{ running ? '巡检中…' : '立即巡检' }}</button>
     </div>
 
@@ -106,18 +106,18 @@ function exportReport(format: 'json' | 'pdf') {
 
       <div class="chart-panel-grid">
         <section class="card">
-          <div class="section-title"><div><h2>巡检结果趋势</h2><span class="muted">最近 14 次正式巡检</span></div></div>
+          <div class="section-title"><div><h2>巡检结果趋势</h2></div></div>
           <LineChart :series="inspectionTrend" :min="0" :height="230" />
         </section>
         <section class="card">
-          <div class="section-title"><div><h2>本次健康构成</h2><span class="muted">基于不可变巡检报告</span></div></div>
+          <div class="section-title"><div><h2>本次健康构成</h2></div></div>
           <DonutChart :items="latestDistribution" center-label="设备" />
         </section>
       </div>
 
       <div class="inspection-layout">
         <section class="card inspection-results">
-          <div class="section-title"><div><h2>分类检查结果</h2><span class="muted">来自已保存报告，不使用模拟检查项</span></div></div>
+          <div class="section-title"><div><h2>分类检查结果</h2></div></div>
           <div class="check-row check-row-head"><div><b>检查项</b></div><strong>结果</strong><span>状态</span></div>
           <div class="check-row"><div><b>设备连接</b><span>在线设备与设备总数</span></div><strong>{{ reportChecks.online ?? '暂无证据' }} / {{ reportChecks.devices ?? latest.deviceCount }}</strong><StatusPill :status="connectivityCheckState" /></div>
           <div class="check-row"><div><b>健康规则</b><span>Collector 阈值判断</span></div><strong>{{ reportChecks.healthy ?? latest.healthyCount }} 通过</strong><StatusPill :status="inspectionState(latest)" /></div>
@@ -126,7 +126,7 @@ function exportReport(format: 'json' | 'pdf') {
           <div class="check-row"><div><b>通知投递</b><span>持久通知队列回执</span></div><strong>{{ notificationChecks ? `${notificationChecks.sent} 已送达 / ${notificationChecks.pending} 待发送 / ${notificationChecks.failed} 失败` : '旧版报告无此证据' }}</strong><StatusPill :status="notificationChecks ? (notificationChecks.failed ? 'critical' : notificationChecks.pending ? 'warning' : 'healthy') : 'unknown'" /></div>
         </section>
         <aside class="card evidence-panel">
-          <div class="section-title compact"><div><h2>证据摘要</h2><span class="muted">Immutable report evidence</span></div></div>
+          <div class="section-title compact"><div><h2>证据摘要</h2></div></div>
           <dl class="definition-list">
             <div><dt>Schema</dt><dd>{{ latest.report?.schemaVersion ? `v${latest.report.schemaVersion}` : '旧版' }}</dd></div>
             <div><dt>Source</dt><dd>{{ latest.report?.source || '旧版报告' }}</dd></div>
@@ -141,7 +141,7 @@ function exportReport(format: 'json' | 'pdf') {
     </template>
 
     <section class="card report-history">
-      <div class="section-title"><div><h2>巡检历史</h2><span class="muted">每日 03:00、每周日 04:00 自动运行；失败最多重试 3 次</span></div></div>
+      <div class="section-title"><div><h2>巡检历史</h2></div></div>
       <div v-if="data?.items.length" class="table-scroll">
         <table class="fleet-table"><thead><tr><th>报告</th><th>时间 / 类型</th><th>设备</th><th>健康</th><th>Warning</th><th>Critical</th><th>证据</th></tr></thead>
           <tbody><tr v-for="item in data.items" :key="item.id" class="device-row" @click="selectReport(item)">

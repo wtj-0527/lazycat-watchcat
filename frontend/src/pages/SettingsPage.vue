@@ -293,10 +293,7 @@ async function deleteUnusedImage(image: UnusedImage) {
 <template>
   <PageState :loading="loading" :error="error" @retry="refresh">
     <div class="page-intro">
-      <div>
-        <h2>{{ isOnboardingRoute ? '接入新设备' : '设置与治理' }}</h2>
-        <p>{{ isOnboardingRoute ? '一次完成配对、连通性验证、能力探测和权限修复。' : '所有变更均记录操作、时间与服务端回读结果。' }}</p>
-      </div>
+      <div><h2>{{ isOnboardingRoute ? '接入新设备' : '设置与治理' }}</h2></div>
     </div>
     <div v-if="isOnboardingRoute" class="onboarding-progress" aria-label="接入步骤">
       <div class="done"><b>1</b><span>选择方式</span></div>
@@ -362,7 +359,7 @@ async function deleteUnusedImage(image: UnusedImage) {
     </section>
 
     <section v-else-if="data && tab === 'capabilities'" class="card">
-      <div class="section-title"><div><h2>Collector 能力</h2><span class="muted">每项状态来自最近一次真实能力检查</span></div></div>
+      <div class="section-title"><div><h2>Collector 能力</h2></div></div>
       <div class="capability-list"><div v-for="item in localCapability" :key="`${item.capability}-${item.checkedAt}`"><div><b>{{ item.capability }}</b><p>{{ item.detail }}</p><small>检查于 {{ ago(item.checkedAt) }}</small></div><StatusPill :status="item.status || 'unknown'" /></div></div>
     </section>
 
@@ -374,7 +371,7 @@ async function deleteUnusedImage(image: UnusedImage) {
     </section>
 
     <section v-else-if="data && tab === 'notifications'" class="card">
-      <div class="section-title"><div><h2>通知渠道</h2><span class="muted">告警新发、升级、恢复与巡检结果</span></div><button class="secondary-button" @click="sendTestNotification">发送测试通知</button></div>
+      <div class="section-title"><div><h2>通知渠道</h2></div><button class="secondary-button" @click="sendTestNotification">发送测试通知</button></div>
       <div class="settings-grid"><div><span>当前渠道</span><b>{{ data.settings.notificationChannel === 'lazycat' ? 'LazyCat 系统通知' : data.settings.notificationChannel }}</b><StatusPill status="available" /></div><div><span>投递策略</span><b>{{ data.settings.notificationDelivery === 'outbox-retry' ? '持久队列重试' : data.settings.notificationDelivery }}</b><StatusPill status="available" /></div><div><span>待发送</span><b>{{ data.stability.pendingNotifications }}</b><StatusPill :status="data.stability.pendingNotifications ? 'warning' : 'healthy'" /></div></div>
     </section>
 
@@ -392,14 +389,14 @@ async function deleteUnusedImage(image: UnusedImage) {
       </div>
       <div class="operations-layout">
         <section class="card">
-          <div class="section-title"><div><h2>数据库保护</h2><span class="muted">在线备份、完整性检查和恢复</span></div><button class="primary-button" :disabled="backupLoading" @click="createBackup">{{ backupLoading ? '备份中…' : '立即备份' }}</button></div>
+          <div class="section-title"><div><h2>数据库保护</h2></div><button class="primary-button" :disabled="backupLoading" @click="createBackup">{{ backupLoading ? '备份中…' : '立即备份' }}</button></div>
           <div class="database-status"><StatusPill :status="data.database.integrityOk ? 'healthy' : 'critical'" /><b>{{ data.database.integrityOk ? 'SQLite 完整性检查通过' : data.database.integrityError }}</b><span>{{ bytes(data.database.databaseSize) }}</span></div>
           <p v-if="backupEvidence" class="operation-evidence" :class="backupEvidence.status" role="status">{{ backupEvidence.message }}</p>
           <p v-if="restoreEvidence" class="operation-evidence" :class="restoreEvidence.status" role="status">{{ restoreEvidence.message }}</p>
           <div class="backup-list"><div v-for="backup in data.backups" :key="backup.name" class="backup-row"><div><b>{{ backupType(backup.type) }} · v{{ backup.appVersion }}</b><p>{{ dateTime(backup.createdAt) }} · {{ bytes(backup.size) }}</p><code>SHA-256 {{ backup.sha256.slice(0, 16) }}…</code></div><div><StatusPill :status="backup.verified ? 'healthy' : 'critical'" /><button class="tiny secondary-button" :disabled="!backup.verified" @click="restoreBackup(backup.name)">恢复</button><button class="tiny danger-button" @click="deleteBackup(backup.name)">删除</button></div></div><div v-if="!data.backups.length" class="inline-empty">尚无备份。版本升级时会自动创建升级前备份。</div></div>
         </section>
         <aside class="card">
-          <div class="section-title compact"><div><h2>7 天稳定性观测</h2><span class="muted">长期生产验证</span></div></div>
+          <div class="section-title compact"><div><h2>7 天稳定性观测</h2></div></div>
           <dl class="definition-list"><div><dt>开始时间</dt><dd>{{ dateTime(data.stability.startedAt) }}</dd></div><div><dt>目标完成</dt><dd>{{ dateTime(data.stability.targetEndAt) }}</dd></div><div><dt>采样 / 失败</dt><dd>{{ data.stability.sampleCount }} / {{ data.stability.failureCount }}</dd></div><div><dt>数据库延迟</dt><dd>{{ data.stability.databaseLatencyMs }} ms</dd></div><div><dt>指标新鲜度</dt><dd>{{ data.stability.metricFreshnessSeconds == null ? '暂无数据' : `${data.stability.metricFreshnessSeconds} 秒` }}</dd></div></dl>
           <p :class="data.stability.qualified ? 'green' : 'amber'">{{ data.stability.qualified ? '已满足连续 7 天无失败资格' : `观测进行中，剩余约 ${duration(data.stability.remainingSeconds)}` }}</p><p v-if="stabilityEvidence" class="operation-evidence" :class="stabilityEvidence.status" role="status">{{ stabilityEvidence.message }}</p><button class="secondary-button" :disabled="stabilityLoading" @click="resetStability">{{ stabilityLoading ? '重置中…' : '重新开始 7 天观测' }}</button>
         </aside>
@@ -449,7 +446,7 @@ async function deleteUnusedImage(image: UnusedImage) {
     </template>
 
     <section v-else-if="data && tab === 'audit'" class="card">
-      <div class="section-title"><div><h2>用户与审计</h2><span class="muted">Single-user production boundary</span></div></div>
+      <div class="section-title"><div><h2>用户与审计</h2></div></div>
       <div class="settings-grid"><div><span>用户模式</span><b>单用户</b><StatusPill status="available" /></div><div><span>审计保留</span><b>{{ data.settings.auditRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>巡检保留</span><b>{{ data.settings.inspectionRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>审计记录</span><b>{{ data.audit.length }} 条</b><StatusPill status="available" /></div></div>
       <div class="table-scroll"><table class="fleet-table"><thead><tr><th>时间</th><th>操作</th><th>对象</th><th>详情</th></tr></thead><tbody><tr v-for="item in data.audit" :key="item.id"><td>{{ dateTime(item.createdAt) }}</td><td><code>{{ item.action }}</code></td><td>{{ item.subjectType }} · {{ item.subjectId }}</td><td><code>{{ JSON.stringify(item.metadata) }}</code></td></tr></tbody></table></div>
     </section>
