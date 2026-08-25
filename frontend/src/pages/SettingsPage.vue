@@ -115,6 +115,22 @@ async function copyPairingCode() {
   await navigator.clipboard.writeText(pairing.value.code)
   emit('toast', '配对码已复制')
 }
+function buildPairingLink() {
+  if (!pairing.value) throw new Error('pairing code required')
+  const hub = new URL(collectorHubURL.value.trim())
+  if (hub.protocol !== 'http:' && hub.protocol !== 'https:') throw new Error('invalid protocol')
+  hub.hash = new URLSearchParams({ 'pairing-code': pairing.value.code }).toString()
+  return hub.toString()
+}
+async function copyPairingLink() {
+  try {
+    await navigator.clipboard.writeText(buildPairingLink())
+    localStorage.setItem('maoyanCollectorHubURL', collectorHubURL.value.trim())
+    emit('toast', '完整配对链接已复制，可直接粘贴到另一台设备')
+  } catch {
+    emit('toast', '请先生成配对码并填写有效的猫眼接入地址')
+  }
+}
 function openCollectorSetup() {
   if (!pairing.value) {
     emit('toast', '请先生成一次性配对码')
@@ -127,7 +143,7 @@ function openCollectorSetup() {
     if (hub.protocol !== 'http:' && hub.protocol !== 'https:') throw new Error('invalid protocol')
     localStorage.setItem('maoyanCollectorSetupURL', target.toString())
     localStorage.setItem('maoyanCollectorHubURL', hub.toString())
-    target.hash = new URLSearchParams({ hub: hub.toString(), code: pairing.value.code }).toString()
+    target.hash = new URLSearchParams({ invite: buildPairingLink() }).toString()
     window.open(target.toString(), '_blank', 'noopener,noreferrer')
   } catch {
     emit('toast', '请输入有效的 Collector 配置页和猫眼接入地址')
@@ -356,7 +372,10 @@ async function deleteUnusedImage(image: UnusedImage) {
           </ol>
           <div v-if="pairing" class="pairing-code-box">
             <span>一次性配对码</span><strong>{{ pairing.code }}</strong><small>有效期至 {{ dateTime(pairing.expiresAt) }}</small>
-            <button class="secondary-button tiny" @click="copyPairingCode">复制配对码</button>
+            <div class="button-row">
+              <button class="secondary-button tiny" @click="copyPairingCode">仅复制配对码</button>
+              <button class="primary-button tiny" @click="copyPairingLink">复制完整配对链接</button>
+            </div>
           </div>
           <div class="collector-setup-launcher">
             <div>
@@ -372,7 +391,7 @@ async function deleteUnusedImage(image: UnusedImage) {
               <input v-model="collectorHubURL" type="url" placeholder="http://192.168.124.27:18080">
             </label>
             <button class="primary-button" :disabled="!pairing" @click="openCollectorSetup">打开并预填配对信息</button>
-            <small>配对信息放在 URL 的 <code>#</code> 片段中，不会发送到服务器访问日志。Collector 自动读取主机名，并将指标入口推导为同一 nasw 地址的 18443 端口。</small>
+            <small>“复制完整配对链接”会把地址与配对码合并为一行；配对码放在 URL 的 <code>#</code> 片段中，不会发送到服务器访问日志。</small>
           </div>
         </section>
         <aside class="card deployment-card">
