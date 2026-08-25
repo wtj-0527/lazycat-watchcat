@@ -83,7 +83,7 @@ describe('StoragePage', () => {
     wrapper.unmount()
   })
 
-  it('combines physical disks, volumes, and history into one selectable resource view', async () => {
+  it('expands physical disks, volumes, and their history panels together', async () => {
     const collectedAt = new Date().toISOString()
     apiMock.mockImplementation((path: string) => {
       if (path === '/api/v1/storage') return Promise.resolve({
@@ -103,13 +103,13 @@ describe('StoragePage', () => {
     const wrapper = mount(StoragePage)
     await flushPromises()
 
-    expect(wrapper.get('.storage-resource-card').text()).toContain('sdb · 备份盘')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('备份盘')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('sdb · WDC WD40EZAX')
     expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷')
     expect(wrapper.text()).not.toContain('最高使用率卷 · 14 天趋势')
-
-    await wrapper.get('.storage-disk-select').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('.storage-resource-detail').text()).toContain('I/O 趋势 · sdb')
+    expect(wrapper.findAll('.storage-history-panel')).toHaveLength(2)
+    expect(wrapper.get('.storage-resource-card').text()).toContain('磁盘 I/O 趋势')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · 使用趋势')
     wrapper.unmount()
   })
 })

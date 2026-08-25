@@ -14,14 +14,14 @@ interface VolumeResource { usage: Metric; mount: string; size: number; free: num
 
 const checking = ref(false)
 const checkMessage = ref('')
-const selectedResourceKey = ref('')
 const historyHours = ref(336)
 const historyMode = ref<'preset' | 'custom'>('preset')
 const customFrom = ref('')
 const customTo = ref('')
 const appliedCustomFrom = ref('')
 const appliedCustomTo = ref('')
-const historySeries = ref<ChartSeries[]>([])
+const diskHistory = ref<Record<string, ChartSeries[]>>({})
+const volumeHistory = ref<Record<string, ChartSeries[]>>({})
 const historyLoading = ref(false)
 const historyError = ref('')
 let historyRequest = 0
@@ -110,6 +110,7 @@ const physicalDisks = computed(() => {
     return { device, base, model: identity?.labels?.model || base.labels?.model, serial: identity?.labels?.serial || base.labels?.serial, temperature, hours, risks, volumes: diskVolumes, purpose: diskPurpose(device, diskVolumes), status }
   }).sort((a, b) => Number(b.status === 'critical') - Number(a.status === 'critical') || Number(b.status === 'warning') - Number(a.status === 'warning') || b.base.value - a.base.value)
 })
+const orphanVolumes = computed(() => volumes.value.filter((volume) => !physicalDisks.value.some((disk) => disk.device === volume.physicalDevice)))
 
 const btrfsVolumes = computed(() => volumes.value.filter((item) => item.filesystem === 'Btrfs').map((volume) => {
   const atMount = (name: string) => latestMetric(itemList.value.filter((item) => item.name === name && item.labels?.mount === volume.mount))
@@ -129,23 +130,7 @@ const riskItems = computed(() => {
   return [...latest.values()].sort((a, b) => Number(riskStatus(a) === 'warning') - Number(riskStatus(b) === 'warning') || b.value - a.value)
 })
 const capabilityStatus = (name: string) => data.value?.capabilities.find((item) => item.capability.includes(name))
-const selectedVolume = computed(() => selectedResourceKey.value.startsWith('volume:') ? volumes.value.find((volume) => `volume:${volume.mount}` === selectedResourceKey.value) : undefined)
-const selectedDisk = computed(() => {
-  if (selectedResourceKey.value.startsWith('disk:')) return physicalDisks.value.find((disk) => `disk:${disk.device}` === selectedResourceKey.value)
-  return physicalDisks.value.find((disk) => disk.device === selectedVolume.value?.physicalDevice)
-})
-const historyTitle = computed(() => selectedVolume.value ? `使用趋势 · ${volumeName(selectedVolume.value.mount)}` : selectedDisk.value ? `I/O 趋势 · ${selectedDisk.value.device}` : '历史趋势')
-const historyUnit = computed(() => selectedVolume.value ? '%' : ' MiB/s')
-
-watch([physicalDisks, volumes], () => {
-  const valid = physicalDisks.value.some((disk) => `disk:${disk.device}` === selectedResourceKey.value)
-    || volumes.value.some((volume) => `volume:${volume.mount}` === selectedResourceKey.value)
-  if (!valid) {
-    const preferred = volumes.value[0]
-    selectedResourceKey.value = preferred ? `volume:${preferred.mount}` : physicalDisks.value[0] ? `disk:${physicalDisks.value[0].device}` : ''
-  }
-}, { immediate: true })
-watch([selectedResourceKey, historyHours], () => { if (historyMode.value === 'preset') loadHistory() })
+watch(() => data.value?.updatedAt, () => { if (data.value?.updatedAt) loadAllHistory() })
 
 function historyRange() {
   return historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
@@ -164,37 +149,56 @@ function counterRates(items: Metric[], device: string) {
     return { ...chartPoint(item), value: Math.max(0, item.value - previous.value) / seconds / 1024 / 1024 }
   })
 }
-async function loadHistory() {
-  const volume = selectedVolume.value
-  const disk = selectedDisk.value
-  const deviceId = volume?.usage.deviceId || disk?.base.deviceId
-  if (!deviceId || (!volume && !disk)) { historySeries.value = []; return }
+async function loadAllHistory() {
+  const groups = new Map<string, { disks: typeof physicalDisks.value; volumes: VolumeResource[] }>()
+  for (const disk of physicalDisks.value) {
+    const deviceId = disk.base.deviceId
+    if (!deviceId) continue
+    const group = groups.get(deviceId) || { disks: [], volumes: [] }
+    group.disks.push(disk)
+    groups.set(deviceId, group)
+  }
+  for (const volume of volumes.value) {
+    const deviceId = volume.usage.deviceId
+    if (!deviceId) continue
+    const group = groups.get(deviceId) || { disks: [], volumes: [] }
+    group.volumes.push(volume)
+    groups.set(deviceId, group)
+  }
+  if (!groups.size) { diskHistory.value = {}; volumeHistory.value = {}; return }
   const request = ++historyRequest
   historyLoading.value = true
   historyError.value = ''
   try {
-    if (volume) {
-      const result = await api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=${encodeURIComponent(volume.usage.name)}&${historyRange()}`)
-      if (request === historyRequest) historySeries.value = [{ name: volumeName(volume.mount), color: '#2563eb', points: (result.items || []).filter((item) => item.labels?.mount === volume.mount).map(chartPoint) }]
-    } else if (disk) {
-      const [read, write] = await Promise.all([
-        api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.read.bytes_total&${historyRange()}`),
-        api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.write.bytes_total&${historyRange()}`),
+    const nextDisks: Record<string, ChartSeries[]> = {}
+    const nextVolumes: Record<string, ChartSeries[]> = {}
+    await Promise.all([...groups.entries()].map(async ([deviceId, group]) => {
+      const volumeNames = [...new Set(group.volumes.map((volume) => volume.usage.name))]
+      const emptyHistory = Promise.resolve<{ items: Metric[] }>({ items: [] })
+      const [read, write, ...volumeResults] = await Promise.all([
+        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.read.bytes_total&${historyRange()}`) : emptyHistory,
+        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.write.bytes_total&${historyRange()}`) : emptyHistory,
+        ...volumeNames.map((name) => api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=${encodeURIComponent(name)}&${historyRange()}`)),
       ])
-      if (request === historyRequest) historySeries.value = [
-        { name: '读取', color: '#2563eb', points: counterRates(read.items || [], disk.device) },
-        { name: '写入', color: '#10b981', points: counterRates(write.items || [], disk.device) },
-      ]
-    }
+      for (const disk of group.disks) {
+        nextDisks[disk.device] = [
+          { name: '读取', color: '#2563eb', points: counterRates(read.items || [], disk.device) },
+          { name: '写入', color: '#10b981', points: counterRates(write.items || [], disk.device) },
+        ]
+      }
+      const byName = new Map(volumeNames.map((name, index) => [name, volumeResults[index]?.items || []]))
+      for (const volume of group.volumes) {
+        nextVolumes[volume.mount] = [{ name: volumeName(volume.mount), color: '#2563eb', points: (byName.get(volume.usage.name) || []).filter((item) => item.labels?.mount === volume.mount).map(chartPoint) }]
+      }
+    }))
+    if (request === historyRequest) { diskHistory.value = nextDisks; volumeHistory.value = nextVolumes }
   } catch (reason) {
-    if (request === historyRequest) { historySeries.value = []; historyError.value = reason instanceof Error ? reason.message : String(reason) }
+    if (request === historyRequest) { diskHistory.value = {}; volumeHistory.value = {}; historyError.value = reason instanceof Error ? reason.message : String(reason) }
   } finally {
     if (request === historyRequest) historyLoading.value = false
   }
 }
-function selectDisk(device: string) { selectedResourceKey.value = `disk:${device}` }
-function selectVolume(mount: string) { selectedResourceKey.value = `volume:${mount}` }
-function setPreset(hours: number) { historyMode.value = 'preset'; historyHours.value = hours; loadHistory() }
+function setPreset(hours: number) { historyMode.value = 'preset'; historyHours.value = hours; loadAllHistory() }
 function showCustomRange() {
   historyMode.value = 'custom'
   if (!customTo.value) {
@@ -213,14 +217,14 @@ function applyCustomRange() {
   const to = new Date(customTo.value)
   if (!customFrom.value || !customTo.value || !Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from >= to) { historyError.value = '请选择有效的开始和结束时间'; return }
   if (to.getTime() - from.getTime() > 30 * 24 * 3600 * 1000) { historyError.value = '单次查询范围不能超过 30 天'; return }
-  appliedCustomFrom.value = from.toISOString(); appliedCustomTo.value = to.toISOString(); historyError.value = ''; loadHistory()
+  appliedCustomFrom.value = from.toISOString(); appliedCustomTo.value = to.toISOString(); historyError.value = ''; loadAllHistory()
 }
 async function runStorageCheck() {
   checking.value = true; checkMessage.value = ''
   try {
     const result = await api<{ points: number; warnings: string[] }>('/api/v1/storage/check', { method: 'POST' })
     checkMessage.value = `只读检查完成：更新 ${result.points} 项指标${result.warnings?.length ? `，${result.warnings.length} 项受限` : ''}`
-    await refresh(); await loadHistory()
+    await refresh(); await loadAllHistory()
   } catch (reason) { checkMessage.value = reason instanceof Error ? reason.message : String(reason) }
   finally { checking.value = false }
 }
@@ -238,42 +242,33 @@ async function runStorageCheck() {
     </div>
 
     <section class="card storage-resource-card">
-      <div class="section-title"><div><h2>存储资源</h2><span class="muted">物理磁盘、下属卷和历史趋势在同一视图中联动</span></div></div>
-      <div class="storage-resource-layout">
-        <div class="storage-resource-list">
-          <article v-for="disk in physicalDisks" :key="disk.device" class="storage-disk-node" :class="{ active: selectedDisk?.device === disk.device }">
-            <button class="storage-disk-select" type="button" @click="selectDisk(disk.device)">
-              <span class="storage-device-icon">{{ disk.base.labels?.media === 'ssd' ? 'SSD' : 'HDD' }}</span>
-              <span><b>{{ disk.device }} · {{ disk.purpose }}</b><small>{{ disk.model || '型号待采集' }} · {{ bytes(disk.base.value) }}</small><small>{{ disk.serial || '序列号未知' }}</small></span>
-              <StatusPill :status="disk.status" />
-            </button>
-            <div v-if="disk.volumes.length" class="storage-volume-branches">
-              <button v-for="volume in disk.volumes" :key="volume.mount" type="button" :class="{ active: selectedResourceKey === `volume:${volume.mount}` }" @click="selectVolume(volume.mount)">
-                <span><b>{{ volumeName(volume.mount) }}</b><small>{{ volume.filesystem }} · {{ volume.mount }}</small></span>
-                <span class="volume-usage"><b>{{ volume.usage.value.toFixed(1) }}%</b><i><em :style="{ width: `${Math.min(100, volume.usage.value)}%` }" /></i></span>
-              </button>
-            </div>
-            <p v-else class="storage-no-volume">尚未发现已挂载存储卷</p>
-          </article>
-          <div v-if="!physicalDisks.length" class="inline-empty">尚未获得物理磁盘清单。</div>
-        </div>
-
-        <div class="storage-resource-detail">
-          <template v-if="selectedVolume">
-            <div class="storage-detail-heading"><div><small>{{ selectedDisk?.device || selectedVolume.usage.deviceName || '未知设备' }} · {{ selectedDisk?.purpose || selectedVolume.filesystem }}</small><h3>{{ volumeName(selectedVolume.mount) }}</h3><p>{{ selectedVolume.mount }}</p></div><StatusPill :status="selectedVolume.usage.value >= 90 ? 'warning' : 'healthy'" /></div>
-            <div class="storage-detail-stats"><span><small>总容量</small><b>{{ bytes(selectedVolume.size) }}</b></span><span><small>已使用</small><b>{{ bytes(Math.max(0, selectedVolume.size - selectedVolume.free)) }}</b></span><span><small>预计可用</small><b>{{ bytes(selectedVolume.free) }}</b></span><span><small>当前使用率</small><b>{{ selectedVolume.usage.value.toFixed(1) }}%</b></span></div>
-          </template>
-          <template v-else-if="selectedDisk">
-            <div class="storage-detail-heading"><div><small>{{ selectedDisk.purpose }}</small><h3>{{ selectedDisk.device }} · {{ selectedDisk.model }}</h3><p>{{ selectedDisk.serial }}</p></div><StatusPill :status="selectedDisk.status" /></div>
-            <div class="storage-detail-stats"><span><small>容量</small><b>{{ bytes(selectedDisk.base.value) }}</b></span><span><small>介质 / 接口</small><b>{{ (selectedDisk.base.labels?.media || '未知').toUpperCase() }} / {{ (selectedDisk.base.labels?.transport || '未知').toUpperCase() }}</b></span><span><small>温度</small><b>{{ selectedDisk.temperature ? formatMetricValue(selectedDisk.temperature.value, selectedDisk.temperature.unit, 0) : '未知' }}</b></span><span><small>通电时间</small><b>{{ selectedDisk.hours ? formatMetricValue(selectedDisk.hours.value, selectedDisk.hours.unit, 0) : '未知' }}</b></span></div>
-          </template>
-
-          <div class="storage-history-heading"><div><h3>{{ historyTitle }}</h3><span class="muted">{{ selectedVolume ? '文件系统整体使用率' : '根据磁盘累计读写量计算平均速率' }}</span></div><div class="range-tabs"><button v-for="option in [{ h: 24, l: '24小时' }, { h: 168, l: '7天' }, { h: 336, l: '14天' }, { h: 720, l: '30天' }]" :key="option.h" :class="{ active: historyMode === 'preset' && historyHours === option.h }" @click="setPreset(option.h)">{{ option.l }}</button><button :class="{ active: historyMode === 'custom' }" @click="showCustomRange">自定义</button></div></div>
-          <div v-if="historyMode === 'custom'" class="storage-custom-range"><label>开始<input v-model="customFrom" type="datetime-local" /></label><label>结束<input v-model="customTo" type="datetime-local" /></label><button class="secondary-button" @click="applyCustomRange">应用</button></div>
-          <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
-          <div v-if="historyLoading" class="inline-empty">正在读取历史数据…</div>
-          <LineChart v-else :series="historySeries" :min="0" :max="selectedVolume ? 100 : undefined" :unit="historyUnit" :height="250" />
-        </div>
+      <div class="section-title storage-expanded-title"><div><h2>存储资源</h2><span class="muted">全部物理磁盘、下属卷和历史图表已展开显示</span></div><div class="range-tabs"><button v-for="option in [{ h: 24, l: '24小时' }, { h: 168, l: '7天' }, { h: 336, l: '14天' }, { h: 720, l: '30天' }]" :key="option.h" :class="{ active: historyMode === 'preset' && historyHours === option.h }" @click="setPreset(option.h)">{{ option.l }}</button><button :class="{ active: historyMode === 'custom' }" @click="showCustomRange">自定义</button></div></div>
+      <div v-if="historyMode === 'custom'" class="storage-custom-range"><label>开始<input v-model="customFrom" type="datetime-local" /></label><label>结束<input v-model="customTo" type="datetime-local" /></label><button class="secondary-button" @click="applyCustomRange">应用</button></div>
+      <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
+      <div v-if="historyLoading" class="inline-empty">正在读取全部磁盘与卷的历史数据…</div>
+      <div class="storage-expanded-list">
+        <article v-for="disk in physicalDisks" :key="disk.device" class="storage-expanded-disk">
+          <div class="storage-expanded-disk-heading">
+            <div class="storage-expanded-identity"><span class="storage-device-icon">{{ disk.base.labels?.media === 'ssd' ? 'SSD' : 'HDD' }}</span><div><small>{{ disk.purpose }}</small><h3>{{ disk.device }} · {{ disk.model || '型号待采集' }}</h3><p>{{ disk.serial || '序列号未知' }}</p></div></div>
+            <StatusPill :status="disk.status" />
+          </div>
+          <div class="storage-detail-stats"><span><small>容量</small><b>{{ bytes(disk.base.value) }}</b></span><span><small>介质 / 接口</small><b>{{ (disk.base.labels?.media || '未知').toUpperCase() }} / {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</b></span><span><small>温度</small><b>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</b></span><span><small>通电时间</small><b>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</b></span></div>
+          <div class="storage-expanded-charts" :class="{ single: !disk.volumes.length }">
+            <section class="storage-history-panel"><div><h4>磁盘 I/O 趋势</h4><span class="muted">读取 / 写入平均速率</span></div><LineChart :series="diskHistory[disk.device] || []" :min="0" unit=" MiB/s" :height="190" /></section>
+            <section v-for="volume in disk.volumes" :key="volume.mount" class="storage-history-panel volume-panel">
+              <div class="storage-volume-heading"><div><h4>{{ volumeName(volume.mount) }} · 使用趋势</h4><span class="muted">{{ volume.mount }}</span></div><StatusPill :status="volume.usage.value >= 90 ? 'warning' : 'healthy'" /></div>
+              <div class="storage-volume-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
+              <LineChart :series="volumeHistory[volume.mount] || []" :min="0" :max="100" unit="%" :height="190" />
+            </section>
+          </div>
+          <p v-if="!disk.volumes.length" class="storage-unmounted-note">该磁盘当前没有已挂载卷，仍展示物理磁盘 I/O 历史。</p>
+        </article>
+        <article v-for="volume in orphanVolumes" :key="`orphan-${volume.mount}`" class="storage-expanded-disk orphan-volume-card">
+          <div class="storage-expanded-disk-heading"><div class="storage-expanded-identity"><span class="storage-device-icon">VOL</span><div><small>{{ volume.usage.deviceName || '未知设备' }} · 尚未关联物理磁盘</small><h3>{{ volumeName(volume.mount) }}</h3><p>{{ volume.mount }}</p></div></div><StatusPill :status="volume.usage.value >= 90 ? 'warning' : 'healthy'" /></div>
+          <div class="storage-volume-summary orphan-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
+          <section class="storage-history-panel volume-panel"><div><h4>存储卷使用趋势</h4><span class="muted">等待底层设备身份后将自动归入对应物理磁盘</span></div><LineChart :series="volumeHistory[volume.mount] || []" :min="0" :max="100" unit="%" :height="190" /></section>
+        </article>
+        <div v-if="!physicalDisks.length && !orphanVolumes.length" class="inline-empty">尚未获得物理磁盘清单。</div>
       </div>
     </section>
 
