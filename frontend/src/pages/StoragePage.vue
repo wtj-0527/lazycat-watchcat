@@ -33,10 +33,12 @@ const physicalDisks = computed(() => {
     if (device && !unique.has(device)) unique.set(device, item)
   }
   return [...unique.entries()].map(([device, base]) => {
+    const identity = itemList.value.find((item) => String(item.labels?.device || '').replace('/dev/', '') === device && item.labels?.serial)
+      || itemList.value.find((item) => String(item.labels?.device || '').replace('/dev/', '') === device && item.labels?.model)
     const temperature = metricFor(device, 'disk.temperature') || metricFor(`/dev/${device}`, 'disk.temperature')
     const hours = metricFor(device, 'disk.power_on_hours') || metricFor(`/dev/${device}`, 'disk.power_on_hours')
     const risks = itemList.value.filter((item) => String(item.labels?.device || '').replace('/dev/', '') === device && riskStatus(item))
-    return { device, base, temperature, hours, risks, status: risks.some((x) => riskStatus(x) === 'critical') ? 'critical' : risks.length ? 'warning' : 'healthy' }
+    return { device, base, model: identity?.labels?.model || base.labels?.model, serial: identity?.labels?.serial || base.labels?.serial, temperature, hours, risks, status: risks.some((x) => riskStatus(x) === 'critical') ? 'critical' : risks.length ? 'warning' : 'healthy' }
   }).sort((a, b) => b.base.value - a.base.value)
 })
 const volumes = computed(() => {
@@ -57,7 +59,15 @@ const btrfsVolumes = computed(() => volumes.value.filter((item) => item.filesyst
   return { ...volume, allocated: atMount('btrfs.allocated')?.value || 0, unallocated: atMount('btrfs.unallocated')?.value || 0, errors, missing, scrubKnown, status: errors || missing ? 'critical' : volume.usage.value >= 90 ? 'warning' : 'healthy' }
 }))
 const riskStatus = (item: Metric) => item.risk || storageRiskStatus(item)
-const riskItems = computed(() => itemList.value.filter((item) => riskStatus(item)).sort((a, b) => Number(riskStatus(a) === 'warning') - Number(riskStatus(b) === 'warning') || b.value - a.value))
+const riskItems = computed(() => {
+  const latest = new Map<string, Metric>()
+  for (const item of itemList.value.filter((metric) => riskStatus(metric))) {
+    const key = [item.deviceId, item.name, item.labels?.device || '', item.labels?.mount || ''].join('|')
+    const current = latest.get(key)
+    if (!current || new Date(item.collectedAt).getTime() > new Date(current.collectedAt).getTime()) latest.set(key, item)
+  }
+  return [...latest.values()].sort((a, b) => Number(riskStatus(a) === 'warning') - Number(riskStatus(b) === 'warning') || b.value - a.value)
+})
 const critical = computed(() => riskItems.value.filter((item) => riskStatus(item) === 'critical').length)
 const capabilityStatus = (name: string) => data.value?.capabilities.find((item) => item.capability.includes(name))
 const capacityTrend = computed<ChartSeries[]>(() => {
@@ -87,7 +97,7 @@ async function runStorageCheck() {
     <section class="card storage-inventory-card">
       <div class="section-title"><div><h2>物理磁盘</h2><span class="muted">型号、介质、容量、温度与 SMART 风险</span></div></div>
       <div class="table-scroll"><table class="fleet-table"><thead><tr><th>设备</th><th>型号</th><th>介质/接口</th><th>容量</th><th>温度</th><th>通电</th><th>状态</th></tr></thead><tbody>
-        <tr v-for="disk in physicalDisks" :key="disk.device"><td class="device"><b>{{ disk.device }}</b><small>{{ disk.base.labels?.serial || '序列号未知' }}</small></td><td>{{ disk.base.labels?.model || '型号待采集' }}</td><td>{{ (disk.base.labels?.media || '未知').toUpperCase() }} · {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</td><td><b>{{ disk.base.name === 'disk.capacity' ? bytes(disk.base.value) : '待采集' }}</b></td><td>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</td><td>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</td><td><StatusPill :status="disk.status" /></td></tr>
+        <tr v-for="disk in physicalDisks" :key="disk.device"><td class="device"><b>{{ disk.device }}</b><small>{{ disk.serial || '序列号未知' }}</small></td><td>{{ disk.model || '型号待采集' }}</td><td>{{ (disk.base.labels?.media || '未知').toUpperCase() }} · {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</td><td><b>{{ disk.base.name === 'disk.capacity' ? bytes(disk.base.value) : '待采集' }}</b></td><td>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</td><td>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</td><td><StatusPill :status="disk.status" /></td></tr>
       </tbody></table></div>
     </section>
 

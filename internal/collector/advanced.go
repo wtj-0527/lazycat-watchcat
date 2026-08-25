@@ -112,7 +112,9 @@ func readNetwork(now time.Time) ([]protocol.MetricPoint, error) {
 }
 
 type smartJSON struct {
-	Temperature struct {
+	ModelName    string `json:"model_name"`
+	SerialNumber string `json:"serial_number"`
+	Temperature  struct {
 		Current float64 `json:"current"`
 	} `json:"temperature"`
 	PowerOnTime struct {
@@ -141,6 +143,12 @@ func parseSmart(raw []byte, device string, now time.Time) ([]protocol.MetricPoin
 		return nil, err
 	}
 	labels := map[string]string{"device": filepath.Base(device)}
+	if model := strings.TrimSpace(s.ModelName); model != "" {
+		labels["model"] = model
+	}
+	if serial := strings.TrimSpace(s.SerialNumber); serial != "" {
+		labels["serial"] = serial
+	}
 	var p []protocol.MetricPoint
 	add := func(name string, value float64, unit string) {
 		p = append(p, protocol.MetricPoint{Name: name, Value: value, Unit: unit, Labels: labels, CollectedAt: now})

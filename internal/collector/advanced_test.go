@@ -35,13 +35,16 @@ func TestParseSmartNVMe(t *testing.T) {
 	}
 }
 func TestParseSmartATAOmitsNVMeMetrics(t *testing.T) {
-	raw := []byte(`{"temperature":{"current":41},"power_on_time":{"hours":3200},"ata_smart_attributes":{"table":[{"name":"Reallocated_Sector_Ct","raw":{"value":0}}]}}`)
+	raw := []byte(`{"model_name":"WDC WD40EZAX-22C8UB0","serial_number":"WD-WX32D55JENEU","temperature":{"current":41},"power_on_time":{"hours":3200},"ata_smart_attributes":{"table":[{"name":"Reallocated_Sector_Ct","raw":{"value":0}}]}}`)
 	points, err := parseSmart(raw, "/dev/sda", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	seenATA := false
 	for _, point := range points {
+		if point.Labels["model"] != "WDC WD40EZAX-22C8UB0" || point.Labels["serial"] != "WD-WX32D55JENEU" {
+			t.Fatalf("identity labels=%v", point.Labels)
+		}
 		if strings.HasPrefix(point.Name, "disk.nvme.") {
 			t.Fatalf("ATA payload produced NVMe metric %q", point.Name)
 		}

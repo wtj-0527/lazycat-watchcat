@@ -675,14 +675,22 @@ func (d *DockerCollector) CollectStorageInventory(ctx context.Context, now time.
  [ -e "$p/partition" ] && continue
  sectors=$(cat "$p/size" 2>/dev/null || echo 0)
  rota=$(cat "$p/queue/rotational" 2>/dev/null || echo 0)
- model=$(cat "$p/device/model" 2>/dev/null | tr '\t\n' '  ')
- serial=$(cat "$p/device/serial" 2>/dev/null | tr '\t\n' '  ')
- link=$(readlink -f "$p")
- transport=sata; case "$n:$link" in nvme*:*) transport=nvme;; *:*usb*) transport=usb;; esac
- printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$sectors" "$rota" "$transport" "$model" "$serial"
+	model=$(cat "$p/device/model" 2>/dev/null | tr '\t\n' '  ')
+	serial=$(cat "$p/device/serial" 2>/dev/null | tr '\t\n' '  ')
+	devnum=$(cat "$p/dev" 2>/dev/null)
+	udev=/host-udev/b$devnum
+	if [ -r "$udev" ]; then
+	  udev_model=$(sed -n 's/^E:ID_MODEL=//p' "$udev" | head -n 1)
+	  udev_serial=$(sed -n 's/^E:ID_SERIAL_SHORT=//p' "$udev" | head -n 1)
+	  [ -n "$udev_model" ] && model=$(printf '%s' "$udev_model" | tr '_' ' ')
+	  [ -n "$udev_serial" ] && serial=$udev_serial
+	fi
+	link=$(readlink -f "$p")
+	transport=sata; case "$n:$link" in nvme*:*) transport=nvme;; *:*usb*) transport=usb;; esac
+	printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$sectors" "$rota" "$transport" "$model" "$serial"
 done`
 	cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", script})
-	cfg.HostConfig.Binds = []string{"/sys:/host-sys:ro"}
+	cfg.HostConfig.Binds = []string{"/sys:/host-sys:ro", "/run/udev/data:/host-udev:ro"}
 	raw, code, err := d.runHelper(ctx, cfg)
 	if err != nil || code != 0 {
 		return nil, []string{fmt.Sprintf("docker storage inventory exited %d: %v", code, err)}
