@@ -142,6 +142,13 @@ func (s *Store) AllApplicationMetricHistory(ctx context.Context, name string, si
 	return s.applicationMetricHistoryForDevices(ctx, deviceIDs, "", name, since, until, limit)
 }
 
+func (s *Store) ApplicationMetricHistoryForDevice(ctx context.Context, deviceID, appID, name string, since, until time.Time, limit int) ([]ApplicationMetricSample, error) {
+	if limit <= 0 || limit > 100000 {
+		limit = 100000
+	}
+	return s.applicationMetricHistoryForDevices(ctx, []string{deviceID}, appID, name, since, until, limit)
+}
+
 func (s *Store) applicationDeviceIDs(ctx context.Context, appID string) ([]string, error) {
 	query := `SELECT DISTINCT device_id FROM application_runtime_state`
 	var args []any

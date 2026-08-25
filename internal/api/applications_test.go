@@ -11,6 +11,7 @@ import (
 
 	"gitee.com/linakesi/lzc-sdk/lang/go/sys"
 	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
+	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/runtimeapps"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 	"google.golang.org/grpc"
@@ -159,5 +160,105 @@ func TestApplicationsUsePackageManagerAndPersistSnapshot(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("runtime capability not available: %+v", capabilities)
+	}
+}
+
+func TestApplicationViewsExposeAndCompareRuntimeInstances(t *testing.T) {
+	root := t.TempDir()
+	st, err := store.Open(filepath.Join(root, "instances.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	deviceOne, err := st.EnsureLocalDevice(ctx, "设备一", "instance-one", "linux/amd64", "1.0.0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceTwo, err := st.EnsureLocalDevice(ctx, "设备二", "instance-two", "linux/amd64", "1.0.0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, deviceID := range []string{deviceOne, deviceTwo} {
+		if err := st.ReplaceRuntimeApplications(ctx, deviceID, []store.RuntimeApplication{{
+			DeviceID: deviceID, DeployID: "deploy-" + string(rune('1'+index)), AppID: "app.multi",
+			Title: "多实例应用", Version: "1.0.0", InstallStatus: "installed", InstanceStatus: "running",
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.IngestMetrics(ctx, protocol.MetricBatch{DeviceID: deviceID, Points: []protocol.MetricPoint{
+			{Name: "container.running", Value: 1, Labels: map[string]string{"app": "app.multi", "container": "main"}, CollectedAt: time.Now().UTC().Add(-5 * time.Minute)},
+			{Name: "container.cpu.usage", Value: float64((index + 1) * 10), Unit: "%", Labels: map[string]string{"app": "app.multi", "container": "main"}, CollectedAt: time.Now().UTC().Add(-5 * time.Minute)},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := New(st, nil, "../../web", time.Minute)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/applications", nil)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("applications status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var applications struct {
+		Items []struct {
+			ID        string `json:"id"`
+			Resources struct {
+				CPUPercent float64 `json:"cpuPercent"`
+			} `json:"resources"`
+			Devices []struct {
+				DeviceID  string `json:"deviceId"`
+				Resources struct {
+					CPUPercent float64 `json:"cpuPercent"`
+				} `json:"resources"`
+			} `json:"devices"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&applications); err != nil {
+		t.Fatal(err)
+	}
+	if len(applications.Items) != 1 || len(applications.Items[0].Devices) != 2 || applications.Items[0].Resources.CPUPercent != 30 {
+		t.Fatalf("applications=%+v", applications)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/applications/app.multi/metrics?hours=1&deviceId="+deviceTwo, nil)
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("history status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var history struct {
+		DeviceID string `json:"deviceId"`
+		Series   struct {
+			CPU []applicationHistoryPoint `json:"cpuPercent"`
+		} `json:"series"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&history); err != nil {
+		t.Fatal(err)
+	}
+	if history.DeviceID != deviceTwo || len(history.Series.CPU) != 1 || history.Series.CPU[0].Value != 20 {
+		t.Fatalf("history=%+v", history)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/applications/metrics/compare?metric=cpu&scope=instance&hours=1", nil)
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("compare status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var comparison struct {
+		Scope string `json:"scope"`
+		Items []struct {
+			AppID    string  `json:"appId"`
+			DeviceID string  `json:"deviceId"`
+			Value    float64 `json:"value"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&comparison); err != nil {
+		t.Fatal(err)
+	}
+	if comparison.Scope != "instance" || len(comparison.Items) != 2 || comparison.Items[0].DeviceID == comparison.Items[1].DeviceID {
+		t.Fatalf("comparison=%+v", comparison)
 	}
 }

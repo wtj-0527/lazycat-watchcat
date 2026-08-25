@@ -159,6 +159,7 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 					DeviceID: s.localDeviceID, DeployID: item.DeployID, AppID: item.AppID,
 					Title: item.Title, Version: item.Version, InstallStatus: item.InstallStatus,
 					InstanceStatus: item.InstanceStatus, Domain: item.Domain, Builtin: item.Builtin,
+					UserID: item.UserID, UserName: item.UserName,
 				})
 			}
 			if err := s.store.ReplaceRuntimeApplications(r.Context(), s.localDeviceID, stored); err != nil {
@@ -202,19 +203,20 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		Resources    applicationResourceView `json:"resources"`
 	}
 	apps := map[string]*app{}
-	resources := map[string]applicationResourceView{}
-	if s.localDeviceID != "" {
-		if metrics, metricErr := s.store.LatestMetricsForDevice(r.Context(), s.localDeviceID); metricErr == nil {
-			resources = aggregateApplicationResources(metrics, time.Now().UTC())
-		}
+	instanceResources := map[string]applicationResourceView{}
+	if metrics, metricErr := s.store.ListLatestMetrics(r.Context()); metricErr == nil {
+		instanceResources = aggregateApplicationResourcesByDevice(metrics, time.Now().UTC())
 	}
 	var updatedAt time.Time
+	users := map[string]string{}
 	for _, state := range states {
 		a := apps[state.AppID]
 		if a == nil {
-			a = &app{ID: state.AppID, Title: state.Title, Versions: map[string]int{}, StatusCounts: map[string]int{}, Resources: resources[state.AppID]}
+			a = &app{ID: state.AppID, Title: state.Title, Versions: map[string]int{}, StatusCounts: map[string]int{}}
 			apps[state.AppID] = a
 		}
+		instanceResource := instanceResources[state.DeviceID+"\x00"+state.AppID]
+		a.Resources = mergeApplicationResources(a.Resources, instanceResource)
 		a.Instances++
 		a.Versions[state.Version]++
 		a.StatusCounts[state.InstanceStatus]++
@@ -226,11 +228,20 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		case "error":
 			a.Unhealthy++
 		}
+		userID := strings.TrimSpace(state.UserID)
+		userName := strings.TrimSpace(state.UserName)
+		if userName == "" {
+			userName = userID
+		}
+		if userID != "" {
+			users[userID] = userName
+		}
 		a.Devices = append(a.Devices, map[string]any{
 			"deviceId": state.DeviceID, "deviceName": names[state.DeviceID], "deployId": state.DeployID,
 			"healthy": state.InstanceStatus == "running", "status": state.InstanceStatus,
 			"installStatus": state.InstallStatus, "version": state.Version, "domain": state.Domain,
-			"builtin": state.Builtin, "collectedAt": state.UpdatedAt,
+			"builtin": state.Builtin, "userId": userID, "userName": userName,
+			"collectedAt": state.UpdatedAt, "resources": instanceResource,
 		})
 		if state.UpdatedAt.After(updatedAt) {
 			updatedAt = state.UpdatedAt
@@ -241,7 +252,12 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	writeJSON(w, 200, map[string]any{"items": out, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
+	userList := make([]map[string]string, 0, len(users))
+	for id, name := range users {
+		userList = append(userList, map[string]string{"id": id, "name": name})
+	}
+	sort.Slice(userList, func(i, j int) bool { return userList[i]["name"] < userList[j]["name"] })
+	writeJSON(w, 200, map[string]any{"items": out, "users": userList, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
 }
 
 func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
@@ -277,8 +293,15 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 		{"container.block.write.bytes_total", "blockWriteRate", true},
 	}
 	series := make(map[string][]applicationHistoryPoint, len(metrics))
+	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
 	for _, metric := range metrics {
-		samples, err := s.store.ApplicationMetricHistory(ctx, appID, metric.name, from, to, 100000)
+		var samples []store.ApplicationMetricSample
+		var err error
+		if deviceID != "" {
+			samples, err = s.store.ApplicationMetricHistoryForDevice(ctx, deviceID, appID, metric.name, from, to, 100000)
+		} else {
+			samples, err = s.store.ApplicationMetricHistory(ctx, appID, metric.name, from, to, 100000)
+		}
 		if err != nil {
 			problem(w, http.StatusInternalServerError, "internal_error", "无法读取应用资源历史")
 			return
@@ -294,7 +317,7 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 	summary["networkTotalBytes"] = summary["networkReceiveRateBytes"] + summary["networkTransmitRateBytes"]
 	summary["blockTotalBytes"] = summary["blockReadRateBytes"] + summary["blockWriteRateBytes"]
 	writeJSON(w, http.StatusOK, map[string]any{
-		"appId": appID, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
+		"appId": appID, "deviceId": deviceID, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
 		"series": series, "summary": summary, "updatedAt": now,
 	})
 }
@@ -338,6 +361,14 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 		problem(w, http.StatusBadRequest, "invalid_metric", "metric 仅支持 cpu、memory、network 或 disk")
 		return
 	}
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "app"
+	}
+	if scope != "app" && scope != "instance" {
+		problem(w, http.StatusBadRequest, "invalid_scope", "scope 仅支持 app 或 instance")
+		return
+	}
 	from, to, code, message := applicationTimeRange(r)
 	if code != "" {
 		problem(w, http.StatusBadRequest, code, message)
@@ -350,20 +381,32 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 	defer done()
 	bucket := applicationHistoryBucket(int(to.Sub(from).Hours()))
 	type comparisonItem struct {
-		AppID  string                    `json:"appId"`
-		Value  float64                   `json:"value"`
-		Unit   string                    `json:"unit"`
-		Points []applicationHistoryPoint `json:"points"`
+		AppID    string                    `json:"appId"`
+		DeviceID string                    `json:"deviceId,omitempty"`
+		Value    float64                   `json:"value"`
+		Unit     string                    `json:"unit"`
+		Points   []applicationHistoryPoint `json:"points"`
 	}
 	items := map[string]*comparisonItem{}
+	itemIdentity := func(key string, samples []store.ApplicationMetricSample) (string, string) {
+		if len(samples) == 0 {
+			return "", ""
+		}
+		appID := samples[0].Labels["app"]
+		if scope == "instance" {
+			return appID, samples[0].DeviceID
+		}
+		return appID, ""
+	}
 	addGauge := func(name, unit string) error {
 		samples, err := s.store.AllApplicationMetricHistory(ctx, name, from, to, 300000)
 		if err != nil {
 			return err
 		}
-		for appID, appSamples := range groupApplicationSamples(samples) {
-			points := aggregateApplicationGauge(appSamples, bucket)
-			items[appID] = &comparisonItem{AppID: appID, Value: averageHistoryPoints(points), Unit: unit, Points: points}
+		for key, groupedSamples := range groupApplicationSamplesByScope(samples, scope) {
+			points := aggregateApplicationGauge(groupedSamples, bucket)
+			appID, deviceID := itemIdentity(key, groupedSamples)
+			items[key] = &comparisonItem{AppID: appID, DeviceID: deviceID, Value: averageHistoryPoints(points), Unit: unit, Points: points}
 		}
 		return nil
 	}
@@ -373,12 +416,13 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 			if err != nil {
 				return err
 			}
-			for appID, appSamples := range groupApplicationSamples(samples) {
-				points, total := aggregateApplicationCounterWithTotal(appSamples, bucket)
-				item := items[appID]
+			for key, groupedSamples := range groupApplicationSamplesByScope(samples, scope) {
+				points, total := aggregateApplicationCounterWithTotal(groupedSamples, bucket)
+				item := items[key]
 				if item == nil {
-					item = &comparisonItem{AppID: appID, Unit: "bytes"}
-					items[appID] = item
+					appID, deviceID := itemIdentity(key, groupedSamples)
+					item = &comparisonItem{AppID: appID, DeviceID: deviceID, Unit: "bytes"}
+					items[key] = item
 				}
 				item.Value += total
 				item.Points = mergeHistoryPoints(item.Points, points)
@@ -407,7 +451,7 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Value > out[j].Value })
 	writeJSON(w, http.StatusOK, map[string]any{
-		"metric": metric, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
+		"metric": metric, "scope": scope, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
 		"items": out, "updatedAt": time.Now().UTC(),
 	})
 }
@@ -432,11 +476,21 @@ func (s *Server) beginAnalytics(w http.ResponseWriter, r *http.Request) (context
 }
 
 func groupApplicationSamples(samples []store.ApplicationMetricSample) map[string][]store.ApplicationMetricSample {
+	return groupApplicationSamplesByScope(samples, "app")
+}
+
+func groupApplicationSamplesByScope(samples []store.ApplicationMetricSample, scope string) map[string][]store.ApplicationMetricSample {
 	out := map[string][]store.ApplicationMetricSample{}
 	for _, sample := range samples {
-		if appID := sample.Labels["app"]; appID != "" {
-			out[appID] = append(out[appID], sample)
+		appID := sample.Labels["app"]
+		if appID == "" {
+			continue
 		}
+		key := appID
+		if scope == "instance" {
+			key = sample.DeviceID + "\x00" + appID
+		}
+		out[key] = append(out[key], sample)
 	}
 	return out
 }
@@ -574,6 +628,16 @@ func applicationHistoryPoints[T any](buckets map[time.Time]T, value func(T) floa
 }
 
 func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) map[string]applicationResourceView {
+	byDevice := aggregateApplicationResourcesByDevice(metrics, now)
+	out := map[string]applicationResourceView{}
+	for key, item := range byDevice {
+		appID := key[strings.IndexByte(key, 0)+1:]
+		out[appID] = mergeApplicationResources(out[appID], item)
+	}
+	return out
+}
+
+func aggregateApplicationResourcesByDevice(metrics []store.LatestMetric, now time.Time) map[string]applicationResourceView {
 	out := map[string]applicationResourceView{}
 	containers := map[string]map[string]struct{}{}
 	for _, metric := range metrics {
@@ -584,14 +648,15 @@ func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) 
 		if appID == "" || !strings.HasPrefix(metric.Name, "container.") {
 			continue
 		}
-		item := out[appID]
+		key := metric.DeviceID + "\x00" + appID
+		item := out[key]
 		switch metric.Name {
 		case "container.running":
 			if metric.Value >= 1 {
-				if containers[appID] == nil {
-					containers[appID] = map[string]struct{}{}
+				if containers[key] == nil {
+					containers[key] = map[string]struct{}{}
 				}
-				containers[appID][metric.Labels["container"]] = struct{}{}
+				containers[key][metric.Labels["container"]] = struct{}{}
 			}
 		case "container.cpu.usage":
 			item.CPUPercent += metric.Value
@@ -611,14 +676,29 @@ func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) 
 		if metric.CollectedAt.After(item.UpdatedAt) {
 			item.UpdatedAt = metric.CollectedAt
 		}
-		out[appID] = item
+		out[key] = item
 	}
-	for appID, set := range containers {
-		item := out[appID]
+	for key, set := range containers {
+		item := out[key]
 		item.Containers = len(set)
-		out[appID] = item
+		out[key] = item
 	}
 	return out
+}
+
+func mergeApplicationResources(left, right applicationResourceView) applicationResourceView {
+	left.Containers += right.Containers
+	left.CPUPercent += right.CPUPercent
+	left.MemoryUsage += right.MemoryUsage
+	left.MemoryLimit += right.MemoryLimit
+	left.NetworkRX += right.NetworkRX
+	left.NetworkTX += right.NetworkTX
+	left.BlockRead += right.BlockRead
+	left.BlockWrite += right.BlockWrite
+	if right.UpdatedAt.After(left.UpdatedAt) {
+		left.UpdatedAt = right.UpdatedAt
+	}
+	return left
 }
 func (s *Server) storageView(w http.ResponseWriter, r *http.Request) {
 	devices, metrics, err := s.snapshot(r)

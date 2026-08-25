@@ -10,7 +10,8 @@ import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
-interface Payload { items: ApplicationItem[]; source: string; stale: boolean; updatedAt?: string }
+interface RuntimeUser { id: string; name: string }
+interface Payload { items: ApplicationItem[]; users: RuntimeUser[]; source: string; stale: boolean; updatedAt?: string }
 interface HistoryPoint { value: number; collectedAt: string }
 interface HistoryPayload {
   appId: string
@@ -36,9 +37,10 @@ interface HistoryPayload {
   }
 }
 type ComparisonMetric = 'cpu' | 'memory' | 'network' | 'disk'
-interface ComparisonItem { appId: string; value: number; unit: string; points: HistoryPoint[] }
+interface ComparisonItem { appId: string; deviceId?: string; value: number; unit: string; points: HistoryPoint[] }
 interface ComparisonPayload {
   metric: ComparisonMetric
+  scope: 'app' | 'instance'
   from: string
   to: string
   bucketSeconds: number
@@ -48,10 +50,13 @@ interface ComparisonPayload {
 
 const query = ref(sessionStorage.getItem('maoyanSearch') || '')
 const statusFilter = ref('all')
+const userFilter = ref('all')
+const instanceFilter = ref('all')
 const viewMode = ref<'detail' | 'compare'>('detail')
 const sortMetric = ref<'cpu' | 'memory' | 'network' | 'disk'>('cpu')
 const sortDescending = ref(true)
 const selectedAppId = ref('')
+const selectedInstanceKey = ref('all')
 const historyHours = ref(24)
 const historyMode = ref<'preset' | 'custom'>('preset')
 const showCustomRange = ref(false)
@@ -72,6 +77,13 @@ const { data, loading, error, refresh } = usePolling(() => api<Payload>('/api/v1
 const paused = computed(() => data.value?.items.reduce((sum, item) => sum + item.paused, 0) ?? 0)
 const errors = computed(() => data.value?.items.reduce((sum, item) => sum + item.unhealthy, 0) ?? 0)
 const appStatus = (item: ApplicationItem) => item.unhealthy > 0 ? 'critical' : item.paused > 0 ? 'warning' : item.healthy > 0 ? 'healthy' : 'unknown'
+const instanceKey = (deviceId: string, deployId: string) => `${deviceId}\u0000${deployId}`
+const allInstances = computed(() => (data.value?.items || []).flatMap((application) => application.devices.map((device) => ({ application, device, key: instanceKey(device.deviceId, device.deployId) }))))
+const availableUsers = computed(() => (data.value?.users || []).filter((user) => instanceFilter.value === 'all' || allInstances.value.some((item) => item.key === instanceFilter.value && item.device.userId === user.id)))
+const availableInstances = computed(() => allInstances.value.filter((item) => userFilter.value === 'all' || item.device.userId === userFilter.value))
+const visibleDevices = (item: ApplicationItem) => item.devices.filter((device) =>
+  (userFilter.value === 'all' || device.userId === userFilter.value)
+  && (instanceFilter.value === 'all' || instanceKey(device.deviceId, device.deployId) === instanceFilter.value))
 const filtered = computed(() => (data.value?.items || []).filter((item) => {
   const matchesQuery = `${item.title} ${item.id}`.toLowerCase().includes(query.value.trim().toLowerCase())
   const status = appStatus(item)
@@ -79,12 +91,16 @@ const filtered = computed(() => (data.value?.items || []).filter((item) => {
     || (statusFilter.value === 'healthy' && status === 'healthy')
     || (statusFilter.value === 'degraded' && status === 'warning')
     || (statusFilter.value === 'critical' && status === 'critical')
-  return matchesQuery && matchesStatus
+  const matchesScope = (userFilter.value === 'all' && instanceFilter.value === 'all') || visibleDevices(item).length > 0
+  return matchesQuery && matchesStatus && matchesScope
 }).sort((a, b) => {
   const delta = applicationSortValue(a) - applicationSortValue(b)
   return (sortDescending.value ? -delta : delta) || (a.title || a.id).localeCompare(b.title || b.id)
 }))
 const selectedApp = computed(() => data.value?.items.find((item) => item.id === selectedAppId.value))
+const selectedInstance = computed(() => selectedApp.value?.devices.find((item) => instanceKey(item.deviceId, item.deployId) === selectedInstanceKey.value))
+const activeResources = computed(() => selectedInstance.value?.resources || selectedApp.value?.resources)
+const visibleSelectedDevices = computed(() => selectedApp.value ? visibleDevices(selectedApp.value) : [])
 
 watch(() => data.value?.items, (items) => {
   if (!items?.length) return
@@ -93,7 +109,20 @@ watch(() => data.value?.items, (items) => {
     selectedAppId.value = preferred.id
   }
 }, { immediate: true })
-watch(selectedAppId, loadHistory)
+watch(userFilter, () => {
+  if (instanceFilter.value !== 'all' && !availableInstances.value.some((item) => item.key === instanceFilter.value)) instanceFilter.value = 'all'
+})
+watch(instanceFilter, () => {
+  if (userFilter.value !== 'all' && !availableUsers.value.some((item) => item.id === userFilter.value)) userFilter.value = 'all'
+})
+watch(filtered, (items) => {
+  if (items.length && !items.some((item) => item.id === selectedAppId.value)) selectedAppId.value = items[0].id
+})
+watch(selectedAppId, () => {
+  if (selectedInstanceKey.value === 'all') loadHistory()
+  else selectedInstanceKey.value = 'all'
+})
+watch(selectedInstanceKey, loadHistory)
 watch(historyHours, () => {
   if (historyMode.value === 'preset') loadCurrentView()
 })
@@ -106,7 +135,8 @@ async function loadHistory() {
     const range = historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
       ? `from=${encodeURIComponent(appliedCustomFrom.value)}&to=${encodeURIComponent(appliedCustomTo.value)}`
       : `hours=${historyHours.value}`
-    const result = await api<HistoryPayload>(`/api/v1/applications/${encodeURIComponent(selectedAppId.value)}/metrics?${range}`)
+    const device = selectedInstance.value?.deviceId ? `&deviceId=${encodeURIComponent(selectedInstance.value.deviceId)}` : ''
+    const result = await api<HistoryPayload>(`/api/v1/applications/${encodeURIComponent(selectedAppId.value)}/metrics?${range}${device}`)
     if (request === historyRequest) history.value = result
   } catch (reason) {
     if (request === historyRequest) {
@@ -127,7 +157,7 @@ async function loadComparison() {
       : `hours=${historyHours.value}`
     const next: Partial<Record<ComparisonMetric, ComparisonPayload>> = {}
     for (const metric of ['cpu', 'memory', 'network', 'disk'] as ComparisonMetric[]) {
-      next[metric] = await api<ComparisonPayload>(`/api/v1/applications/metrics/compare?metric=${metric}&${range}`)
+      next[metric] = await api<ComparisonPayload>(`/api/v1/applications/metrics/compare?metric=${metric}&scope=instance&${range}`)
       if (request === comparisonRequest) comparisons.value = { ...next }
     }
   } catch (reason) {
@@ -211,13 +241,15 @@ const customHistoryRangeLabel = computed(() => historyMode.value === 'custom' &&
 function comparisonItems(metric: ComparisonMetric) {
   const payload = comparisons.value[metric]
   if (!payload) return []
-  const values = new Map(payload.items.map((item) => [item.appId, item]))
+  const values = new Map(payload.items.map((item) => [`${item.deviceId || ''}\u0000${item.appId}`, item]))
   return filtered.value
-    .map((application) => ({
-      ...(values.get(application.id) || { appId: application.id, value: 0, unit: '', points: [] }),
-      title: application.title || application.id,
-    }))
-    .sort((a, b) => (sortDescending.value ? b.value - a.value : a.value - b.value))
+    .flatMap((application) => visibleDevices(application).map((device) => ({
+      ...(values.get(`${device.deviceId}\u0000${application.id}`) || { appId: application.id, deviceId: device.deviceId, value: 0, unit: '', points: [] }),
+      title: `${application.title || application.id} / ${device.deviceName || device.deviceId}`,
+      deployId: device.deployId,
+      deviceName: device.deviceName || device.deviceId,
+    })))
+    .sort((a, b) => (sortDescending.value ? b.value - a.value : a.value - b.value) || a.title.localeCompare(b.title))
 }
 const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: string; unit: string; color: string; loaded: boolean; items: BarItem[] }>>(() => {
   const definitions: Array<{ metric: ComparisonMetric; title: string; unit: string; color: string; scale: number }> = [
@@ -233,7 +265,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
       label: item.title,
       value: Number((item.value / definition.scale).toFixed(item.value / definition.scale >= 10 ? 1 : 2)),
       color: definition.color,
-      hint: `${item.appId} · ${item.points.length ? (definition.metric === 'cpu' ? `${formatNumber(item.value)}%` : bytes(item.value)) : '当前时间范围无历史数据'}`,
+      hint: `${item.appId} · ${item.deployId} · ${item.deviceName} · ${item.points.length ? (definition.metric === 'cpu' ? `${formatNumber(item.value)}%` : bytes(item.value)) : '当前时间范围无历史数据'}`,
     })),
   }))
 })
@@ -249,6 +281,8 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
       <div class="filter-bar app-filter-bar">
         <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称"></label>
         <select v-model="statusFilter" aria-label="应用状态"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
+        <select v-model="userFilter" aria-label="实例用户"><option value="all">全部用户</option><option v-for="user in availableUsers" :key="user.id" :value="user.id">{{ user.name || user.id }}</option></select>
+        <select v-model="instanceFilter" aria-label="用户实例"><option value="all">全部实例</option><option v-for="item in availableInstances" :key="item.key" :value="item.key">{{ item.application.title || item.application.id }} · {{ item.device.deviceName || item.device.deviceId }} · {{ item.device.deployId }}</option></select>
         <select v-model="sortMetric" aria-label="排序指标"><option value="cpu">按 CPU 排序</option><option value="memory">按内存排序</option><option value="network">按网络流量排序</option><option value="disk">按磁盘 IO 排序</option></select>
         <button class="secondary-button sort-direction" :aria-label="sortDescending ? '当前降序，点击切换升序' : '当前升序，点击切换降序'" @click="sortDescending = !sortDescending">{{ sortDescending ? '从高到低 ↓' : '从低到高 ↑' }}</button>
         <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
@@ -285,13 +319,22 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
 
       <main v-if="selectedApp" class="app-resource-detail">
         <section class="card app-resource-hero">
-          <div class="section-title">
+          <div class="section-title app-resource-heading">
             <div><h2>{{ selectedApp.title || selectedApp.id }}</h2><span class="muted">{{ selectedApp.id }} · {{ Object.keys(selectedApp.versions).join(' / ') || '版本未知' }}</span></div>
-            <StatusPill :status="appStatus(selectedApp)" />
+            <div class="app-instance-switcher">
+              <label for="application-instance">运行实例</label>
+              <select id="application-instance" v-model="selectedInstanceKey" aria-label="运行实例">
+                <option value="all">全部实例（{{ visibleSelectedDevices.length }}）</option>
+                <option v-for="instance in visibleSelectedDevices" :key="instanceKey(instance.deviceId, instance.deployId)" :value="instanceKey(instance.deviceId, instance.deployId)">
+                  {{ instance.deviceName || instance.deviceId }} · {{ instance.deployId }} · {{ instance.version || '版本未知' }}
+                </option>
+              </select>
+              <StatusPill :status="selectedInstance ? (selectedInstance.status === 'running' ? 'healthy' : selectedInstance.status === 'error' ? 'critical' : 'warning') : appStatus(selectedApp)" />
+            </div>
           </div>
           <div class="app-resource-kpis">
-            <div><span>当前 CPU</span><strong>{{ formatNumber(selectedApp.resources.cpuPercent) }}%</strong><small>{{ selectedApp.resources.containers }} 个容器</small></div>
-            <div><span>当前内存</span><strong>{{ bytes(selectedApp.resources.memoryUsage) }}</strong><small>{{ percent(selectedApp.resources.memoryUsage, selectedApp.resources.memoryLimit) }} 配额</small></div>
+            <div><span>当前 CPU</span><strong>{{ formatNumber(activeResources?.cpuPercent ?? 0) }}%</strong><small>{{ activeResources?.containers ?? 0 }} 个容器</small></div>
+            <div><span>当前内存</span><strong>{{ bytes(activeResources?.memoryUsage ?? 0) }}</strong><small>{{ percent(activeResources?.memoryUsage ?? 0, activeResources?.memoryLimit ?? 0) }} 配额</small></div>
             <div><span>区间流量总和</span><strong>{{ bytes(history?.summary?.networkTotalBytes ?? 0) }}</strong><small>接收 {{ bytes(history?.summary?.networkReceiveRateBytes ?? 0) }} · 发送 {{ bytes(history?.summary?.networkTransmitRateBytes ?? 0) }}</small></div>
             <div><span>区间磁盘 IO</span><strong>{{ bytes(history?.summary?.blockTotalBytes ?? 0) }}</strong><small>读取 {{ bytes(history?.summary?.blockReadRateBytes ?? 0) }} · 写入 {{ bytes(history?.summary?.blockWriteRateBytes ?? 0) }}</small></div>
           </div>
@@ -313,9 +356,9 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           <div class="section-title compact"><div><h2>运行实例</h2></div></div>
           <div class="table-scroll">
             <table class="fleet-table app-instance-table">
-              <thead><tr><th>设备</th><th>状态</th><th>版本</th><th>部署 ID</th><th>更新时间</th></tr></thead>
-              <tbody><tr v-for="instance in selectedApp.devices" :key="instance.deployId">
-                <td><b>{{ instance.deviceName || instance.deviceId }}</b></td><td><StatusPill :status="instance.status === 'running' ? 'healthy' : instance.status === 'error' ? 'critical' : 'warning'" /></td><td>{{ instance.version || '未知' }}</td><td><code>{{ instance.deployId }}</code></td><td>{{ ago(instance.collectedAt) }}</td>
+              <thead><tr><th>设备</th><th>用户</th><th>状态</th><th>版本</th><th>部署 ID</th><th>更新时间</th></tr></thead>
+              <tbody><tr v-for="instance in visibleSelectedDevices" :key="instanceKey(instance.deviceId, instance.deployId)" :class="{ selected: selectedInstanceKey === instanceKey(instance.deviceId, instance.deployId) }" tabindex="0" @click="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)" @keydown.enter="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)">
+                <td><button class="row-link" @click.stop="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)">{{ instance.deviceName || instance.deviceId }}</button></td><td>{{ instance.userName || instance.userId || '未知' }}</td><td><StatusPill :status="instance.status === 'running' ? 'healthy' : instance.status === 'error' ? 'critical' : 'warning'" /></td><td>{{ instance.version || '未知' }}</td><td><code>{{ instance.deployId }}</code></td><td>{{ ago(instance.collectedAt) }}</td>
               </tr></tbody>
             </table>
           </div>
@@ -330,7 +373,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
       <template v-else>
         <div class="all-app-metric-grid">
           <section v-for="group in comparisonGroups" :key="group.metric" class="all-app-metric-panel">
-            <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.items.length }} 个应用</span></div>
+            <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.items.length }} 个实例</span></div>
             <div v-if="!group.loaded" class="metric-panel-loading">正在计算…</div>
             <BarChart v-else :items="group.items" :unit="group.unit" />
           </section>

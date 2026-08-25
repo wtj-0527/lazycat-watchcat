@@ -8,12 +8,17 @@ import (
 	"time"
 
 	gohelper "gitee.com/linakesi/lzc-sdk/lang/go"
+	"gitee.com/linakesi/lzc-sdk/lang/go/common"
 	"gitee.com/linakesi/lzc-sdk/lang/go/sys"
 	"google.golang.org/grpc"
 )
 
 type packageManager interface {
 	QueryApplication(context.Context, *sys.QueryApplicationRequest, ...grpc.CallOption) (*sys.QueryApplicationResponse, error)
+}
+
+type userManager interface {
+	QueryUserInfo(context.Context, *common.UserID, ...grpc.CallOption) (*common.UserInfo, error)
 }
 
 type Application struct {
@@ -25,6 +30,8 @@ type Application struct {
 	InstanceStatus string
 	Domain         string
 	Builtin        bool
+	UserID         string
+	UserName       string
 }
 
 type cachedResult struct {
@@ -34,6 +41,7 @@ type cachedResult struct {
 
 type Source struct {
 	client packageManager
+	users  userManager
 	close  func() error
 	ttl    time.Duration
 	mu     sync.Mutex
@@ -47,6 +55,7 @@ func New(ctx context.Context) (*Source, error) {
 	}
 	return &Source{
 		client: gateway.PkgManager,
+		users:  gateway.Users,
 		close:  gateway.Close,
 		ttl:    30 * time.Second,
 		cache:  map[string]cachedResult{},
@@ -55,6 +64,10 @@ func New(ctx context.Context) (*Source, error) {
 
 func NewWithClient(client packageManager, ttl time.Duration) *Source {
 	return &Source{client: client, ttl: ttl, cache: map[string]cachedResult{}}
+}
+
+func NewWithClients(client packageManager, users userManager, ttl time.Duration) *Source {
+	return &Source{client: client, users: users, ttl: ttl, cache: map[string]cachedResult{}}
 }
 
 func (s *Source) Close() error {
@@ -93,6 +106,16 @@ func (s *Source) Query(ctx context.Context, uid string) ([]Application, error) {
 		if deployID == "" {
 			deployID = info.GetAppid()
 		}
+		owner := strings.TrimSpace(info.GetOwner())
+		if owner == "" {
+			owner = uid
+		}
+		userName := owner
+		if s.users != nil {
+			if user, userErr := s.users.QueryUserInfo(ctx, &common.UserID{Uid: owner}); userErr == nil && strings.TrimSpace(user.GetNickname()) != "" {
+				userName = strings.TrimSpace(user.GetNickname())
+			}
+		}
 		items = append(items, Application{
 			DeployID:       deployID,
 			AppID:          info.GetAppid(),
@@ -102,6 +125,8 @@ func (s *Source) Query(ctx context.Context, uid string) ([]Application, error) {
 			InstanceStatus: normalizeInstanceStatus(info.GetInstanceStatus()),
 			Domain:         info.GetDomain(),
 			Builtin:        info.GetBuiltin(),
+			UserID:         owner,
+			UserName:       userName,
 		})
 	}
 	s.mu.Lock()

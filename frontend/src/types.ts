@@ -117,6 +117,18 @@ export interface Capability {
   checkedAt: string
 }
 
+export interface ApplicationResources {
+  containers: number
+  cpuPercent: number
+  memoryUsage: number
+  memoryLimit: number
+  networkReceive: number
+  networkTransmit: number
+  blockRead: number
+  blockWrite: number
+  updatedAt?: string
+}
+
 export interface ApplicationDevice {
   deviceId: string
   deviceName: string
@@ -127,7 +139,10 @@ export interface ApplicationDevice {
   version: string
   domain: string
   builtin: boolean
+  userId: string
+  userName: string
   collectedAt: string
+  resources: ApplicationResources
 }
 
 export interface ApplicationItem {
@@ -140,15 +155,5 @@ export interface ApplicationItem {
   versions: Record<string, number>
   statusCounts: Record<string, number>
   devices: ApplicationDevice[]
-  resources: {
-    containers: number
-    cpuPercent: number
-    memoryUsage: number
-    memoryLimit: number
-    networkReceive: number
-    networkTransmit: number
-    blockRead: number
-    blockWrite: number
-    updatedAt?: string
-  }
+  resources: ApplicationResources
 }

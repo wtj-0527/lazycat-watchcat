@@ -15,6 +15,8 @@ type RuntimeApplication struct {
 	InstanceStatus string    `json:"instanceStatus"`
 	Domain         string    `json:"domain"`
 	Builtin        bool      `json:"builtin"`
+	UserID         string    `json:"userId"`
+	UserName       string    `json:"userName"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
@@ -32,14 +34,14 @@ func (s *Store) ReplaceRuntimeApplications(ctx context.Context, deviceID string,
 		}
 		seen = append(seen, item.DeployID)
 		_, err := tx.ExecContext(ctx, `INSERT INTO application_runtime_state(
-			device_id,deploy_id,app_id,title,version,install_status,instance_status,domain,builtin,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?)
+			device_id,deploy_id,app_id,title,version,install_status,instance_status,domain,builtin,user_id,user_name,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(device_id,deploy_id) DO UPDATE SET
 			app_id=excluded.app_id,title=excluded.title,version=excluded.version,
 			install_status=excluded.install_status,instance_status=excluded.instance_status,
-			domain=excluded.domain,builtin=excluded.builtin,updated_at=excluded.updated_at`,
+			domain=excluded.domain,builtin=excluded.builtin,user_id=excluded.user_id,user_name=excluded.user_name,updated_at=excluded.updated_at`,
 			deviceID, item.DeployID, item.AppID, item.Title, item.Version, item.InstallStatus,
-			item.InstanceStatus, item.Domain, item.Builtin, now)
+			item.InstanceStatus, item.Domain, item.Builtin, item.UserID, item.UserName, now)
 		if err != nil {
 			return err
 		}
@@ -66,7 +68,7 @@ func (s *Store) ReplaceRuntimeApplications(ctx context.Context, deviceID string,
 }
 
 func (s *Store) ListRuntimeApplications(ctx context.Context) ([]RuntimeApplication, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,deploy_id,app_id,title,version,install_status,instance_status,domain,builtin,updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,deploy_id,app_id,title,version,install_status,instance_status,domain,builtin,user_id,user_name,updated_at
 		FROM application_runtime_state ORDER BY title,app_id,deploy_id`)
 	if err != nil {
 		return nil, err
@@ -78,7 +80,7 @@ func (s *Store) ListRuntimeApplications(ctx context.Context) ([]RuntimeApplicati
 		var builtin int
 		var updated string
 		if err := rows.Scan(&item.DeviceID, &item.DeployID, &item.AppID, &item.Title, &item.Version,
-			&item.InstallStatus, &item.InstanceStatus, &item.Domain, &builtin, &updated); err != nil {
+			&item.InstallStatus, &item.InstanceStatus, &item.Domain, &builtin, &item.UserID, &item.UserName, &updated); err != nil {
 			return nil, err
 		}
 		item.Builtin = builtin != 0

@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ApplicationItem } from '@/types'
+import type { ApplicationDevice, ApplicationItem } from '@/types'
 import AppsPage from './AppsPage.vue'
 
 const apiMock = vi.hoisted(() => vi.fn())
@@ -15,6 +15,25 @@ const resources = {
   networkTransmit: 0,
   blockRead: 0,
   blockWrite: 0,
+}
+
+function device(overrides: Partial<ApplicationDevice>): ApplicationDevice {
+  return {
+    deviceId: 'device-1',
+    deviceName: '设备一',
+    deployId: 'deploy-1',
+    healthy: true,
+    status: 'running',
+    installStatus: 'installed',
+    version: '1.0.0',
+    domain: '',
+    builtin: false,
+    userId: 'user-1',
+    userName: '用户一',
+    collectedAt: '2026-08-25T10:00:00Z',
+    resources: { ...resources },
+    ...overrides,
+  }
 }
 
 function application(overrides: Partial<ApplicationItem>): ApplicationItem {
@@ -98,6 +117,41 @@ describe('AppsPage', () => {
     wrapper.unmount()
   })
 
+  it('switches a single application between runtime instances', async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path.includes('/metrics')) return {
+        appId: 'multi', deviceId: path.includes('deviceId=device-2') ? 'device-2' : '',
+        from: '2026-08-24T10:00:00Z', to: '2026-08-25T10:00:00Z', bucketSeconds: 300,
+        updatedAt: '2026-08-25T10:00:00Z',
+        summary: { networkReceiveRateBytes: 0, networkTransmitRateBytes: 0, networkTotalBytes: 0, blockReadRateBytes: 0, blockWriteRateBytes: 0, blockTotalBytes: 0 },
+        series: { cpuPercent: [], memoryUsage: [], networkReceiveRate: [], networkTransmitRate: [], blockReadRate: [], blockWriteRate: [] },
+      }
+      return {
+        items: [application({
+          id: 'multi', title: '多实例应用', healthy: 2, instances: 2,
+          resources: { ...resources, containers: 3, cpuPercent: 30, memoryUsage: 300 },
+          devices: [
+            device({ deviceId: 'device-1', deviceName: '设备一', deployId: 'deploy-1', resources: { ...resources, containers: 1, cpuPercent: 10, memoryUsage: 100 } }),
+            device({ deviceId: 'device-2', deviceName: '设备二', deployId: 'deploy-2', resources: { ...resources, containers: 2, cpuPercent: 20, memoryUsage: 200 } }),
+          ],
+        })],
+        source: 'lazycat', stale: false, updatedAt: '2026-08-25T10:00:00Z',
+      }
+    })
+
+    const wrapper = mount(AppsPage)
+    await flushPromises()
+    expect(wrapper.get('[aria-label="运行实例"]').findAll('option')).toHaveLength(3)
+
+    await wrapper.get('[aria-label="运行实例"]').setValue('device-2\u0000deploy-2')
+    await flushPromises()
+
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('/api/v1/applications/multi/metrics?hours=24&deviceId=device-2'))).toBe(true)
+    expect(wrapper.find('.app-resource-kpis').text()).toContain('20.0%')
+    expect(wrapper.find('.app-resource-kpis').text()).toContain('2 个容器')
+    wrapper.unmount()
+  })
+
   it('applies a custom historical time range', async () => {
     apiMock.mockImplementation(async (path: string) => {
       if (path.includes('/metrics')) return {
@@ -133,9 +187,11 @@ describe('AppsPage', () => {
         const metric = new URL(`https://example.test${path}`).searchParams.get('metric') || 'cpu'
         return {
         metric, from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z', bucketSeconds: 300,
+        scope: 'instance',
         items: [
-          { appId: 'small', value: 1024, unit: 'bytes', points: [] },
-          { appId: 'large', value: 4096, unit: 'bytes', points: [] },
+          { appId: 'small', deviceId: 'device-1', value: 1024, unit: 'bytes', points: [] },
+          { appId: 'small', deviceId: 'device-2', value: 2048, unit: 'bytes', points: [] },
+          { appId: 'large', deviceId: 'device-1', value: 4096, unit: 'bytes', points: [] },
         ],
         updatedAt: new Date().toISOString(),
       }
@@ -147,8 +203,13 @@ describe('AppsPage', () => {
       }
       return {
         items: [
-          application({ id: 'small', title: '小内存应用', healthy: 1, resources: { ...resources, cpuPercent: 50, memoryUsage: 1024 } }),
-          application({ id: 'large', title: '大内存应用', healthy: 1, resources: { ...resources, cpuPercent: 1, memoryUsage: 4096 } }),
+          application({ id: 'small', title: '小内存应用', healthy: 2, instances: 2, resources: { ...resources, cpuPercent: 50, memoryUsage: 1024 }, devices: [
+            device({ deviceId: 'device-1', deviceName: '设备一', deployId: 'small-1' }),
+            device({ deviceId: 'device-2', deviceName: '设备二', deployId: 'small-2' }),
+          ] }),
+          application({ id: 'large', title: '大内存应用', healthy: 1, resources: { ...resources, cpuPercent: 1, memoryUsage: 4096 }, devices: [
+            device({ deviceId: 'device-1', deviceName: '设备一', deployId: 'large-1' }),
+          ] }),
         ],
         source: 'lazycat', stale: false, updatedAt: new Date().toISOString(),
       }
@@ -162,7 +223,7 @@ describe('AppsPage', () => {
     await wrapper.findAll('.view-toggle button')[1].trigger('click')
     await flushPromises()
     for (const metric of ['cpu', 'memory', 'network', 'disk']) {
-      expect(apiMock.mock.calls.some(([path]) => String(path).includes(`/metrics/compare?metric=${metric}`))).toBe(true)
+      expect(apiMock.mock.calls.some(([path]) => String(path).includes(`/metrics/compare?metric=${metric}&scope=instance`))).toBe(true)
     }
     expect(wrapper.text()).toContain('所有应用对比')
     expect(wrapper.findAll('.all-app-metric-panel')).toHaveLength(4)
@@ -171,7 +232,9 @@ describe('AppsPage', () => {
     expect(wrapper.text()).toContain('所有应用内存')
     expect(wrapper.text()).toContain('所有应用网络流量')
     expect(wrapper.text()).toContain('所有应用磁盘 I/O')
-    expect(wrapper.findAll('.all-app-metric-panel .bar-chart-row')).toHaveLength(8)
+    expect(wrapper.findAll('.all-app-metric-panel .bar-chart-row')).toHaveLength(12)
+    expect(wrapper.text()).toContain('3 个实例')
+    expect(wrapper.text()).toContain('小内存应用 / 设备二')
     wrapper.unmount()
   })
 })

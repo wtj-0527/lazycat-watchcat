@@ -176,6 +176,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			instance_status TEXT NOT NULL,
 			domain TEXT NOT NULL DEFAULT '',
 			builtin INTEGER NOT NULL DEFAULT 0,
+			user_id TEXT NOT NULL DEFAULT '',
+			user_name TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL,
 			PRIMARY KEY(device_id,deploy_id)
 		);`,
@@ -229,6 +231,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, datetime('now'))`)
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(7, datetime('now'))`)
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(8, datetime('now'))`)
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE application_runtime_state ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration application user_id: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE application_runtime_state ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration application user_name: %w", err)
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(9, datetime('now'))`)
 	return nil
 }
 
