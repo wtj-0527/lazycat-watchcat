@@ -601,7 +601,9 @@ body { font-size: 12px; }
 
 /* Application resource history */
 .app-resource-intro { align-items: center; min-height: 48px; }
-.application-time-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 12px 14px; }
+.application-controls { margin-bottom: 16px; padding: 0; overflow: hidden; }
+.application-controls > .filter-bar { margin: 0; border: 0; border-radius: 0; background: transparent; }
+.application-time-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border-top: 1px solid var(--border-subtle); }
 .application-time-controls > div:first-child { display: grid; gap: 2px; }
 .application-time-controls > .custom-history-range { flex: 1 0 100%; }
 .app-resource-layout { display: grid; grid-template-columns: minmax(280px, .72fr) minmax(0, 2fr); gap: 16px; align-items: start; }

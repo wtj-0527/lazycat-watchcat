@@ -239,27 +239,28 @@ function comparisonValue(item: ComparisonItem) {
       <div><h2>应用资源</h2></div>
       <div class="view-toggle"><button :class="{ active: viewMode === 'detail' }" @click="setViewMode('detail')">单应用</button><button :class="{ active: viewMode === 'compare' }" @click="setViewMode('compare')">全部应用对比</button></div>
     </div>
-    <div class="filter-bar app-filter-bar">
-      <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称"></label>
-      <select v-model="statusFilter" aria-label="应用状态"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
-      <select v-model="sortMetric" aria-label="排序指标"><option value="cpu">按 CPU 排序</option><option value="memory">按内存排序</option><option value="network">按网络流量排序</option><option value="disk">按磁盘 IO 排序</option></select>
-      <button class="secondary-button sort-direction" :aria-label="sortDescending ? '当前降序，点击切换升序' : '当前升序，点击切换降序'" @click="sortDescending = !sortDescending">{{ sortDescending ? '从高到低 ↓' : '从低到高 ↑' }}</button>
-      <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
-      <span class="filter-note">更新 {{ ago(data?.updatedAt) }}</span>
-    </div>
-
-    <section class="card application-time-controls">
-      <div><b>统计时间</b><span v-if="customHistoryRangeLabel" class="muted">{{ customHistoryRangeLabel }}</span></div>
-      <div class="history-range" aria-label="历史时间范围">
-        <button v-for="item in [1, 6, 24]" :key="item" :class="{ active: historyMode === 'preset' && historyHours === item }" @click="selectPreset(item)">{{ item }} 小时</button>
-        <button :class="{ active: historyMode === 'custom' }" @click="showCustomRange = !showCustomRange">自定义</button>
+    <section class="card application-controls">
+      <div class="filter-bar app-filter-bar">
+        <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称"></label>
+        <select v-model="statusFilter" aria-label="应用状态"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
+        <select v-model="sortMetric" aria-label="排序指标"><option value="cpu">按 CPU 排序</option><option value="memory">按内存排序</option><option value="network">按网络流量排序</option><option value="disk">按磁盘 IO 排序</option></select>
+        <button class="secondary-button sort-direction" :aria-label="sortDescending ? '当前降序，点击切换升序' : '当前升序，点击切换降序'" @click="sortDescending = !sortDescending">{{ sortDescending ? '从高到低 ↓' : '从低到高 ↑' }}</button>
+        <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
+        <span class="filter-note">30 秒自动刷新</span>
       </div>
-      <div v-if="showCustomRange" class="custom-history-range">
-        <label><span>开始时间</span><input v-model="customFrom" type="datetime-local"></label>
-        <label><span>结束时间</span><input v-model="customTo" type="datetime-local"></label>
-        <button class="primary-button" @click="applyCustomRange">应用时间范围</button>
-        <button class="secondary-button" @click="showCustomRange = false">取消</button>
-        <small v-if="customRangeError">{{ customRangeError }}</small>
+      <div class="application-time-controls">
+        <div><b>统计时间</b><span v-if="customHistoryRangeLabel" class="muted">{{ customHistoryRangeLabel }}</span></div>
+        <div class="history-range" aria-label="历史时间范围">
+          <button v-for="item in [1, 6, 24]" :key="item" :class="{ active: historyMode === 'preset' && historyHours === item }" @click="selectPreset(item)">{{ item }} 小时</button>
+          <button :class="{ active: historyMode === 'custom' }" @click="showCustomRange = !showCustomRange">自定义</button>
+        </div>
+        <div v-if="showCustomRange" class="custom-history-range">
+          <label><span>开始时间</span><input v-model="customFrom" type="datetime-local"></label>
+          <label><span>结束时间</span><input v-model="customTo" type="datetime-local"></label>
+          <button class="primary-button" @click="applyCustomRange">应用时间范围</button>
+          <button class="secondary-button" @click="showCustomRange = false">取消</button>
+          <small v-if="customRangeError">{{ customRangeError }}</small>
+        </div>
       </div>
     </section>
 
