@@ -95,20 +95,51 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) metricHistory(w http.ResponseWriter, r *http.Request) {
 	id, name := r.PathValue("id"), r.URL.Query().Get("name")
-	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
-	if hours <= 0 || hours > 24*30 {
-		hours = 24
-	}
 	if name == "" {
 		problem(w, 400, "metric_required", "指标名称必填")
 		return
 	}
-	samples, err := s.store.MetricHistory(r.Context(), id, name, time.Now().UTC().Add(-time.Duration(hours)*time.Hour), 2000)
+	from, to, code, message := deviceMetricTimeRange(r)
+	if code != "" {
+		problem(w, http.StatusBadRequest, code, message)
+		return
+	}
+	samples, err := s.store.MetricHistoryRange(r.Context(), id, name, from, to, 2000)
 	if err != nil {
 		problem(w, 500, "internal_error", "无法读取指标历史")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"deviceId": id, "name": name, "items": samples})
+}
+
+func deviceMetricTimeRange(r *http.Request) (time.Time, time.Time, string, string) {
+	now := time.Now().UTC()
+	fromRaw, toRaw := strings.TrimSpace(r.URL.Query().Get("from")), strings.TrimSpace(r.URL.Query().Get("to"))
+	if fromRaw == "" && toRaw == "" {
+		hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+		if hours <= 0 || hours > 24*30 {
+			hours = 24
+		}
+		return now.Add(-time.Duration(hours) * time.Hour), now, "", ""
+	}
+	if fromRaw == "" || toRaw == "" {
+		return time.Time{}, time.Time{}, "time_range_incomplete", "自定义时间必须同时提供 from 和 to"
+	}
+	from, err := time.Parse(time.RFC3339, fromRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, "invalid_from", "from 必须是 RFC3339 时间"
+	}
+	to, err := time.Parse(time.RFC3339, toRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, "invalid_to", "to 必须是 RFC3339 时间"
+	}
+	if !from.Before(to) {
+		return time.Time{}, time.Time{}, "invalid_time_range", "开始时间必须早于结束时间"
+	}
+	if to.Sub(from) > 30*24*time.Hour {
+		return time.Time{}, time.Time{}, "time_range_too_large", "单次查询范围不能超过 30 天"
+	}
+	return from, to, "", ""
 }
 func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	runtimeError := ""

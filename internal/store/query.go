@@ -86,10 +86,22 @@ func (s *Store) LatestMetricsForDevice(ctx context.Context, deviceID string) ([]
 }
 
 func (s *Store) MetricHistory(ctx context.Context, deviceID, name string, since time.Time, limit int) ([]MetricSample, error) {
+	return s.MetricHistoryRange(ctx, deviceID, name, since, time.Time{}, limit)
+}
+
+func (s *Store) MetricHistoryRange(ctx context.Context, deviceID, name string, since, until time.Time, limit int) ([]MetricSample, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 1000
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT value,unit,labels_json,collected_at FROM metrics WHERE device_id=? AND name=? AND collected_at>=? ORDER BY collected_at ASC LIMIT ?`, deviceID, name, since.UTC().Format(time.RFC3339Nano), limit)
+	query := `SELECT value,unit,labels_json,collected_at FROM metrics WHERE device_id=? AND name=? AND collected_at>=?`
+	args := []any{deviceID, name, since.UTC().Format(time.RFC3339Nano)}
+	if !until.IsZero() {
+		query += ` AND collected_at<=?`
+		args = append(args, until.UTC().Format(time.RFC3339Nano))
+	}
+	query += ` ORDER BY collected_at ASC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

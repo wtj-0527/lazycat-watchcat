@@ -82,4 +82,34 @@ describe('StoragePage', () => {
     expect(wrapper.text()).not.toContain('数据加载失败')
     wrapper.unmount()
   })
+
+  it('combines physical disks, volumes, and history into one selectable resource view', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [
+          { deviceId: 'd1', deviceName: '猫盒', name: 'disk.capacity', value: 4_000_000_000_000, unit: 'bytes', labels: { device: 'sdb', model: 'WDC WD40EZAX', serial: 'WD-TEST', media: 'hdd', transport: 'usb' }, collectedAt },
+          { deviceId: 'd1', deviceName: '猫盒', name: 'btrfs.usage', value: 51.1, unit: '%', labels: { mount: '/lzcsys/run/mnt/sdb1', backing_device: '/dev/sdb1' }, collectedAt },
+          { deviceId: 'd1', deviceName: '猫盒', name: 'btrfs.size', value: 4_000_000_000_000, unit: 'bytes', labels: { mount: '/lzcsys/run/mnt/sdb1', backing_device: '/dev/sdb1' }, collectedAt },
+          { deviceId: 'd1', deviceName: '猫盒', name: 'btrfs.free_estimated', value: 1_900_000_000_000, unit: 'bytes', labels: { mount: '/lzcsys/run/mnt/sdb1', backing_device: '/dev/sdb1' }, collectedAt },
+        ],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+
+    expect(wrapper.get('.storage-resource-card').text()).toContain('sdb · 备份盘')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷')
+    expect(wrapper.text()).not.toContain('最高使用率卷 · 14 天趋势')
+
+    await wrapper.get('.storage-disk-select').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.storage-resource-detail').text()).toContain('I/O 趋势 · sdb')
+    wrapper.unmount()
+  })
 })

@@ -79,8 +79,11 @@ func TestParseBtrfsHelperDoesNotReportPresentDeviceAsMissing(t *testing.T) {
 Scrub status for fb3c3a32
     Error summary: no errors found
 `
-	points := parseBtrfsHelper(raw, "/lzcsys/data", now)
+	points := parseBtrfsHelper(raw, "/lzcsys/data", "/dev/mapper/nvme0n1p1", now)
 	for _, point := range points {
+		if point.Labels["backing_device"] != "/dev/mapper/nvme0n1p1" {
+			t.Fatalf("backing device label=%v", point.Labels)
+		}
 		if point.Name == "btrfs.device_missing" {
 			if point.Value != 0 || point.Unit != "bytes" {
 				t.Fatalf("missing device metric=%+v", point)

@@ -791,13 +791,13 @@ func (d *DockerCollector) collectBtrfs(ctx context.Context, image string, now ti
 		if code != 0 {
 			warnings = append(warnings, fmt.Sprintf("docker btrfs %s: scrub history unavailable", mount))
 		}
-		points = append(points, parseBtrfsHelper(string(raw), mount, now)...)
+		points = append(points, parseBtrfsHelper(string(raw), mount, target.device, now)...)
 	}
 	return points, warnings
 }
 
-func parseBtrfsHelper(raw, mount string, now time.Time) []protocol.MetricPoint {
-	labels := map[string]string{"mount": mount, "source": "lazycat-docker-helper"}
+func parseBtrfsHelper(raw, mount, backingDevice string, now time.Time) []protocol.MetricPoint {
+	labels := map[string]string{"mount": mount, "backing_device": backingDevice, "source": "lazycat-docker-helper"}
 	add := func(out *[]protocol.MetricPoint, name string, value float64, unit string) {
 		*out = append(*out, protocol.MetricPoint{Name: name, Value: value, Unit: unit, Labels: labels, CollectedAt: now})
 	}

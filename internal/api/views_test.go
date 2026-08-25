@@ -1,12 +1,32 @@
 package api
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
 	"github.com/wtj-0527/lazycat-maoyan/internal/store"
 )
+
+func TestDeviceMetricTimeRangeAcceptsCustomRange(t *testing.T) {
+	request := httptest.NewRequest("GET", "/?from=2026-08-01T00:00:00Z&to=2026-08-08T00:00:00Z", nil)
+	from, to, code, message := deviceMetricTimeRange(request)
+	if code != "" || message != "" {
+		t.Fatalf("unexpected problem %s: %s", code, message)
+	}
+	if from.Format(time.RFC3339) != "2026-08-01T00:00:00Z" || to.Format(time.RFC3339) != "2026-08-08T00:00:00Z" {
+		t.Fatalf("range=%s..%s", from, to)
+	}
+}
+
+func TestDeviceMetricTimeRangeRejectsMoreThanThirtyDays(t *testing.T) {
+	request := httptest.NewRequest("GET", "/?from=2026-07-01T00:00:00Z&to=2026-08-08T00:00:00Z", nil)
+	_, _, code, _ := deviceMetricTimeRange(request)
+	if code != "time_range_too_large" {
+		t.Fatalf("code=%q", code)
+	}
+}
 
 func TestBuildDeviceViewsSeparatesConnectivityFromHealth(t *testing.T) {
 	now := time.Now().UTC()
