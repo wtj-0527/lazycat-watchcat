@@ -19,9 +19,9 @@
 
 ```bash
 docker build \
-  --label org.opencontainers.image.version=1.12.4 \
-  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.12.4 .
-docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.12.4
+  --label org.opencontainers.image.version=1.12.5 \
+  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.12.5 .
+docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.12.5
 # 将 lzc-manifest.yml 的 image 固定为 push 返回的 sha256 digest
 lzc-cli project lint .
 lzc-cli project deploy --release
@@ -32,7 +32,8 @@ lzc-cli project deploy --release
 - SQLite 在线一致性备份、SHA-256 校验和 `quick_check` 完整性验证
 - 版本切换前自动备份，恢复前自动创建安全备份，恢复通过重启阶段原子应用
 - 应用内提供备份列表、手动备份、恢复入口和数据库状态
-- 设置页可预览并清理未被任何运行或停止容器引用的 Docker 镜像，操作前确认并写入审计日志
+- 数据库备份保留份数可配置，支持逐份校验后恢复或手动删除
+- 镜像管理区区分可批量清理的悬空旧镜像与可能供未启动 LPK 使用的缓存镜像；缓存镜像仅允许分页查看后逐个确认删除
 - 持久化 7 天稳定性观测：每分钟记录数据库完整性、延迟、指标新鲜度、通知积压和保留任务状态
 - 全局侧栏和设置页显示统一构建版本
 

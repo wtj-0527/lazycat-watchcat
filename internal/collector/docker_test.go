@@ -56,7 +56,7 @@ func TestSummarizeUnusedImagesExcludesAllContainerReferences(t *testing.T) {
 	images := []dockerImage{
 		{ID: "sha256:used-running", RepoTags: []string{"running:1"}, Size: 10},
 		{ID: "sha256:used-stopped", RepoTags: []string{"stopped:1"}, Size: 20},
-		{ID: "sha256:unused-small", RepoTags: []string{"unused:small"}, Size: 30, Created: 1},
+		{ID: "sha256:unused-small", Size: 30, Created: 1},
 		{ID: "sha256:unused-large", RepoDigest: []string{"unused@sha256:large"}, Size: 90},
 	}
 	containers := []dockerContainer{
@@ -67,6 +67,9 @@ func TestSummarizeUnusedImagesExcludesAllContainerReferences(t *testing.T) {
 	result := summarizeUnusedImages(images, containers)
 	if !result.Available || result.Count != 2 || result.TotalSize != 120 {
 		t.Fatalf("summary=%+v", result)
+	}
+	if result.DanglingCount != 1 || result.DanglingSize != 30 || result.CachedCount != 1 || result.CachedSize != 90 {
+		t.Fatalf("categories=%+v", result)
 	}
 	if result.Items[0].ID != "sha256:unused-large" || result.Items[1].ID != "sha256:unused-small" {
 		t.Fatalf("items not sorted by size: %+v", result.Items)

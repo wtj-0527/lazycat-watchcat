@@ -28,6 +28,7 @@ const defaultDockerStatsConcurrency = 2
 const smartHelperLabel = "community.lazycat.app.maoyan.smart-helper"
 
 var smartBlockDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
+var dockerImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 type DockerCollector struct {
 	socket           string
@@ -75,19 +76,30 @@ type UnusedImage struct {
 	Tags      []string  `json:"tags"`
 	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"createdAt,omitempty"`
+	Category  string    `json:"category"`
 }
 
 type UnusedImageSummary struct {
-	Available bool          `json:"available"`
-	Count     int           `json:"count"`
-	TotalSize int64         `json:"totalSize"`
-	Items     []UnusedImage `json:"items"`
+	Available     bool          `json:"available"`
+	Count         int           `json:"count"`
+	TotalSize     int64         `json:"totalSize"`
+	DanglingCount int           `json:"danglingCount"`
+	DanglingSize  int64         `json:"danglingSize"`
+	CachedCount   int           `json:"cachedCount"`
+	CachedSize    int64         `json:"cachedSize"`
+	Items         []UnusedImage `json:"items"`
 }
 
 type ImagePruneResult struct {
 	ImagesDeleted      int    `json:"imagesDeleted"`
 	ReferencesUntagged int    `json:"referencesUntagged"`
 	SpaceReclaimed     uint64 `json:"spaceReclaimed"`
+}
+
+type ImageDeleteResult struct {
+	ImageID            string `json:"imageId"`
+	ReferencesUntagged int    `json:"referencesUntagged"`
+	DeleteRecords      int    `json:"deleteRecords"`
 }
 
 type dockerCreateResponse struct {
@@ -216,21 +228,28 @@ func summarizeUnusedImages(images []dockerImage, containers []dockerContainer) U
 		if image.ID == "" || referenced[image.ID] {
 			continue
 		}
-		tags := append([]string(nil), image.RepoTags...)
-		if len(tags) == 0 {
-			tags = append(tags, image.RepoDigest...)
+		references := append([]string(nil), image.RepoTags...)
+		references = append(references, image.RepoDigest...)
+		category := "cached"
+		if len(references) == 0 {
+			references = []string{"<none>:<none>"}
+			category = "dangling"
 		}
-		if len(tags) == 0 {
-			tags = []string{"<none>:<none>"}
-		}
-		sort.Strings(tags)
-		item := UnusedImage{ID: image.ID, Tags: tags, Size: image.Size}
+		sort.Strings(references)
+		item := UnusedImage{ID: image.ID, Tags: references, Size: image.Size, Category: category}
 		if image.Created > 0 {
 			item.CreatedAt = time.Unix(image.Created, 0).UTC()
 		}
 		result.Items = append(result.Items, item)
 		if image.Size > 0 {
 			result.TotalSize += image.Size
+		}
+		if category == "dangling" {
+			result.DanglingCount++
+			result.DanglingSize += max(image.Size, 0)
+		} else {
+			result.CachedCount++
+			result.CachedSize += max(image.Size, 0)
 		}
 	}
 	sort.Slice(result.Items, func(i, j int) bool {
@@ -247,7 +266,10 @@ func (d *DockerCollector) PruneUnusedImages(ctx context.Context) (ImagePruneResu
 	if !d.Available() {
 		return ImagePruneResult{}, fmt.Errorf("docker socket unavailable: %s", d.socket)
 	}
-	filters, err := json.Marshal(map[string][]string{"dangling": {"false"}})
+	// Bulk cleanup is deliberately limited to dangling images. Tagged but
+	// currently unused images can belong to a paused LazyCat application and
+	// are only removable through the explicit per-image endpoint.
+	filters, err := json.Marshal(map[string][]string{"dangling": {"true"}})
 	if err != nil {
 		return ImagePruneResult{}, err
 	}
@@ -260,6 +282,39 @@ func (d *DockerCollector) PruneUnusedImages(ctx context.Context) (ImagePruneResu
 		return ImagePruneResult{}, fmt.Errorf("decode docker image prune response: %w", err)
 	}
 	return summarizeImagePrune(response), nil
+}
+
+func (d *DockerCollector) DeleteUnusedImage(ctx context.Context, imageID string) (ImageDeleteResult, error) {
+	if !d.Available() {
+		return ImageDeleteResult{}, fmt.Errorf("docker socket unavailable: %s", d.socket)
+	}
+	if !dockerImageID.MatchString(imageID) {
+		return ImageDeleteResult{}, errors.New("invalid docker image id")
+	}
+	var containers []dockerContainer
+	if err := d.getJSON(ctx, "/containers/json?all=1", &containers); err != nil {
+		return ImageDeleteResult{}, err
+	}
+	for _, item := range containers {
+		if item.ImageID == imageID {
+			return ImageDeleteResult{}, errors.New("image is referenced by a container")
+		}
+	}
+	raw, err := d.doJSON(ctx, http.MethodDelete, "/images/"+url.PathEscape(imageID)+"?force=false&noprune=false", nil, http.StatusOK)
+	if err != nil {
+		return ImageDeleteResult{}, err
+	}
+	var records []dockerImageDelete
+	if err := json.Unmarshal(raw, &records); err != nil {
+		return ImageDeleteResult{}, fmt.Errorf("decode docker image delete response: %w", err)
+	}
+	result := ImageDeleteResult{ImageID: imageID, DeleteRecords: len(records)}
+	for _, item := range records {
+		if item.Untagged != "" {
+			result.ReferencesUntagged++
+		}
+	}
+	return result, nil
 }
 
 func summarizeImagePrune(response dockerImagePruneResponse) ImagePruneResult {

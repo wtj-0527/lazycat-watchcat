@@ -42,6 +42,9 @@ func main() {
 		logger.Error("mark database version", "error", err)
 		os.Exit(1)
 	}
+	if err := backupManager.Prune(st.OperationalSettings(context.Background()).BackupRetentionCount); err != nil {
+		logger.Warn("prune backups", "error", err)
+	}
 	ca, err := pki.LoadOrCreate(cfg.DataDir + "/pki")
 	if err != nil {
 		logger.Error("open PKI", "error", err)

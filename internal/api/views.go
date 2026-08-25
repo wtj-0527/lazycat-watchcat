@@ -786,7 +786,7 @@ func (s *Server) inspectionDetail(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) settingsView(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut {
-		var settings store.OperationalSettings
+		settings := s.store.OperationalSettings(r.Context())
 		if decodeJSON(r, &settings) != nil {
 			problem(w, 400, "invalid_settings", "设置参数无效")
 			return
@@ -795,12 +795,15 @@ func (s *Server) settingsView(w http.ResponseWriter, r *http.Request) {
 			problem(w, 400, "invalid_settings", err.Error())
 			return
 		}
+		if s.backup != nil {
+			_ = s.backup.Prune(settings.BackupRetentionCount)
+		}
 		writeJSON(w, 200, settings)
 		return
 	}
 	stats, _ := s.store.RetentionStats(r.Context())
 	settings := s.store.OperationalSettings(r.Context())
-	writeJSON(w, 200, map[string]any{"appVersion": buildinfo.Version, "singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": settings.RawRetentionDays, "rollupRetentionDays": settings.RollupRetentionDays, "auditRetentionDays": settings.AuditRetentionDays, "inspectionRetentionDays": settings.InspectionRetentionDays, "dailyInspectionHour": settings.DailyInspectionHour, "weeklyInspectionHour": settings.WeeklyInspectionHour, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
+	writeJSON(w, 200, map[string]any{"appVersion": buildinfo.Version, "singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": settings.RawRetentionDays, "rollupRetentionDays": settings.RollupRetentionDays, "auditRetentionDays": settings.AuditRetentionDays, "inspectionRetentionDays": settings.InspectionRetentionDays, "backupRetentionCount": settings.BackupRetentionCount, "dailyInspectionHour": settings.DailyInspectionHour, "weeklyInspectionHour": settings.WeeklyInspectionHour, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30, "storageStats": stats})
 }
 func (s *Server) operationsView(w http.ResponseWriter, r *http.Request) {
 	capabilities, err := s.store.ListCapabilityStatuses(r.Context())

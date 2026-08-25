@@ -20,6 +20,7 @@ type OperationalSettings struct {
 	RollupRetentionDays     int `json:"rollupRetentionDays"`
 	AuditRetentionDays      int `json:"auditRetentionDays"`
 	InspectionRetentionDays int `json:"inspectionRetentionDays"`
+	BackupRetentionCount    int `json:"backupRetentionCount"`
 	DailyInspectionHour     int `json:"dailyInspectionHour"`
 	WeeklyInspectionHour    int `json:"weeklyInspectionHour"`
 }
@@ -27,7 +28,8 @@ type OperationalSettings struct {
 func DefaultOperationalSettings() OperationalSettings {
 	return OperationalSettings{
 		RawRetentionDays: 30, RollupRetentionDays: 365, AuditRetentionDays: 180,
-		InspectionRetentionDays: 365, DailyInspectionHour: 3, WeeklyInspectionHour: 4,
+		InspectionRetentionDays: 365, BackupRetentionCount: 20,
+		DailyInspectionHour: 3, WeeklyInspectionHour: 4,
 	}
 }
 
@@ -42,6 +44,7 @@ func (s *Store) SetOperationalSettings(ctx context.Context, value OperationalSet
 		value.RollupRetentionDays < value.RawRetentionDays || value.RollupRetentionDays > 3650 ||
 		value.AuditRetentionDays < 1 || value.AuditRetentionDays > 3650 ||
 		value.InspectionRetentionDays < 1 || value.InspectionRetentionDays > 3650 ||
+		value.BackupRetentionCount < 1 || value.BackupRetentionCount > 100 ||
 		value.DailyInspectionHour < 0 || value.DailyInspectionHour > 23 ||
 		value.WeeklyInspectionHour < 0 || value.WeeklyInspectionHour > 23 {
 		return errors.New("invalid operational settings")

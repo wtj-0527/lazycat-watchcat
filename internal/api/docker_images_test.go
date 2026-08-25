@@ -18,6 +18,7 @@ import (
 type fakeDockerMaintenance struct {
 	preview collector.UnusedImageSummary
 	result  collector.ImagePruneResult
+	deleted collector.ImageDeleteResult
 	err     error
 }
 
@@ -27,6 +28,12 @@ func (f *fakeDockerMaintenance) UnusedImages(context.Context) (collector.UnusedI
 
 func (f *fakeDockerMaintenance) PruneUnusedImages(context.Context) (collector.ImagePruneResult, error) {
 	return f.result, f.err
+}
+
+func (f *fakeDockerMaintenance) DeleteUnusedImage(_ context.Context, imageID string) (collector.ImageDeleteResult, error) {
+	result := f.deleted
+	result.ImageID = imageID
+	return result, f.err
 }
 
 func TestDockerImagePreviewAndPruneAreAudited(t *testing.T) {
@@ -47,7 +54,8 @@ func TestDockerImagePreviewAndPruneAreAudited(t *testing.T) {
 			Available: true, Count: 1, TotalSize: 2048,
 			Items: []collector.UnusedImage{{ID: "sha256:unused", Tags: []string{"unused:old"}, Size: 2048}},
 		},
-		result: collector.ImagePruneResult{ImagesDeleted: 1, ReferencesUntagged: 1, SpaceReclaimed: 1024},
+		result:  collector.ImagePruneResult{ImagesDeleted: 1, ReferencesUntagged: 1, SpaceReclaimed: 1024},
+		deleted: collector.ImageDeleteResult{ReferencesUntagged: 1, DeleteRecords: 2},
 	}
 	server := httptest.NewServer(s.Handler())
 	defer server.Close()
@@ -77,6 +85,21 @@ func TestDockerImagePreviewAndPruneAreAudited(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK || result.ImagesDeleted != 1 || result.SpaceReclaimed != 1024 {
 		t.Fatalf("prune status=%d result=%+v", response.StatusCode, result)
+	}
+
+	imageID := "sha256:" + strings.Repeat("a", 64)
+	request, _ = http.NewRequest(http.MethodDelete, server.URL+"/api/v1/docker/images/"+imageID, nil)
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deleted collector.ImageDeleteResult
+	if err := json.NewDecoder(response.Body).Decode(&deleted); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || deleted.ImageID != imageID || deleted.DeleteRecords != 2 {
+		t.Fatalf("delete status=%d result=%+v", response.StatusCode, deleted)
 	}
 
 	audit, err := st.ListAudit(context.Background(), 10)

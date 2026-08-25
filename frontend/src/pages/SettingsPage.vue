@@ -10,7 +10,8 @@ import StatusPill from '@/components/StatusPill.vue'
 interface Settings {
   appVersion: string; deploymentMode: string; embeddedCollector: boolean; singleUser: boolean; maxDevices: number
   collectIntervalSeconds: number; advancedIntervalSeconds: number; rawRetentionDays: number; rollupRetentionDays: number
-  auditRetentionDays: number; inspectionRetentionDays: number; notificationChannel: string; notificationDelivery: string
+  auditRetentionDays: number; inspectionRetentionDays: number; backupRetentionCount: number
+  notificationChannel: string; notificationDelivery: string
   dailyInspectionHour: number; weeklyInspectionHour: number
   storageStats: { rawMetricRows: number; rollupRows: number }
 }
@@ -19,9 +20,14 @@ interface DatabaseStatus { databaseSize: number; integrityOk: boolean; integrity
 interface AlertRule { metric: string; label: string; warning: number; critical: number; enabled: boolean }
 interface MaintenanceWindow { id: string; name: string; startsAt: string; endsAt: string; enabled: boolean }
 interface AuditEntry { id: number; action: string; subjectType: string; subjectId: string; metadata: Record<string, unknown>; createdAt: string }
-interface UnusedImage { id: string; tags: string[]; size: number; createdAt?: string }
-interface UnusedImages { available: boolean; count: number; totalSize: number; items: UnusedImage[]; error?: string }
+interface UnusedImage { id: string; tags: string[]; size: number; createdAt?: string; category: 'dangling' | 'cached' }
+interface UnusedImages {
+  available: boolean; count: number; totalSize: number
+  danglingCount: number; danglingSize: number; cachedCount: number; cachedSize: number
+  items: UnusedImage[]; error?: string
+}
 interface ImagePruneResult { imagesDeleted: number; referencesUntagged: number; spaceReclaimed: number }
+interface ImageDeleteResult { imageId: string; referencesUntagged: number; deleteRecords: number }
 interface Payload {
   settings: Settings; operations: Operations; database: DatabaseStatus; backups: Backup[]; stability: Stability
   devices: Device[]; rules: AlertRule[]; windows: MaintenanceWindow[]; audit: AuditEntry[]; unusedImages: UnusedImages
@@ -46,7 +52,10 @@ const restoreEvidence = ref<OperationEvidence>()
 const stabilityLoading = ref(false)
 const stabilityEvidence = ref<OperationEvidence>()
 const imageCleanupLoading = ref(false)
+const deletingImageId = ref('')
 const imageCleanupEvidence = ref<OperationEvidence>()
+const danglingPage = ref(1)
+const cachedPage = ref(1)
 const settingsEvidence = ref<OperationEvidence>()
 const maintenanceName = ref('')
 const maintenanceStart = ref('')
@@ -60,7 +69,7 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
     api<{ items: MaintenanceWindow[] }>('/api/v1/maintenance-windows').catch(() => ({ items: [] })),
     api<{ items: AuditEntry[] }>('/api/v1/audit?limit=100').catch(() => ({ items: [] })),
     api<UnusedImages>('/api/v1/docker/images/unused').catch((reason) => ({
-      available: false, count: 0, totalSize: 0, items: [],
+      available: false, count: 0, totalSize: 0, danglingCount: 0, danglingSize: 0, cachedCount: 0, cachedSize: 0, items: [],
       error: reason instanceof Error ? reason.message : String(reason),
     })),
   ])
@@ -78,6 +87,19 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
   }
 })
 const localCapability = computed(() => data.value?.operations.capabilities.filter((item) => !item.capability.startsWith('remote.')) || [])
+const imagePageSize = 8
+const danglingImages = computed(() => data.value?.unusedImages.items.filter((item) => item.category === 'dangling') || [])
+const cachedImages = computed(() => data.value?.unusedImages.items.filter((item) => item.category === 'cached') || [])
+const danglingPages = computed(() => Math.max(1, Math.ceil(danglingImages.value.length / imagePageSize)))
+const cachedPages = computed(() => Math.max(1, Math.ceil(cachedImages.value.length / imagePageSize)))
+const visibleDanglingImages = computed(() => {
+  const page = Math.min(danglingPage.value, danglingPages.value)
+  return danglingImages.value.slice((page - 1) * imagePageSize, page * imagePageSize)
+})
+const visibleCachedImages = computed(() => {
+  const page = Math.min(cachedPage.value, cachedPages.value)
+  return cachedImages.value.slice((page - 1) * imagePageSize, page * imagePageSize)
+})
 
 async function createPairingCode() {
   pairingLoading.value = true
@@ -136,6 +158,7 @@ async function saveOperationalSettings() {
       rollupRetentionDays: settings.rollupRetentionDays,
       auditRetentionDays: settings.auditRetentionDays,
       inspectionRetentionDays: settings.inspectionRetentionDays,
+      backupRetentionCount: settings.backupRetentionCount,
       dailyInspectionHour: settings.dailyInspectionHour,
       weeklyInspectionHour: settings.weeklyInspectionHour,
     }),
@@ -163,6 +186,19 @@ async function createBackup() {
     emit('toast', message)
   } finally {
     backupLoading.value = false
+  }
+}
+async function deleteBackup(name: string) {
+  if (!window.confirm(`确定删除备份 ${name}？删除后无法恢复。`)) return
+  try {
+    await api(`/api/v1/backups/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    backupEvidence.value = { status: 'success', message: `备份 ${name} 已删除` }
+    emit('toast', '备份已删除')
+    await refresh()
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    backupEvidence.value = { status: 'error', message }
+    emit('toast', message)
   }
 }
 async function restoreBackup(name: string) {
@@ -203,10 +239,10 @@ async function resetStability() {
   }
 }
 async function pruneUnusedImages() {
-  if (!data.value?.unusedImages.available || data.value.unusedImages.count === 0) return
+  if (!data.value?.unusedImages.available || data.value.unusedImages.danglingCount === 0) return
   const preview = data.value.unusedImages
   if (!window.confirm(
-    `确定清理 ${preview.count} 个未被任何容器引用的镜像？\n\n镜像逻辑大小约 ${bytes(preview.totalSize)}，实际释放空间以 Docker 返回结果为准。停止状态容器引用的镜像不会删除。`,
+    `确定清理 ${preview.danglingCount} 个悬空旧镜像？\n\n镜像逻辑大小约 ${bytes(preview.danglingSize)}。带标签、可能供暂停应用未来启动使用的缓存镜像不会批量删除。`,
   )) return
   imageCleanupLoading.value = true
   imageCleanupEvidence.value = undefined
@@ -214,7 +250,7 @@ async function pruneUnusedImages() {
     const result = await api<ImagePruneResult>('/api/v1/docker/images/prune', { method: 'POST' })
     imageCleanupEvidence.value = {
       status: 'success',
-      message: `清理完成：删除 ${result.imagesDeleted} 个镜像，释放 ${bytes(result.spaceReclaimed)}，解除 ${result.referencesUntagged} 个旧标签引用`,
+      message: `悬空镜像清理完成：删除 ${result.imagesDeleted} 个镜像，释放 ${bytes(result.spaceReclaimed)}`,
     }
     emit('toast', `已释放 ${bytes(result.spaceReclaimed)}`)
     await refresh()
@@ -224,6 +260,33 @@ async function pruneUnusedImages() {
     emit('toast', message)
   } finally {
     imageCleanupLoading.value = false
+  }
+}
+async function deleteUnusedImage(image: UnusedImage) {
+  const cached = image.category === 'cached'
+  const label = image.tags[0] || image.id.slice(0, 19)
+  const warning = cached
+    ? '该镜像可能供当前未启动的 LPK 使用；删除后下次启动需要重新拉取。'
+    : '该镜像没有标签且未被容器引用。'
+  if (!window.confirm(`确定删除镜像 ${label}？\n\n${warning}`)) return
+  deletingImageId.value = image.id
+  imageCleanupEvidence.value = undefined
+  try {
+    const result = await api<ImageDeleteResult>(`/api/v1/docker/images/${encodeURIComponent(image.id)}`, { method: 'DELETE' })
+    imageCleanupEvidence.value = {
+      status: 'success',
+      message: `镜像 ${result.imageId.slice(0, 19)} 已删除，移除 ${result.deleteRecords} 条镜像记录`,
+    }
+    emit('toast', '镜像已删除')
+    await refresh()
+    danglingPage.value = Math.min(danglingPage.value, danglingPages.value)
+    cachedPage.value = Math.min(cachedPage.value, cachedPages.value)
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    imageCleanupEvidence.value = { status: 'error', message }
+    emit('toast', message)
+  } finally {
+    deletingImageId.value = ''
   }
 }
 </script>
@@ -326,7 +389,7 @@ async function pruneUnusedImages() {
     <template v-else-if="data && tab === 'retention'">
       <div class="section-title"><div><h2>数据保留策略</h2></div><button class="primary-button" @click="saveOperationalSettings">保存保留策略</button></div>
       <div class="settings-grid retention-summary">
-        <div><span>基础采集</span><b>{{ data.settings.collectIntervalSeconds }} 秒</b></div><div><span>高级采集</span><b>{{ data.settings.advancedIntervalSeconds }} 秒</b></div><label><span>原始数据（天）</span><input v-model.number="data.settings.rawRetentionDays" type="number" min="1" max="365"></label><label><span>降采样数据（天）</span><input v-model.number="data.settings.rollupRetentionDays" type="number" min="1" max="3650"></label><label><span>审计保留（天）</span><input v-model.number="data.settings.auditRetentionDays" type="number" min="1" max="3650"></label><label><span>巡检保留（天）</span><input v-model.number="data.settings.inspectionRetentionDays" type="number" min="1" max="3650"></label>
+        <div><span>基础采集</span><b>{{ data.settings.collectIntervalSeconds }} 秒</b></div><div><span>高级采集</span><b>{{ data.settings.advancedIntervalSeconds }} 秒</b></div><label><span>原始数据（天）</span><input v-model.number="data.settings.rawRetentionDays" type="number" min="1" max="365"></label><label><span>降采样数据（天）</span><input v-model.number="data.settings.rollupRetentionDays" type="number" min="1" max="3650"></label><label><span>审计保留（天）</span><input v-model.number="data.settings.auditRetentionDays" type="number" min="1" max="3650"></label><label><span>巡检保留（天）</span><input v-model.number="data.settings.inspectionRetentionDays" type="number" min="1" max="3650"></label><label><span>数据库备份（份）</span><input v-model.number="data.settings.backupRetentionCount" type="number" min="1" max="100"></label>
       </div>
       <div class="operations-layout">
         <section class="card">
@@ -334,7 +397,7 @@ async function pruneUnusedImages() {
           <div class="database-status"><StatusPill :status="data.database.integrityOk ? 'healthy' : 'critical'" /><b>{{ data.database.integrityOk ? 'SQLite 完整性检查通过' : data.database.integrityError }}</b><span>{{ bytes(data.database.databaseSize) }}</span></div>
           <p v-if="backupEvidence" class="operation-evidence" :class="backupEvidence.status" role="status">{{ backupEvidence.message }}</p>
           <p v-if="restoreEvidence" class="operation-evidence" :class="restoreEvidence.status" role="status">{{ restoreEvidence.message }}</p>
-          <div class="backup-list"><div v-for="backup in data.backups.slice(0, 8)" :key="backup.name" class="backup-row"><div><b>{{ backupType(backup.type) }} · v{{ backup.appVersion }}</b><p>{{ dateTime(backup.createdAt) }} · {{ bytes(backup.size) }}</p><code>SHA-256 {{ backup.sha256.slice(0, 16) }}…</code></div><div><StatusPill :status="backup.verified ? 'healthy' : 'critical'" /><button class="tiny danger-button" :disabled="!backup.verified" @click="restoreBackup(backup.name)">恢复</button></div></div><div v-if="!data.backups.length" class="inline-empty">尚无备份。版本升级时会自动创建升级前备份。</div></div>
+          <div class="backup-list"><div v-for="backup in data.backups" :key="backup.name" class="backup-row"><div><b>{{ backupType(backup.type) }} · v{{ backup.appVersion }}</b><p>{{ dateTime(backup.createdAt) }} · {{ bytes(backup.size) }}</p><code>SHA-256 {{ backup.sha256.slice(0, 16) }}…</code></div><div><StatusPill :status="backup.verified ? 'healthy' : 'critical'" /><button class="tiny secondary-button" :disabled="!backup.verified" @click="restoreBackup(backup.name)">恢复</button><button class="tiny danger-button" @click="deleteBackup(backup.name)">删除</button></div></div><div v-if="!data.backups.length" class="inline-empty">尚无备份。版本升级时会自动创建升级前备份。</div></div>
         </section>
         <aside class="card">
           <div class="section-title compact"><div><h2>7 天稳定性观测</h2><span class="muted">长期生产验证</span></div></div>
@@ -345,27 +408,43 @@ async function pruneUnusedImages() {
       <section class="card image-cleanup-card">
         <div class="section-title">
           <div>
-            <h2>未引用镜像清理</h2>
-            <span class="muted">仅删除没有任何运行或停止状态容器引用的 Docker 镜像；当前应用镜像不会被删除。</span>
+            <h2>未引用镜像管理</h2>
+            <span class="muted">悬空旧镜像可批量清理；带标签的缓存镜像可能供未启动 LPK 使用，只允许逐个确认删除。</span>
           </div>
           <button
             class="danger-button"
-            :disabled="imageCleanupLoading || !data.unusedImages.available || data.unusedImages.count === 0"
+            :disabled="imageCleanupLoading || !data.unusedImages.available || data.unusedImages.danglingCount === 0"
             @click="pruneUnusedImages"
-          >{{ imageCleanupLoading ? '清理中…' : data.unusedImages.count ? `清理 ${data.unusedImages.count} 个镜像` : '没有可清理镜像' }}</button>
+          >{{ imageCleanupLoading ? '清理中…' : data.unusedImages.danglingCount ? `清理 ${data.unusedImages.danglingCount} 个悬空镜像` : '没有悬空镜像' }}</button>
         </div>
         <p v-if="imageCleanupEvidence" class="operation-evidence" :class="imageCleanupEvidence.status" role="status">{{ imageCleanupEvidence.message }}</p>
         <p v-if="!data.unusedImages.available" class="operation-evidence warning" role="status">镜像维护不可用：{{ data.unusedImages.error || 'LazyCat Docker 接口未授权或不可用' }}</p>
         <div v-else class="settings-grid image-cleanup-summary">
-          <div><span>候选镜像</span><b>{{ data.unusedImages.count }} 个</b></div>
-          <div><span>镜像逻辑大小</span><b>{{ bytes(data.unusedImages.totalSize) }}</b></div>
-          <div><span>删除边界</span><b>无容器引用</b><StatusPill status="available" /></div>
+          <div><span>悬空旧镜像</span><b>{{ data.unusedImages.danglingCount }} 个 · {{ bytes(data.unusedImages.danglingSize) }}</b></div>
+          <div><span>未运行缓存镜像</span><b>{{ data.unusedImages.cachedCount }} 个 · {{ bytes(data.unusedImages.cachedSize) }}</b></div>
+          <div><span>容器引用保护</span><b>运行和停止容器均保护</b><StatusPill status="available" /></div>
         </div>
-        <div v-if="data.unusedImages.items.length" class="backup-list">
-          <div v-for="image in data.unusedImages.items.slice(0, 8)" :key="image.id" class="backup-row">
-            <div><b>{{ image.tags.join(', ') }}</b><p>{{ image.id.slice(0, 19) }} · {{ bytes(image.size) }}<template v-if="image.createdAt"> · {{ dateTime(image.createdAt) }}</template></p></div>
+        <div class="image-category">
+          <div class="section-title compact"><div><h3>悬空旧镜像</h3><span class="muted">没有标签、没有容器引用，可批量或逐个删除。</span></div></div>
+          <div v-if="visibleDanglingImages.length" class="backup-list">
+            <div v-for="image in visibleDanglingImages" :key="image.id" class="backup-row">
+              <div><b>{{ image.tags.join(', ') }}</b><p>{{ image.id.slice(0, 19) }} · {{ bytes(image.size) }}<template v-if="image.createdAt"> · {{ dateTime(image.createdAt) }}</template></p></div>
+              <button class="tiny danger-button" :disabled="deletingImageId === image.id" @click="deleteUnusedImage(image)">{{ deletingImageId === image.id ? '删除中…' : '删除' }}</button>
+            </div>
           </div>
-          <div v-if="data.unusedImages.items.length > 8" class="inline-empty">另有 {{ data.unusedImages.items.length - 8 }} 个候选镜像未展开。</div>
+          <div v-else class="inline-empty">没有悬空旧镜像。</div>
+          <div v-if="danglingPages > 1" class="pagination"><button :disabled="danglingPage <= 1" @click="danglingPage--">上一页</button><span>{{ danglingPage }} / {{ danglingPages }}</span><button :disabled="danglingPage >= danglingPages" @click="danglingPage++">下一页</button></div>
+        </div>
+        <div class="image-category">
+          <div class="section-title compact"><div><h3>未运行缓存镜像</h3><span class="muted">当前无容器引用，但可能属于暂停或尚未启动的 LPK。删除后未来启动会重新拉取。</span></div></div>
+          <div v-if="visibleCachedImages.length" class="backup-list">
+            <div v-for="image in visibleCachedImages" :key="image.id" class="backup-row">
+              <div><b>{{ image.tags.join(', ') }}</b><p>{{ image.id.slice(0, 19) }} · {{ bytes(image.size) }}<template v-if="image.createdAt"> · {{ dateTime(image.createdAt) }}</template></p></div>
+              <button class="tiny danger-button" :disabled="deletingImageId === image.id" @click="deleteUnusedImage(image)">{{ deletingImageId === image.id ? '删除中…' : '删除并允许重拉' }}</button>
+            </div>
+          </div>
+          <div v-else class="inline-empty">没有未运行缓存镜像。</div>
+          <div v-if="cachedPages > 1" class="pagination"><button :disabled="cachedPage <= 1" @click="cachedPage--">上一页</button><span>{{ cachedPage }} / {{ cachedPages }}</span><button :disabled="cachedPage >= cachedPages" @click="cachedPage++">下一页</button></div>
         </div>
       </section>
     </template>

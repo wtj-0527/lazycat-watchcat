@@ -16,7 +16,8 @@ beforeEach(() => {
     if (path === '/api/v1/settings') return {
       appVersion: '1.8.0', deploymentMode: 'single-lpk', embeddedCollector: true, singleUser: true, maxDevices: 100,
       collectIntervalSeconds: 30, advancedIntervalSeconds: 300, rawRetentionDays: 7, rollupRetentionDays: 90,
-      auditRetentionDays: 180, inspectionRetentionDays: 180, notificationChannel: 'lazycat', notificationDelivery: 'outbox-retry',
+      auditRetentionDays: 180, inspectionRetentionDays: 180, backupRetentionCount: 20,
+      notificationChannel: 'lazycat', notificationDelivery: 'outbox-retry',
       storageStats: { rawMetricRows: 1, rollupRows: 1 },
     }
     if (path === '/api/v1/operations') return { capabilities: [], schedule: { daily: { hour: 2 }, weekly: { hour: 3 }, timezone: 'Asia/Shanghai' } }
@@ -118,10 +119,18 @@ describe('SettingsPage tabs', () => {
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/docker/images/unused') {
         return pruned
-          ? { available: true, count: 0, totalSize: 0, items: [] }
+          ? {
+              available: true, count: 1, totalSize: 2048,
+              danglingCount: 0, danglingSize: 0, cachedCount: 1, cachedSize: 2048,
+              items: [{ id: `sha256:${'b'.repeat(64)}`, tags: ['cached:future'], size: 2048, createdAt: now, category: 'cached' }],
+            }
           : {
               available: true, count: 2, totalSize: 3072,
-              items: [{ id: 'sha256:unused', tags: ['unused:old'], size: 3072, createdAt: now }],
+              danglingCount: 1, danglingSize: 1024, cachedCount: 1, cachedSize: 2048,
+              items: [
+                { id: `sha256:${'a'.repeat(64)}`, tags: ['<none>:<none>'], size: 1024, createdAt: now, category: 'dangling' },
+                { id: `sha256:${'b'.repeat(64)}`, tags: ['cached:future'], size: 2048, createdAt: now, category: 'cached' },
+              ],
             }
       }
       if (path === '/api/v1/docker/images/prune' && options?.method === 'POST') {
@@ -135,15 +144,47 @@ describe('SettingsPage tabs', () => {
     await flushPromises()
     await wrapper.get('#settings-tab-retention').trigger('click')
 
-    expect(wrapper.text()).toContain('清理 2 个镜像')
-    expect(wrapper.text()).toContain('unused:old')
+    expect(wrapper.text()).toContain('清理 1 个悬空镜像')
+    expect(wrapper.text()).toContain('cached:future')
+    expect(wrapper.text()).toContain('删除并允许重拉')
     await wrapper.get('.image-cleanup-card .danger-button').trigger('click')
     await flushPromises()
 
     expect(confirm).toHaveBeenCalledOnce()
     expect(apiMock).toHaveBeenCalledWith('/api/v1/docker/images/prune', { method: 'POST' })
     expect(wrapper.text()).toContain('删除 2 个镜像')
-    expect(wrapper.text()).toContain('没有可清理镜像')
+    expect(wrapper.text()).toContain('没有悬空镜像')
+    wrapper.unmount()
+  })
+
+  it('saves backup retention and deletes a selected backup after confirmation', async () => {
+    const backup = {
+      name: 'manual-delete.db', type: 'manual', appVersion: '1.12.4', createdAt: now,
+      size: 2048, sha256: 'b'.repeat(64), verified: true,
+    }
+    const base = apiMock.getMockImplementation()!
+    let deleted = false
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/backups') return { items: deleted ? [] : [backup] }
+      if (path === `/api/v1/backups/${backup.name}` && options?.method === 'DELETE') {
+        deleted = true
+        return undefined
+      }
+      return base(path, options)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+    await wrapper.get('#settings-tab-retention').trigger('click')
+
+    expect(wrapper.text()).toContain('数据库备份（份）')
+    const deleteButton = wrapper.findAll('.operations-layout .danger-button').find((button) => button.text() === '删除')
+    expect(deleteButton).toBeTruthy()
+    await deleteButton!.trigger('click')
+    await flushPromises()
+
+    expect(apiMock).toHaveBeenCalledWith(`/api/v1/backups/${backup.name}`, { method: 'DELETE' })
+    expect(wrapper.text()).toContain(`备份 ${backup.name} 已删除`)
     wrapper.unmount()
   })
 })

@@ -135,7 +135,11 @@ func (m *Manager) Create(ctx context.Context, kind string) (Manifest, error) {
 		_ = os.Remove(path)
 		return Manifest{}, err
 	}
-	if err := m.Prune(20); err != nil {
+	keep := store.DefaultOperationalSettings().BackupRetentionCount
+	if m.store != nil {
+		keep = m.store.OperationalSettings(ctx).BackupRetentionCount
+	}
+	if err := m.Prune(keep); err != nil {
 		return item, err
 	}
 	return item, nil
@@ -197,8 +201,8 @@ func (m *Manager) StageRestore(name string) error {
 }
 
 func (m *Manager) Prune(keep int) error {
-	if keep < 3 {
-		keep = 3
+	if keep < 1 {
+		keep = 1
 	}
 	items, err := m.List()
 	if err != nil {
@@ -210,6 +214,30 @@ func (m *Manager) Prune(keep int) error {
 	for _, item := range items[keep:] {
 		_ = os.Remove(filepath.Join(m.dir, item.Name+".db"))
 		_ = os.Remove(filepath.Join(m.dir, item.Name+".json"))
+	}
+	return nil
+}
+
+func (m *Manager) Delete(name string) error {
+	normalized := safeName(name)
+	if normalized == "" || normalized != name {
+		return errors.New("invalid backup name")
+	}
+	item, err := m.loadManifest(name)
+	if err != nil {
+		return err
+	}
+	if raw, readErr := os.ReadFile(m.restoreRequestPath()); readErr == nil {
+		var request RestoreRequest
+		if json.Unmarshal(raw, &request) == nil && request.Name == name {
+			return errors.New("backup is pending restore")
+		}
+	}
+	if err := os.Remove(filepath.Join(m.dir, item.Name+".db")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(filepath.Join(m.dir, item.Name+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }

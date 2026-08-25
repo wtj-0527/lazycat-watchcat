@@ -268,6 +268,11 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .retention-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
 .image-cleanup-card { margin-top: 16px; }
 .image-cleanup-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }
+.image-category { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.image-category h3 { margin: 0 0 4px; font-size: 14px; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.pagination button { min-height: 30px; padding: 0 12px; border: 1px solid var(--border); background: #fff; color: var(--secondary); }
+.pagination span { color: var(--muted); font-size: 11px; }
 .database-status { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 12px; border-radius: 8px; background: #f8fafc; }
 .database-status span:last-child { margin-left: auto; color: var(--muted); }
 .backup-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--border-subtle); }

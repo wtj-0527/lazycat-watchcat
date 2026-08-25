@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,5 +123,43 @@ func TestCorruptBackupIsRejectedAndUpgradeBackupIsCreated(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("version transition did not create a pre-upgrade backup")
+	}
+}
+
+func TestDeleteBackupRemovesManifestAndDatabase(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dbPath, backupDir := filepath.Join(root, "maoyan.db"), filepath.Join(root, "backups")
+	manager := New(dbPath, backupDir, "1.12.5")
+	if err := manager.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	manager.Attach(st)
+	if err := manager.MarkVersion(); err != nil {
+		t.Fatal(err)
+	}
+	item, err := manager.Create(ctx, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Delete(item.Name); err != nil {
+		t.Fatal(err)
+	}
+	items, err := manager.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("backup still listed: %+v", items)
+	}
+	for _, suffix := range []string{".db", ".json"} {
+		if _, err := os.Stat(filepath.Join(backupDir, item.Name+suffix)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s still exists or unexpected stat error: %v", suffix, err)
+		}
 	}
 }

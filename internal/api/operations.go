@@ -12,6 +12,7 @@ import (
 type dockerMaintenance interface {
 	UnusedImages(context.Context) (collector.UnusedImageSummary, error)
 	PruneUnusedImages(context.Context) (collector.ImagePruneResult, error)
+	DeleteUnusedImage(context.Context, string) (collector.ImageDeleteResult, error)
 }
 
 func (s *Server) versionView(w http.ResponseWriter, _ *http.Request) {
@@ -42,6 +43,20 @@ func (s *Server) createBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, item)
+}
+
+func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
+	if s.backup == nil {
+		problem(w, http.StatusServiceUnavailable, "backup_unavailable", "备份服务未配置")
+		return
+	}
+	name := r.PathValue("name")
+	if err := s.backup.Delete(name); err != nil {
+		problem(w, http.StatusBadRequest, "backup_delete_rejected", err.Error())
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "backup.deleted", "backup", name, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +136,31 @@ func (s *Server) pruneDockerImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.RecordAudit(r.Context(), "docker.images.pruned", "device", s.localDeviceID, result)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) deleteDockerImage(w http.ResponseWriter, r *http.Request) {
+	if s.docker == nil {
+		problem(w, http.StatusServiceUnavailable, "docker_maintenance_unavailable", "Docker 镜像维护服务未配置")
+		return
+	}
+	select {
+	case s.dockerPrune <- struct{}{}:
+		defer func() { <-s.dockerPrune }()
+	default:
+		problem(w, http.StatusConflict, "docker_prune_in_progress", "镜像清理正在执行")
+		return
+	}
+	imageID := r.PathValue("id")
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+	result, err := s.docker.DeleteUnusedImage(ctx, imageID)
+	if err != nil {
+		_ = s.store.RecordAudit(r.Context(), "docker.image.delete_failed", "docker_image", imageID, map[string]any{"error": err.Error()})
+		problem(w, http.StatusConflict, "docker_image_delete_failed", "镜像仍被引用或删除失败")
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "docker.image.deleted", "docker_image", imageID, result)
 	writeJSON(w, http.StatusOK, result)
 }
 
