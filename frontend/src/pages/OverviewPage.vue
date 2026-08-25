@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { Device, Overview } from '@/types'
-import { ago, deviceState, formatMetricValue, statusRank, storageRiskAdvice, storageRiskStatus, storageUsageMetric } from '@/utils'
+import { ago, deviceState, formatMetricValue, statusRank, storageRiskAdvice, storageRiskStatus, storageUsageMetrics } from '@/utils'
 import AlertRow from '@/components/AlertRow.vue'
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
@@ -17,16 +17,16 @@ const { data, loading, error, refresh } = usePolling(async () => {
 const orderedDevices = computed(() => [...(data.value?.devices || [])]
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
 const activeAlerts = computed(() => data.value?.alerts || [])
-const storageRows = computed(() => orderedDevices.value.map((device) => ({ device, point: storageUsageMetric(device) }))
-  .filter((row) => row.point)
-  .sort((a, b) => (b.point?.value || 0) - (a.point?.value || 0)))
+const storageRows = computed(() => orderedDevices.value
+  .flatMap((device) => storageUsageMetrics(device).map((point) => ({ device, point })))
+  .sort((a, b) => b.point.value - a.point.value))
 const healthDistribution = computed(() => [
   { label: '健康', value: orderedDevices.value.filter((device) => deviceState(device) === 'healthy').length, color: '#118847' },
   { label: '警告', value: orderedDevices.value.filter((device) => deviceState(device) === 'warning').length, color: '#c05600' },
   { label: '严重', value: orderedDevices.value.filter((device) => deviceState(device) === 'critical').length, color: '#c51d23' },
   { label: '离线', value: orderedDevices.value.filter((device) => deviceState(device) === 'offline').length, color: '#64748b' },
 ])
-const capacityBars = computed(() => storageRows.value.slice(0, 8).map((row) => ({
+const capacityBars = computed(() => storageRows.value.map((row) => ({
   label: `${row.device.name} / ${row.point?.labels?.mount || row.point?.labels?.device || '主存储'}`,
   value: Number((row.point?.value || 0).toFixed(1)),
   color: row.point && storageRiskStatus(row.point) === 'critical' ? '#c51d23' : row.point && storageRiskStatus(row.point) === 'warning' ? '#c05600' : '#2563eb',
@@ -101,7 +101,7 @@ function capabilityDetail(device: Device): string {
           <span role="columnheader">采集能力</span><span role="columnheader">预计写满</span>
           <span role="columnheader">风险</span><span role="columnheader">建议</span>
         </div>
-        <div v-for="row in storageRows.slice(0, 5)" :key="row.device.id" class="capacity-evidence-row" role="row">
+        <div v-for="row in storageRows" :key="`${row.device.id}:${row.point.labels?.mount || row.point.labels?.device || row.point.name}`" class="capacity-evidence-row" role="row">
           <div role="cell" data-label="设备 / 卷"><b>{{ row.device.name }}</b><small>{{ row.point?.labels?.mount || row.point?.labels?.device || '主存储' }}</small></div>
           <strong role="cell" data-label="当前使用率">{{ row.point ? formatMetricValue(row.point.value, row.point.unit) : '未知' }}</strong>
           <span role="cell" data-label="采集能力" :title="capabilityDetail(row.device)">采集能力 {{ capabilitySummary(row.device) }}</span>

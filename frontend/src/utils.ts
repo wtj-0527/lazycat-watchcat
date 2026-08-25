@@ -19,9 +19,25 @@ export function metric(device: Device, name: string): Metric | undefined {
 }
 
 export function storageUsageMetric(device: Device): Metric | undefined {
-  return ['filesystem.root.usage', 'btrfs.usage']
-    .flatMap((name) => device.latest?.[name] || [])
-    .sort((a, b) => b.value - a.value)[0]
+  return storageUsageMetrics(device).sort((a, b) => b.value - a.value)[0]
+}
+
+export function storageUsageMetrics(device: Device): Metric[] {
+  const btrfs = device.latest?.['btrfs.usage'] || []
+  const candidates = btrfs.length ? btrfs : (device.latest?.['filesystem.root.usage'] || [])
+  const latestByVolume = new Map<string, Metric>()
+  for (const point of candidates) {
+    const volume = point.labels?.mount || point.labels?.device || point.name
+    const current = latestByVolume.get(volume)
+    const pointTime = new Date(point.collectedAt).getTime()
+    const currentTime = current ? new Date(current.collectedAt).getTime() : 0
+    if (!current
+      || pointTime > currentTime
+      || (pointTime === currentTime && !current.labels?.backing_device && Boolean(point.labels?.backing_device))) {
+      latestByVolume.set(volume, point)
+    }
+  }
+  return [...latestByVolume.values()]
 }
 
 export function storageRiskStatus(point: Metric): 'critical' | 'warning' | undefined {

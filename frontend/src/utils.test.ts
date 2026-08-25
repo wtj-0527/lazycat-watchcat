@@ -14,6 +14,7 @@ import {
   storageRiskAdvice,
   storageRiskStatus,
   storageUsageMetric,
+  storageUsageMetrics,
 } from './utils'
 
 const baseDevice: Device = {
@@ -115,6 +116,21 @@ describe('production state helpers', () => {
       latest: { [root.name]: [root], [btrfsSafe.name]: [btrfsSafe, btrfsRisk] },
     }
     expect(storageUsageMetric(device)).toBe(btrfsRisk)
+  })
+
+  it('returns every storage volume and removes duplicate snapshots by mount', () => {
+    const older = point('btrfs.usage', 50, '%')
+    older.labels = { mount: '/data' }
+    older.collectedAt = '2026-08-25T10:00:00Z'
+    const data = point('btrfs.usage', 51, '%')
+    data.labels = { mount: '/data', backing_device: '/dev/sda1' }
+    data.collectedAt = '2026-08-25T10:05:00Z'
+    const backup = point('btrfs.usage', 20, '%')
+    backup.labels = { mount: '/backup' }
+    backup.collectedAt = '2026-08-25T10:05:00Z'
+    const device = { ...baseDevice, latest: { 'btrfs.usage': [older, data, backup] } }
+
+    expect(storageUsageMetrics(device)).toEqual([data, backup])
   })
 
   it('uses an explicit unknown value when no metric exists', () => {

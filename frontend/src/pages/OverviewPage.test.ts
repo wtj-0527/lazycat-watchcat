@@ -36,7 +36,10 @@ describe('OverviewPage', () => {
         status: 'active', lastSeenAt: collectedAt, online: true, stale: false, health: 'critical',
         latest: {
           'filesystem.root.usage': [{ name: 'filesystem.root.usage', value: 20, unit: '%', labels: { mount: '/' }, collectedAt }],
-          'btrfs.usage': [{ name: 'btrfs.usage', value: 96, unit: '%', labels: { mount: '/data' }, collectedAt }],
+          'btrfs.usage': [
+            { name: 'btrfs.usage', value: 96, unit: '%', labels: { mount: '/data' }, collectedAt },
+            { name: 'btrfs.usage', value: 42, unit: '%', labels: { mount: '/backup' }, collectedAt },
+          ],
           'network.interface.receive.bytes_total': [{ name: 'network.interface.receive.bytes_total', value: 2048, unit: 'bytes', labels: { interface: 'eth0' }, collectedAt }],
         },
       }],
@@ -48,6 +51,8 @@ describe('OverviewPage', () => {
     await flushPromises()
 
     expect(wrapper.get('.capacity-evidence-list').text()).toContain('96.0%')
+    expect(wrapper.get('.capacity-evidence-list').text()).toContain('42.0%')
+    expect(wrapper.findAll('.capacity-evidence-row')).toHaveLength(2)
     expect(wrapper.get('.capacity-evidence-list').find('.pill').classes()).toContain('critical')
     expect(wrapper.get('.device-health-head').text()).toContain('最新数据')
     expect(wrapper.get('.capacity-evidence-head').text()).toContain('预计写满')
