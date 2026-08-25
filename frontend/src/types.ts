@@ -24,6 +24,7 @@ export interface Device {
   labels?: Record<string, string>
   capabilities?: string[]
   status: string
+  local?: boolean
   lastSeenAt: string
   online: boolean
   stale: boolean

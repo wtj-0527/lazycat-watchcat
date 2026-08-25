@@ -102,6 +102,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/stability", s.stabilityStatus)
 	s.mux.HandleFunc("POST /api/v1/stability/reset", s.resetStability)
 	s.mux.HandleFunc("POST /api/v1/devices/{id}/revoke", s.revokeDevice)
+	s.mux.HandleFunc("DELETE /api/v1/devices/{id}", s.deleteDevice)
 	s.mux.HandleFunc("GET /api/v1/saved-views", s.savedViews)
 	s.mux.HandleFunc("POST /api/v1/saved-views", s.savedViews)
 	s.mux.HandleFunc("DELETE /api/v1/saved-views/{id}", s.deleteSavedView)
@@ -177,6 +178,26 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "revoked", "deviceId": deviceID})
+}
+func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
+	deviceID := strings.TrimSpace(r.PathValue("id"))
+	if deviceID == "" {
+		problem(w, http.StatusBadRequest, "invalid_device", "设备 ID 必填")
+		return
+	}
+	if s.localDeviceID != "" && deviceID == s.localDeviceID {
+		problem(w, http.StatusConflict, "local_device_delete_rejected", "不能删除运行猫眼服务的本机设备")
+		return
+	}
+	if err := s.store.DeleteDevice(r.Context(), deviceID); err != nil {
+		if store.IsNotFound(err) {
+			problem(w, http.StatusNotFound, "device_not_found", "设备不存在")
+			return
+		}
+		problem(w, http.StatusInternalServerError, "device_delete_failed", "无法删除设备")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 	var batch protocol.MetricBatch

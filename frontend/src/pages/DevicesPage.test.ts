@@ -144,4 +144,33 @@ describe('DevicesPage detail tabs', () => {
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('&from=') && String(path).includes('&to='))).toBe(true)
     wrapper.unmount()
   })
+
+  it('deletes a remote device after confirmation and hides deletion for the local device', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/overview') return overview
+      if (path === '/api/v1/devices/d1' && options?.method === 'DELETE') return undefined
+      if (path === '/api/v1/devices/d1') return device
+      if (path.includes('/metrics') || path.includes('/events')) return { items: [] }
+      if (path === '/api/v1/operations') return { capabilities: [] }
+      return device
+    })
+    const wrapper = mount(DevicesPage)
+    await flushPromises()
+    await wrapper.get('button.row-link').trigger('click')
+    await flushPromises()
+    await wrapper.get('.danger-button').trigger('click')
+    await flushPromises()
+    expect(apiMock).toHaveBeenCalledWith('/api/v1/devices/d1', { method: 'DELETE' })
+    expect(wrapper.text()).toContain('设备清单')
+    wrapper.unmount()
+
+    apiMock.mockImplementation(async (path: string) => path === '/api/v1/overview' ? overview : { ...device, local: true })
+    const localWrapper = mount(DevicesPage)
+    await flushPromises()
+    await localWrapper.get('button.row-link').trigger('click')
+    await flushPromises()
+    expect(localWrapper.find('.danger-button').exists()).toBe(false)
+    localWrapper.unmount()
+  })
 })

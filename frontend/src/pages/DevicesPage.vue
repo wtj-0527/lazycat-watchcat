@@ -22,6 +22,7 @@ const detailDeviceId = ref('')
 const { selected: selectedTab, select: selectDetailTab, move: moveDetailTab } = useRovingTabs(detailTabs, 'overview', 'device-tab-')
 const detailLoading = ref(false)
 const detailError = ref('')
+const deletingDevice = ref(false)
 const query = ref(sessionStorage.getItem('maoyanSearch') || '')
 const statusFilter = ref('all')
 const connectivityFilter = ref('all')
@@ -179,6 +180,22 @@ async function editMetadata() {
   })
   selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(selected.value.id)}`)
 }
+async function deleteDevice() {
+  if (!selected.value || selected.value.local || deletingDevice.value) return
+  const device = selected.value
+  if (!window.confirm(`确定删除设备“${device.name}”吗？该设备的指标、告警和运行状态将被永久删除，之后需要使用新配对码重新接入。`)) return
+  deletingDevice.value = true
+  detailError.value = ''
+  try {
+    await api(`/api/v1/devices/${encodeURIComponent(device.id)}`, { method: 'DELETE' })
+    closeDetail()
+    await refresh()
+  } catch (reason) {
+    detailError.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    deletingDevice.value = false
+  }
+}
 const trendSeries = computed<ChartSeries[]>(() => [
   { name: '处理器', color: '#2563eb', points: trend.value['system.cpu.usage'] || [] },
   { name: '内存', color: '#c05600', points: trend.value['system.memory.usage'] || [] },
@@ -295,6 +312,7 @@ const capabilityCount = computed(() => selected.value
             <StatusPill :status="deviceState(selected)" /><StatusPill :status="connectivityState(selected)" />
             <span class="pill unknown">{{ ago(selected.lastSeenAt) }}</span>
             <button class="secondary-button" @click="editMetadata">编辑资料</button>
+            <button v-if="!selected.local" class="danger-button" :disabled="deletingDevice" @click="deleteDevice">{{ deletingDevice ? '删除中…' : '删除设备' }}</button>
           </div>
         </section>
 

@@ -404,6 +404,31 @@ func (s *Store) RevokeDevice(ctx context.Context, deviceID string) error {
 	return tx.Commit()
 }
 
+func (s *Store) DeleteDevice(ctx context.Context, deviceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var name, hostname string
+	if err := tx.QueryRowContext(ctx, `SELECT name,hostname FROM devices WHERE id=?`, deviceID).Scan(&name, &hostname); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE id=?`, deviceID)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return sql.ErrNoRows
+	}
+	metadata, _ := json.Marshal(map[string]string{"name": name, "hostname": hostname})
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(action,subject_type,subject_id,metadata_json,created_at) VALUES('device.deleted','device',?,?,?)`,
+		deviceID, string(metadata), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) IngestMetrics(ctx context.Context, batch protocol.MetricBatch) error {
 	now := time.Now().UTC()
 	tx, err := s.db.BeginTx(ctx, nil)

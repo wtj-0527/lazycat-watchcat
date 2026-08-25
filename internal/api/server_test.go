@@ -192,4 +192,38 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 	if deniedRecorder.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked certificate status=%d", deniedRecorder.Code)
 	}
+
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/devices/"+paired.DeviceID, nil)
+	deleteRecorder := httptest.NewRecorder()
+	New(st, ca, "../../web", 10*time.Minute).Handler().ServeHTTP(deleteRecorder, deleteRequest)
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status=%d body=%s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+	devices, err := st.ListDevices(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 0 {
+		t.Fatalf("devices remain after delete: %+v", devices)
+	}
+}
+
+func TestDeleteLocalDeviceIsRejected(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ca, err := pki.LoadOrCreate(filepath.Join(t.TempDir(), "pki"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, ca, "../../web", 10*time.Minute)
+	server.localDeviceID = "local-device"
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/devices/local-device", nil)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("delete local status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
 }

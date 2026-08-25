@@ -22,6 +22,7 @@ type deviceView struct {
 	Online bool                            `json:"online"`
 	Stale  bool                            `json:"stale"`
 	Health string                          `json:"health"`
+	Local  bool                            `json:"local,omitempty"`
 	Latest map[string][]store.LatestMetric `json:"latest"`
 }
 type alertView struct {
@@ -91,6 +92,7 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 	deviceList := []protocol.Device{device}
 	attachMetadata(deviceList, meta)
 	view := buildDeviceViewsWithRules(deviceList, metrics, s.loadAlertRules(r.Context()))[0]
+	view.Local = id == s.localDeviceID
 	writeJSON(w, 200, view)
 }
 func (s *Server) metricHistory(w http.ResponseWriter, r *http.Request) {
@@ -981,7 +983,11 @@ func (s *Server) snapshotContext(ctx context.Context) ([]deviceView, []store.Lat
 	}
 	meta, _ := s.store.DeviceMetadataMap(ctx)
 	attachMetadata(devices, meta)
-	return buildDeviceViewsWithRules(devices, metrics, s.loadAlertRulesContext(ctx)), metrics, nil
+	views := buildDeviceViewsWithRules(devices, metrics, s.loadAlertRulesContext(ctx))
+	for index := range views {
+		views[index].Local = views[index].ID == s.localDeviceID
+	}
+	return views, metrics, nil
 }
 
 func (s *Server) loadAlertRulesContext(ctx context.Context) []alertRule {
