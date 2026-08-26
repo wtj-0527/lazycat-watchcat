@@ -7,6 +7,7 @@ import { ago, bytes, deviceState, formatMetricValue, statusRank, storageRiskAdvi
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
 import PageState from '@/components/PageState.vue'
+import RealtimeMetricCard from '@/components/RealtimeMetricCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
 const { data, loading, error, refresh } = usePolling(async () => {
@@ -34,6 +35,7 @@ interface RealtimeMetric {
   label: string
   value: string
   detail: string
+  parts?: Array<{ label: string; value: string }>
   percent?: number
   status?: 'warning' | 'critical'
 }
@@ -81,6 +83,7 @@ function pairedCounter(device: Device, label: string, left: [string, string, str
   return {
     label,
     value: points.length ? `${left[2]} ${bytes(a.value)} · ${right[2]} ${bytes(b.value)}` : '未知',
+    parts: points.length ? [{ label: left[2], value: bytes(a.value) }, { label: right[2], value: bytes(b.value) }] : undefined,
     detail: pointDetail(points),
   }
 }
@@ -142,12 +145,17 @@ function capabilityDetail(device: Device): string {
             <StatusPill :status="deviceState(device)" />
           </header>
           <div class="realtime-metric-grid">
-            <div v-for="item in realtimeMetrics(device)" :key="item.label" class="realtime-metric" :class="item.status" :title="item.detail">
-              <span>{{ item.label }}</span>
-              <strong>{{ item.value }}</strong>
-              <i v-if="item.percent !== undefined"><em :style="{width:`${item.percent}%`}" /></i>
-              <small>{{ item.detail }}</small>
-            </div>
+            <RealtimeMetricCard
+              v-for="(item, index) in realtimeMetrics(device)"
+              :key="item.label"
+              :label="item.label"
+              :value="item.value"
+              :parts="item.parts"
+              :detail="item.detail"
+              :percent="item.percent"
+              :status="item.status"
+              :tooltip-placement="index < 4 ? 'below' : 'above'"
+            />
           </div>
         </article>
       </div>
@@ -165,7 +173,7 @@ function capabilityDetail(device: Device): string {
         <div v-for="row in storageRows" :key="`${row.device.id}:${row.point.labels?.mount || row.point.labels?.device || row.point.name}`" class="capacity-evidence-row" role="row">
           <div role="cell" data-label="设备 / 卷"><b>{{ row.device.name }}</b><small>{{ row.point?.labels?.mount || row.point?.labels?.device || '主存储' }}</small></div>
           <strong role="cell" data-label="当前使用率">{{ row.point ? formatMetricValue(row.point.value, row.point.unit) : '未知' }}</strong>
-          <span role="cell" data-label="采集能力" :title="capabilityDetail(row.device)">采集能力 {{ capabilitySummary(row.device) }}</span>
+          <span class="capability-summary-hover" role="cell" data-label="采集能力" tabindex="0">采集能力 {{ capabilitySummary(row.device) }}<span class="capacity-hover-tooltip" role="tooltip">{{ capabilityDetail(row.device) }}</span></span>
           <span role="cell" data-label="预计写满">历史不足</span>
           <span role="cell" data-label="风险"><StatusPill :status="row.point && storageRiskStatus(row.point) || 'unknown'" /></span>
           <p role="cell" data-label="建议">{{ row.point ? storageRiskAdvice(row.point) : '等待采集' }}</p>

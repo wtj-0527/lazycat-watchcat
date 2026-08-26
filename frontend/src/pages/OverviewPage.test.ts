@@ -45,6 +45,9 @@ describe('OverviewPage', () => {
             { name: 'btrfs.usage', value: 42, unit: '%', labels: { mount: '/backup' }, collectedAt },
           ],
           'network.interface.receive.bytes_total': [{ name: 'network.interface.receive.bytes_total', value: 2048, unit: 'bytes', labels: { interface: 'eth0' }, collectedAt }],
+          'network.interface.transmit.bytes_total': [{ name: 'network.interface.transmit.bytes_total', value: 4096, unit: 'bytes', labels: { interface: 'eth0' }, collectedAt }],
+          'disk.io.read.bytes_total': [{ name: 'disk.io.read.bytes_total', value: 10 * 1024 ** 4, unit: 'bytes', labels: { device: 'sda' }, collectedAt }],
+          'disk.io.write.bytes_total': [{ name: 'disk.io.write.bytes_total', value: 8 * 1024 ** 4, unit: 'bytes', labels: { device: 'sda' }, collectedAt }],
         },
       }],
       alerts: [],
@@ -59,13 +62,22 @@ describe('OverviewPage', () => {
     expect(wrapper.findAll('.capacity-evidence-row')).toHaveLength(2)
     expect(wrapper.get('.capacity-evidence-list').find('.pill').classes()).toContain('critical')
     expect(wrapper.get('.capacity-evidence-head').text()).toContain('预计写满')
-    expect(wrapper.get('.capacity-evidence-list').text()).toContain('采集能力 3/5')
+    expect(wrapper.get('.capacity-evidence-list').text()).toContain('采集能力 4/5')
     expect(wrapper.findAll('.overview-summary-grid > .card')).toHaveLength(2)
     expect(wrapper.findAll('.fleet-device-metrics')).toHaveLength(1)
     expect(wrapper.get('.fleet-realtime-card').text()).toContain('CPU 使用率')
     expect(wrapper.get('.fleet-realtime-card').text()).toContain('18.0%')
     expect(wrapper.get('.fleet-realtime-card').text()).toContain('最高温度')
     expect(wrapper.get('.fleet-realtime-card').text()).toContain('51.0 ℃')
+    const metricCards = wrapper.findAll('.realtime-metric')
+    expect(metricCards[6].text()).toContain('收2.0 KiB')
+    expect(metricCards[6].text()).toContain('发4.0 KiB')
+    expect(metricCards[7].text()).toContain('读10.00 TiB')
+    expect(metricCards[7].text()).toContain('写8.00 TiB')
+    expect(metricCards[7].attributes('title')).toBeUndefined()
+    await metricCards[7].trigger('mouseenter')
+    expect(metricCards[7].get('[role="tooltip"]').text()).toContain('disk.io.read.bytes_total')
+    expect(wrapper.get('.capability-summary-hover').attributes('title')).toBeUndefined()
     wrapper.unmount()
   })
 })
