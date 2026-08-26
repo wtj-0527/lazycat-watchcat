@@ -4,7 +4,6 @@ import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { Device, Metric, Overview } from '@/types'
 import { ago, bytes, deviceState, formatMetricValue, statusRank, storageRiskAdvice, storageRiskStatus, storageUsageMetrics } from '@/utils'
-import AlertRow from '@/components/AlertRow.vue'
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
 import PageState from '@/components/PageState.vue'
@@ -16,7 +15,6 @@ const { data, loading, error, refresh } = usePolling(async () => {
 })
 const orderedDevices = computed(() => [...(data.value?.devices || [])]
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
-const activeAlerts = computed(() => data.value?.alerts || [])
 const storageRows = computed(() => orderedDevices.value
   .flatMap((device) => storageUsageMetrics(device).map((point) => ({ device, point })))
   .sort((a, b) => b.point.value - a.point.value))
@@ -130,36 +128,6 @@ function capabilityDetail(device: Device): string {
         <BarChart :items="capacityBars" unit="%" />
       </section>
 
-      <section class="card device-health-card">
-        <div class="section-title">
-          <div><h2>设备群健康</h2></div>
-          <div class="status-summary"><StatusPill status="healthy" /><StatusPill status="warning" /><StatusPill status="critical" /></div>
-        </div>
-        <div v-if="orderedDevices.length" class="device-health-list" role="table" aria-label="设备群健康">
-          <div class="device-health-head" role="row">
-            <span aria-hidden="true" /><span role="columnheader">设备</span><span role="columnheader">健康</span>
-            <span role="columnheader">连接</span><span role="columnheader">最新数据</span><span role="columnheader">操作</span>
-          </div>
-          <div v-for="device in orderedDevices.slice(0, 5)" :key="device.id" class="device-health-row" role="row">
-            <i :class="deviceState(device)" aria-hidden="true" />
-            <b role="cell" data-label="设备">{{ device.name }}</b>
-            <span role="cell" data-label="健康"><StatusPill :status="deviceState(device)" /></span>
-            <span role="cell" data-label="连接">{{ device.online ? (device.stale ? '陈旧' : '在线') : '离线' }}</span>
-            <span role="cell" data-label="最新数据">{{ ago(device.lastSeenAt) }}</span>
-            <a role="cell" data-label="操作" href="#devices">查看 →</a>
-          </div>
-        </div>
-        <div v-else class="inline-empty">尚未接入设备。设备接入后将在此显示实时健康状态。</div>
-      </section>
-
-      <aside class="card pending-events">
-        <div class="section-title compact"><div><h2>待处理事件</h2></div><span class="pill critical">{{ activeAlerts.length }} 个</span></div>
-        <div v-if="activeAlerts.length" class="compact-alerts">
-          <AlertRow v-for="alert in activeAlerts.slice(0, 3)" :key="alert.fingerprint" :alert="alert" />
-          <a class="section-link" href="#alerts">进入告警工作台 →</a>
-        </div>
-        <div v-else class="healthy-empty"><span>✓</span><b>当前没有活动风险</b></div>
-      </aside>
     </div>
 
     <section class="card fleet-realtime-card">

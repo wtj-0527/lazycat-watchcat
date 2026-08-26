@@ -491,31 +491,13 @@ body { font-size: 12px; }
 .overview-summary-grid > .card:hover { border-color: #cbd5e1; box-shadow: 0 12px 28px rgba(15, 23, 42, .07); transform: translateY(-2px); }
 .overview-health-distribution-card::before { background: linear-gradient(90deg, var(--healthy), var(--warning)); }
 .overview-storage-card::before { background: linear-gradient(90deg, #2563eb, #60a5fa); }
-.device-health-card::before { background: linear-gradient(90deg, #0f766e, #34d399); }
-.pending-events::before { background: linear-gradient(90deg, var(--critical), var(--warning)); }
 .overview-card-meta { display: inline-flex; align-items: center; min-height: 26px; padding: 0 10px; border-radius: 999px; background: #f1f5f9; color: var(--secondary); font-size: 11px; font-weight: 700; white-space: nowrap; }
-.overview-health-distribution-card, .overview-storage-card, .device-health-card, .pending-events { display: flex; flex-direction: column; }
+.overview-health-distribution-card, .overview-storage-card { display: flex; flex-direction: column; }
 .overview-health-distribution-card .donut-chart { flex: 1; width: min(100%, 520px); margin: 0 auto; grid-template-columns: 190px minmax(180px, 1fr); gap: 38px; }
 .overview-health-distribution-card .donut-legend { gap: 12px; }
 .overview-storage-card .bar-chart { flex: 1; align-content: center; gap: 14px; padding: 0; }
 .overview-storage-card .bar-chart-row { grid-template-columns: minmax(170px, 1.25fr) minmax(120px, 1fr) 54px; gap: 16px; }
 .overview-storage-card .bar-chart-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.device-health-card .device-health-list, .pending-events .compact-alerts { flex: 1; }
-.status-summary { display: flex; gap: 8px; }
-.device-health-list { display: grid; }
-.device-health-head { display: grid; grid-template-columns: 8px minmax(130px, 1fr) 80px 70px 80px 54px; align-items: center; gap: 10px; min-height: 34px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 700; }
-.device-health-row { display: grid; grid-template-columns: 8px minmax(130px, 1fr) 80px 70px 80px 54px; align-items: center; gap: 10px; min-height: 42px; border-bottom: 1px solid var(--border); }
-.device-health-row:last-child { border-bottom: 0; }
-.device-health-row > i { width: 8px; height: 8px; border-radius: 50%; background: var(--unknown); }
-.device-health-row > i.healthy { background: var(--healthy); }
-.device-health-row > i.warning, .device-health-row > i.stale { background: var(--warning); }
-.device-health-row > i.critical, .device-health-row > i.offline { background: var(--critical); }
-.device-health-row > span { color: var(--secondary); }
-.device-health-row > a, .section-link { color: var(--primary); font-weight: 700; text-decoration: none; }
-.pending-events .compact-alerts .alert-row { min-height: 56px; padding: 9px 0 9px 18px; border-left: 6px solid var(--critical); }
-.pending-events .compact-alerts .alert-title { font-size: 12px; }
-.pending-events .compact-alerts .alert-title span, .pending-events .compact-alerts .alert-main p, .pending-events .compact-alerts .contract-note { display: none; }
-.pending-events .section-link { display: block; margin-top: 12px; }
 .fleet-realtime-card{margin-bottom:20px}.fleet-realtime-grid{display:grid;gap:14px}.fleet-device-metrics{padding:16px;border:1px solid #dfe7f0;border-radius:12px;background:linear-gradient(145deg,#fff,#fbfdff)}.fleet-device-metrics>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.fleet-device-metrics>header>div{display:flex;align-items:center;gap:10px}.fleet-device-metrics>header i{width:10px;height:10px;border-radius:50%;background:var(--unknown)}.fleet-device-metrics>header i.healthy{background:var(--healthy);box-shadow:0 0 0 4px rgba(17,136,71,.08)}.fleet-device-metrics>header i.warning,.fleet-device-metrics>header i.stale{background:var(--warning)}.fleet-device-metrics>header i.critical,.fleet-device-metrics>header i.offline{background:var(--critical)}.fleet-device-metrics>header span{display:grid}.fleet-device-metrics>header b{font-size:14px}.fleet-device-metrics>header small{color:var(--muted);font-size:11px}.realtime-metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.realtime-metric{display:grid;align-content:start;gap:5px;min-width:0;min-height:88px;padding:11px 12px;border:1px solid #e6edf5;border-radius:9px;background:#f8fafc}.realtime-metric>span{color:var(--muted);font-size:10px;font-weight:700}.realtime-metric>strong{overflow:hidden;color:var(--text);font-size:14px;text-overflow:ellipsis;white-space:nowrap}.realtime-metric>small{overflow:hidden;color:#94a3b8;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.realtime-metric>i{height:4px;margin-top:2px;overflow:hidden;border-radius:999px;background:#e2e8f0}.realtime-metric>i em{display:block;height:100%;border-radius:inherit;background:#2563eb}.realtime-metric.warning{border-color:#fed7aa;background:#fffaf4}.realtime-metric.warning>i em{background:var(--warning)}.realtime-metric.critical{border-color:#fecaca;background:#fff7f7}.realtime-metric.critical>i em{background:var(--critical)}
 .capacity-risk-card { min-height: 250px; }
 .filter-bar { min-height: 64px; margin-bottom: 16px; padding: 11px 14px; border-radius: 12px; }
