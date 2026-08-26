@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 type halClient interface {

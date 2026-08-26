@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 type capabilityEvidence struct {
@@ -44,7 +44,7 @@ func NewEmbedded(ctx context.Context, st *store.Store, logger *slog.Logger, sync
 	if hostname == "" {
 		hostname, _ = os.Hostname()
 	}
-	name := envValue("MAOYAN_LOCAL_DEVICE_NAME", hostname)
+	name := envValue("WATCHCAT_LOCAL_DEVICE_NAME", hostname)
 	deviceID, err := st.EnsureLocalDevice(ctx, name, hostname, runtime.GOOS+"/"+runtime.GOARCH, buildinfo.Version, []string{
 		"collector.embedded", "host.metrics", "filesystem.metrics", "advanced.whitelist",
 	})
@@ -62,8 +62,8 @@ func NewEmbedded(ctx context.Context, st *store.Store, logger *slog.Logger, sync
 	}
 	return &Embedded{
 		store: st, logger: logger, deviceID: deviceID, advanced: AdvancedConfigFromEnv(),
-		hal: hal, docker: NewDockerCollector(envValue("MAOYAN_DOCKER_SOCKET", defaultDockerSocket)),
-		dataPath: envValue("MAOYAN_HOST_DATA_PATH", "/lzcapp/var"), syncAlerts: syncAlerts,
+		hal: hal, docker: NewDockerCollector(envValue("WATCHCAT_DOCKER_SOCKET", defaultDockerSocket)),
+		dataPath: envValue("WATCHCAT_HOST_DATA_PATH", "/lzcapp/var"), syncAlerts: syncAlerts,
 	}, nil
 }
 

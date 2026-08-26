@@ -15,10 +15,10 @@ type fakePackageManager struct {
 
 func (f *fakePackageManager) QueryApplication(_ context.Context, _ *sys.QueryApplicationRequest, _ ...grpc.CallOption) (*sys.QueryApplicationResponse, error) {
 	f.calls++
-	version, title, domain := "1.5.0", "猫眼", "maoyan.box.example"
+	version, title, domain := "1.5.0", "WatchCat", "watchcat.box.example"
 	status := sys.InstanceStatus_Status_Running
 	return &sys.QueryApplicationResponse{InfoList: []*sys.AppInfo{{
-		Appid: "community.lazycat.app.maoyan", DeployId: "community.lazycat.app.maoyan6",
+		Appid: "community.lazycat.app.watchcat", DeployId: "community.lazycat.app.watchcat6",
 		Version: &version, Title: &title, Domain: &domain, Status: sys.AppStatus_Installed, InstanceStatus: &status,
 	}}}, nil
 }

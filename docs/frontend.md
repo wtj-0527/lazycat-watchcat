@@ -1,6 +1,6 @@
 # 前端架构
 
-猫眼 1.5.0 起使用 Vue 3、Vite 和 TypeScript。
+WatchCat 1.5.0 起使用 Vue 3、Vite 和 TypeScript。
 
 ## 目录
 

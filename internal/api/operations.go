@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
-	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-watchcat/internal/collector"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 type dockerMaintenance interface {

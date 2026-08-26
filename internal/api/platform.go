@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 type alertRule struct {
@@ -178,7 +178,7 @@ func (s *Server) auditView(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("test:%d", time.Now().UTC().UnixNano())
-	if err := s.store.QueueNotification(r.Context(), key, "猫眼测试通知", "LazyCat 系统通知渠道工作正常", "lzc://community.lazycat.app.maoyan/settings"); err != nil {
+	if err := s.store.QueueNotification(r.Context(), key, "WatchCat 测试通知", "LazyCat 系统通知渠道工作正常", "lzc://community.lazycat.app.watchcat/settings"); err != nil {
 		problem(w, 500, "notification_test_failed", err.Error())
 		return
 	}
@@ -211,7 +211,7 @@ func (s *Server) exportInspection(w http.ResponseWriter, r *http.Request) {
 	}
 	format := r.URL.Query().Get("format")
 	if format == "pdf" {
-		body := fmt.Sprintf("Maoyan Inspection %s\\nStatus: %s\\nStarted: %s\\nDevices: %d\\nHealthy: %d Warning: %d Critical: %d\\nEvidence SHA-256: %s",
+		body := fmt.Sprintf("WatchCat Inspection %s\\nStatus: %s\\nStarted: %s\\nDevices: %d\\nHealthy: %d Warning: %d Critical: %d\\nEvidence SHA-256: %s",
 			item.ID, item.Status, item.StartedAt.Format(time.RFC3339), item.DeviceCount, item.HealthyCount, item.WarningCount, item.CriticalCount, item.EvidenceSHA256)
 		pdf := minimalPDF(body)
 		w.Header().Set("Content-Type", "application/pdf")

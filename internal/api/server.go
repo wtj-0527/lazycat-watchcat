@@ -11,14 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/backup"
-	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
-	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
-	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
-	"github.com/wtj-0527/lazycat-maoyan/internal/runtimeapps"
-	"github.com/wtj-0527/lazycat-maoyan/internal/stability"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/backup"
+	"github.com/wtj-0527/lazycat-watchcat/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-watchcat/internal/collector"
+	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeapps"
+	"github.com/wtj-0527/lazycat-watchcat/internal/stability"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 type Server struct {
@@ -192,7 +192,7 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.localDeviceID != "" && deviceID == s.localDeviceID {
-		problem(w, http.StatusConflict, "local_device_delete_rejected", "不能删除运行猫眼服务的本机设备")
+		problem(w, http.StatusConflict, "local_device_delete_rejected", "不能删除运行 WatchCat 服务的本机设备")
 		return
 	}
 	if err := s.store.DeleteDevice(r.Context(), deviceID); err != nil {

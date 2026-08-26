@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 func TestAcceleratedConcurrentWritesReadsBackupAndReopen(t *testing.T) {

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 type deviceView struct {
@@ -873,7 +873,7 @@ func (s *Server) RunInspection(ctx context.Context, trigger string) (store.Inspe
 		return store.Inspection{}, fmt.Errorf("无法保存巡检报告")
 	}
 	if checks["critical"] > 0 {
-		_ = s.store.QueueNotification(ctx, "inspection:"+item.ID, "猫眼巡检发现 Critical", fmt.Sprintf("%d 台设备存在 Critical，%d 台 Warning", checks["critical"], checks["warning"]), "lzc://community.lazycat.app.maoyan/inspections")
+		_ = s.store.QueueNotification(ctx, "inspection:"+item.ID, "WatchCat 巡检发现 Critical", fmt.Sprintf("%d 台设备存在 Critical，%d 台 Warning", checks["critical"], checks["warning"]), "lzc://community.lazycat.app.watchcat/inspections")
 	}
 	return item, nil
 }

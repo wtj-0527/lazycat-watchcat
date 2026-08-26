@@ -17,16 +17,16 @@ type Config struct {
 }
 
 func Load() Config {
-	dataDir := getenv("MAOYAN_DATA_DIR", "/lzcapp/var/data")
-	if _, err := os.Stat("web"); err == nil && os.Getenv("MAOYAN_DATA_DIR") == "" {
+	dataDir := getenv("WATCHCAT_DATA_DIR", "/lzcapp/var/data")
+	if _, err := os.Stat("web"); err == nil && os.Getenv("WATCHCAT_DATA_DIR") == "" {
 		dataDir = "data"
 	}
 	return Config{
-		Addr:           getenv("MAOYAN_ADDR", ":8080"),
-		CollectorAddr:  getenv("MAOYAN_COLLECTOR_ADDR", ":8443"),
-		CollectorHosts: splitHosts(getenv("MAOYAN_COLLECTOR_HOSTS", "maoyan-hub,localhost,127.0.0.1")),
+		Addr:           getenv("WATCHCAT_ADDR", ":8080"),
+		CollectorAddr:  getenv("WATCHCAT_COLLECTOR_ADDR", ":8443"),
+		CollectorHosts: splitHosts(getenv("WATCHCAT_COLLECTOR_HOSTS", "watchcat-hub,localhost,127.0.0.1")),
 		DataDir:        dataDir,
-		WebDir:         getenv("MAOYAN_WEB_DIR", defaultWebDir()),
+		WebDir:         getenv("WATCHCAT_WEB_DIR", defaultWebDir()),
 		PairingTTL:     10 * time.Minute,
 	}
 }
@@ -41,7 +41,7 @@ func splitHosts(value string) []string {
 	return hosts
 }
 
-func (c Config) DatabasePath() string { return filepath.Join(c.DataDir, "maoyan.db") }
+func (c Config) DatabasePath() string { return filepath.Join(c.DataDir, "watchcat.db") }
 
 func defaultWebDir() string {
 	if _, err := os.Stat("web"); err == nil {

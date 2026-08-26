@@ -15,8 +15,8 @@
 ### Brand
 
 - Logo：40 × 40 px，圆角 11 px
-- Logo 资源：`assets/cat-eye-logo-64.png`
-- Wordmark：`猫眼`
+- Logo 资源：`assets/watchcat-logo-64.png`
+- Wordmark：`WatchCat`
 - Subtitle：`Fleet Monitoring`
 - 图片使用正方形比例，不拉伸，不重新着色，不叠加 emoji
 

@@ -19,7 +19,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 type Credentials struct {
@@ -188,7 +188,7 @@ func Pair(ctx context.Context, client *http.Client, hubURL, code, name, hostname
 	return Credentials{
 		DeviceID: out.DeviceID, Token: out.Token, CertificatePEM: out.CertificatePEM,
 		PrivateKeyPEM: out.PrivateKeyPEM, CACertificatePEM: out.CACertificatePEM,
-		TLSServerName: "maoyan-hub", CertificateExpiresAt: out.CertificateExpiresAt,
+		TLSServerName: "watchcat-hub", CertificateExpiresAt: out.CertificateExpiresAt,
 	}, nil
 }
 func Send(ctx context.Context, client *http.Client, hubURL string, creds Credentials, batch protocol.MetricBatch) error {

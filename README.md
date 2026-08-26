@@ -1,9 +1,9 @@
-# lazycat-maoyan
+# lazycat-watchcat
 
-猫眼是单 LPK 安装、单镜像 Service 运行的 LazyCat 设备健康监控应用。
+WatchCat 是单 LPK 安装、单镜像 Service 运行的 LazyCat 设备健康监控应用。
 
-- Hub、Web UI、SQLite、告警、巡检、通知和本机 Collector 全部运行在同一个 `maoyan` Service
-- LPK 只包含应用清单和图标，运行镜像发布到阿里云 ACR：`registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan`
+- Hub、Web UI、SQLite、告警、巡检、通知和本机 Collector 全部运行在同一个 `watchcat` Service
+- LPK 只包含应用清单和图标，运行镜像发布到阿里云 ACR：`registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat`
 - Web UI 使用 Vue 3、Vite 和 TypeScript 组件化实现，生产包只包含编译后的静态资源
 - 应用状态通过官方 LzcSDK Package Manager API 获取，按当前 LazyCat 用户身份查询并保存最近一次成功快照
 - 主机扩展指标使用 gopsutil 读取 CPU、负载、Swap、块设备 IO、逐接口网络 IO 和可见温度传感器
@@ -11,9 +11,9 @@
 - 容器指标只通过 LazyCat Docker socket 调用容器列表和 Stats，并按 `lzcapp.app-id` 聚合到应用
 - 容器运行状态每 30 秒更新；资源 Stats 采用 8 容器轮转批次，完整 Fleet 在约 5 分钟内刷新，避免大规模实例同时采样拖高系统负载
 - 安装后自动注册当前 LazyCat 设备并开始采集，无需再安装第二个 Collector 应用
-- 每个 LPK 均可生成一次性设备邀请，或在“接入”页面粘贴邀请加入现有猫眼
-- 加入后继续保留本机监控，同时使用持久凭据和离线队列向主猫眼上报同一批真实指标
-- 跨设备配对与指标上报共用同一个可达的猫眼 HTTP 地址，不再要求单独暴露 mTLS 指标端口
+- 每个 LPK 均可生成一次性设备邀请，或在“接入”页面粘贴邀请加入现有 WatchCat
+- 加入后继续保留本机监控，同时使用持久凭据和离线队列向主 WatchCat 上报同一批真实指标
+- 跨设备配对与指标上报共用同一个可达的 WatchCat HTTP 地址，不再要求单独暴露 mTLS 指标端口
 
 ## 镜像与 LPK 发布
 
@@ -21,9 +21,9 @@
 
 ```bash
 docker build \
-  --label org.opencontainers.image.version=1.17.0 \
-  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.17.0 .
-docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.17.0
+  --label org.opencontainers.image.version=1.0.0 \
+  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.0.0 .
+docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.0.0
 # 将 lzc-manifest.yml 的 image 固定为 push 返回的 sha256 digest
 lzc-cli project lint .
 lzc-cli project deploy --release
@@ -45,6 +45,6 @@ lzc-cli project deploy --release
 ## 权限边界
 
 - 单一 LPK、单一 Service 进程，不使用 `privileged`、host PID、host network 或宿主机目录写挂载
-- `PERM_LZC_DOCKER_ADMIN` 仅用于让 LazyCat Runtime 映射 Docker socket；猫眼客户端只允许固定 GET 路径
+- `PERM_LZC_DOCKER_ADMIN` 仅用于让 LazyCat Runtime 映射 Docker socket；WatchCat 客户端只允许固定 GET 路径
 - 不申请 `PERM_OTHER_APP_DATA_ADMIN`，不读取其他应用的数据目录
 - SMART、NVMe 和 Btrfs 未获得所需只读设备／挂载映射时报告为 `restricted`；已配置但采集或解析失败时报告为 `error`

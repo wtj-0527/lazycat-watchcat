@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 func TestPlatformConfigurationAndExports(t *testing.T) {

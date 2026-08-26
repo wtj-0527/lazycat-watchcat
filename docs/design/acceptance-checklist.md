@@ -3,10 +3,10 @@
 ## Scope and assets
 
 - [x] 运行前端已按设计交接实现；生产数值仍来自真实 API。
-- [ ] `assets/cat-eye-logo.png` 是批准的 512 × 512 原始 PNG。
-- [x] `assets/cat-eye-logo-64.png` 是 64 × 64 UI PNG。
+- [ ] `assets/watchcat-logo.png` 是批准的 512 × 512 原始 PNG。
+- [x] `assets/watchcat-logo-64.png` 是 64 × 64 UI PNG。
 - [x] Logo 以正方形比例显示，不拉伸、不裁剪主体、不重新着色、不叠加 emoji。
-- [x] Penpot 和实现中的品牌文案均为“猫眼 / Fleet Monitoring”。
+- [x] Penpot 和实现中的品牌文案均为“WatchCat / Fleet Monitoring”。
 
 ## App shell
 
@@ -89,7 +89,7 @@
 
 ```bash
 python3 -m json.tool docs/design/tokens.json >/dev/null
-file docs/design/assets/cat-eye-logo.png docs/design/assets/cat-eye-logo-64.png
+file docs/design/assets/watchcat-logo.png docs/design/assets/watchcat-logo-64.png
 git diff --check
 git status --short
 ```

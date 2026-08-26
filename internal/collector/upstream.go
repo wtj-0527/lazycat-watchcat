@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 type UpstreamStatus struct {
@@ -78,7 +78,7 @@ func (u *Upstream) Join(ctx context.Context, invitation, name, hostname string) 
 	alreadyPaired := u.config.HubURL != "" && u.credentials.DeviceID != ""
 	u.mu.Unlock()
 	if alreadyPaired {
-		return UpstreamStatus{}, errors.New("本机已经加入现有猫眼，请先断开当前连接")
+		return UpstreamStatus{}, errors.New("本机已经加入现有 WatchCat，请先断开当前连接")
 	}
 	credentials, err := Pair(ctx, upstreamHTTPClient, hubURL, code, name, hostname, buildinfo.Version)
 	if err != nil {

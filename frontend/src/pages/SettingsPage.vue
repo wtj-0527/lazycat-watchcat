@@ -46,7 +46,7 @@ const emit = defineEmits<{ toast: [message: string] }>()
 const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, props.initialTab || 'thresholds', 'settings-tab-')
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
-const collectorHubURL = ref(localStorage.getItem('maoyanInviteEndpoint') || window.location.origin)
+const collectorHubURL = ref(localStorage.getItem('watchcatInviteEndpoint') || window.location.origin)
 const showConnectionSettings = ref(false)
 const connectMode = ref<'invite' | 'join'>('invite')
 const joinInvitation = ref('')
@@ -132,13 +132,13 @@ function buildPairingLink() {
 async function copyPairingLink() {
   try {
     await navigator.clipboard.writeText(buildPairingLink())
-    localStorage.setItem('maoyanInviteEndpoint', collectorHubURL.value.trim())
+    localStorage.setItem('watchcatInviteEndpoint', collectorHubURL.value.trim())
     emit('toast', '设备邀请已复制，可直接粘贴到目标设备')
   } catch {
     emit('toast', '请先生成邀请并填写目标设备可访问的有效地址')
   }
 }
-async function joinExistingMaoyan() {
+async function joinExistingWatchCat() {
   if (!joinInvitation.value.trim()) {
     emit('toast', '请先粘贴完整的设备邀请')
     return
@@ -150,7 +150,7 @@ async function joinExistingMaoyan() {
     })
     joinInvitation.value = ''
     await refresh()
-    emit('toast', '已加入现有猫眼，正在上报第一批指标')
+    emit('toast', '已加入现有 WatchCat，正在上报第一批指标')
   } catch (reason) {
     emit('toast', reason instanceof Error ? reason.message : String(reason))
   } finally {
@@ -158,7 +158,7 @@ async function joinExistingMaoyan() {
   }
 }
 async function disconnectUpstream() {
-  if (!window.confirm('确定断开与现有猫眼的连接吗？本机数据不会删除，重新加入需要新的设备邀请。')) return
+  if (!window.confirm('确定断开与现有 WatchCat 的连接吗？本机数据不会删除，重新加入需要新的设备邀请。')) return
   await api('/api/v1/upstream', { method: 'DELETE' })
   await refresh()
   emit('toast', '已断开上游连接')
@@ -256,7 +256,7 @@ async function deleteBackup(name: string) {
   }
 }
 async function restoreBackup(name: string) {
-  if (!window.confirm('恢复将重启猫眼并造成短暂断连；替换前会再创建安全备份。确定继续？')) return
+  if (!window.confirm('恢复将重启 WatchCat 并造成短暂断连；替换前会再创建安全备份。确定继续？')) return
   restoreEvidence.value = undefined
   try {
     const result = await api<RestoreResult>(`/api/v1/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' })
@@ -372,7 +372,7 @@ async function deleteUnusedImage(image: UnusedImage) {
       <div class="device-connect-page">
         <div class="connect-mode-switch" role="tablist" aria-label="设备接入方式">
           <button :class="{ active: connectMode === 'invite' }" role="tab" :aria-selected="connectMode === 'invite'" @click="connectMode = 'invite'">邀请其他设备</button>
-          <button :class="{ active: connectMode === 'join' }" role="tab" :aria-selected="connectMode === 'join'" @click="connectMode = 'join'">加入现有猫眼</button>
+          <button :class="{ active: connectMode === 'join' }" role="tab" :aria-selected="connectMode === 'join'" @click="connectMode = 'join'">加入现有 WatchCat</button>
         </div>
 
         <section v-if="connectMode === 'invite'" class="connect-hero">
@@ -421,8 +421,8 @@ async function deleteUnusedImage(image: UnusedImage) {
           </div>
           <div v-if="showConnectionSettings" class="connection-settings-panel">
             <label>
-              <span>目标设备可访问的猫眼地址</span>
-              <input v-model="collectorHubURL" type="url" placeholder="https://maoyan.example.com">
+              <span>目标设备可访问的 WatchCat 地址</span>
+              <input v-model="collectorHubURL" type="url" placeholder="https://watchcat.example.com">
             </label>
             <p>仅当目标设备无法访问当前地址时修改。可以填写局域网可达地址，或你手动配置的转发地址。</p>
           </div>
@@ -432,8 +432,8 @@ async function deleteUnusedImage(image: UnusedImage) {
           <div v-if="data.upstream.paired" class="joined-state">
             <div class="invite-success-icon" aria-hidden="true">✓</div>
             <div>
-              <span>已加入现有猫眼</span>
-              <h1>本机正在向主猫眼上报数据</h1>
+              <span>已加入现有 WatchCat</span>
+              <h1>本机正在向主 WatchCat 上报数据</h1>
               <p>{{ data.upstream.hubUrl }}</p>
               <small v-if="data.upstream.lastSuccessAt">最近上报 {{ ago(data.upstream.lastSuccessAt) }}</small>
               <small v-else>连接已建立，正在等待第一批指标上报。</small>
@@ -447,16 +447,16 @@ async function deleteUnusedImage(image: UnusedImage) {
               <div>
                 <span class="connect-eyebrow">加入设备群</span>
                 <h1>粘贴设备邀请</h1>
-                <p>在另一台猫眼中生成邀请，然后将完整内容粘贴到这里。本机名称会自动识别。</p>
+                <p>在另一台 WatchCat 中生成邀请，然后将完整内容粘贴到这里。本机名称会自动识别。</p>
               </div>
             </div>
             <label class="join-invitation-field">
               <span>设备邀请</span>
-              <textarea v-model="joinInvitation" autocomplete="off" placeholder="粘贴完整邀请，例如：http://猫眼地址/#pairing-code=..." />
+              <textarea v-model="joinInvitation" autocomplete="off" placeholder="粘贴完整邀请，例如：http://WatchCat 地址/#pairing-code=..." />
             </label>
             <div class="join-actions">
               <span>邀请只会使用一次，配对成功后不会保留原始配对码。</span>
-              <button class="primary-button" :disabled="joinLoading || !joinInvitation.trim()" @click="joinExistingMaoyan">
+              <button class="primary-button" :disabled="joinLoading || !joinInvitation.trim()" @click="joinExistingWatchCat">
                 {{ joinLoading ? '正在验证并加入…' : '验证并加入' }}
               </button>
             </div>
@@ -470,7 +470,7 @@ async function deleteUnusedImage(image: UnusedImage) {
               <div><h2>在目标设备上完成</h2><p>整个过程只需要粘贴一次。</p></div>
             </div>
             <ol class="connect-steps">
-              <li><b>1</b><div><strong>打开目标设备上的猫眼</strong><span>进入“接入”，选择“加入现有猫眼”。</span></div></li>
+              <li><b>1</b><div><strong>打开目标设备上的 WatchCat</strong><span>进入“接入”，选择“加入现有 WatchCat”。</span></div></li>
               <li><b>2</b><div><strong>粘贴设备邀请</strong><span>无需再填写主机名、地址或端口。</span></div></li>
               <li><b>3</b><div><strong>确认加入</strong><span>首次指标上报后，设备会自动出现在列表中。</span></div></li>
             </ol>
@@ -491,7 +491,7 @@ async function deleteUnusedImage(image: UnusedImage) {
           <section class="connect-guide-card">
             <div class="connect-card-heading">
               <span class="connect-card-icon target" aria-hidden="true">↗</span>
-              <div><h2>如何获得邀请</h2><p>在作为主节点的猫眼上操作。</p></div>
+              <div><h2>如何获得邀请</h2><p>在作为主节点的 WatchCat 上操作。</p></div>
             </div>
             <ol class="connect-steps">
               <li><b>1</b><div><strong>打开“接入”</strong><span>选择“邀请其他设备”。</span></div></li>
@@ -506,7 +506,7 @@ async function deleteUnusedImage(image: UnusedImage) {
             </div>
             <ul class="security-list">
               <li><i>✓</i><div><strong>保留本机监控</strong><span>本机数据库、告警和页面不会被关闭。</span></div></li>
-              <li><i>✓</i><div><strong>同步真实指标</strong><span>同一批采集数据会持续上报到主猫眼。</span></div></li>
+              <li><i>✓</i><div><strong>同步真实指标</strong><span>同一批采集数据会持续上报到主 WatchCat。</span></div></li>
               <li><i>✓</i><div><strong>可随时断开</strong><span>断开只删除本机上游凭据，不会删除本机历史数据。</span></div></li>
             </ul>
           </section>

@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 var ErrInvalidPairingCode = errors.New("invalid or expired pairing code")

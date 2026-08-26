@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 func TestDeviceMetricTimeRangeAcceptsCustomRange(t *testing.T) {

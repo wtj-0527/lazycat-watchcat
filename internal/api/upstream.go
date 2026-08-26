@@ -32,7 +32,7 @@ func (s *Server) joinUpstream(w http.ResponseWriter, r *http.Request) {
 	if hostname == "" {
 		hostname, _ = os.Hostname()
 	}
-	name := strings.TrimSpace(os.Getenv("MAOYAN_LOCAL_DEVICE_NAME"))
+	name := strings.TrimSpace(os.Getenv("WATCHCAT_LOCAL_DEVICE_NAME"))
 	if name == "" {
 		name = hostname
 	}

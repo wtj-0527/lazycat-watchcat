@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
-	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/collector"
+	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 func TestUpstreamJoinAndBearerMetricForwarding(t *testing.T) {

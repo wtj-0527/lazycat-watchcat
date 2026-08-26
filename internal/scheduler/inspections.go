@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/api"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/api"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 type InspectionScheduler struct {

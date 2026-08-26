@@ -1,4 +1,4 @@
-module github.com/wtj-0527/lazycat-maoyan
+module github.com/wtj-0527/lazycat-watchcat
 
 go 1.25.0
 

@@ -103,18 +103,18 @@ describe('SettingsPage tabs', () => {
     expect(wrapper.text()).not.toContain('192.168.')
     expect(wrapper.text()).not.toContain('当前部署')
     expect(wrapper.text()).not.toContain('高级连接设置')
-    expect(wrapper.text()).toContain('加入现有猫眼')
+    expect(wrapper.text()).toContain('加入现有 WatchCat')
     await wrapper.get('.connect-hero .primary-button').trigger('click')
     await flushPromises()
     await wrapper.get('.invite-ready-card .primary-button').trigger('click')
 
     expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/localhost:\d+\/#pairing-code=PAIR-1234$/))
     await wrapper.findAll('.text-button').at(1)!.trigger('click')
-    expect(wrapper.text()).toContain('目标设备可访问的猫眼地址')
+    expect(wrapper.text()).toContain('目标设备可访问的 WatchCat 地址')
     wrapper.unmount()
   })
 
-  it('pastes an invitation and joins an existing Maoyan from the onboarding page', async () => {
+  it('pastes an invitation and joins an existing WatchCat from the onboarding page', async () => {
     const base = apiMock.getMockImplementation()!
     let paired = false
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
@@ -136,7 +136,7 @@ describe('SettingsPage tabs', () => {
     expect(apiMock).toHaveBeenCalledWith('/api/v1/upstream/join', {
       method: 'POST', body: JSON.stringify({ invitation: 'http://hub:18080/#pairing-code=PAIR-1234' }),
     })
-    expect(wrapper.text()).toContain('已加入现有猫眼')
+    expect(wrapper.text()).toContain('已加入现有 WatchCat')
     expect(wrapper.text()).toContain('http://hub:18080')
     wrapper.unmount()
   })

@@ -1,7 +1,7 @@
-# 猫眼 1.8.0 Penpot 实现验收
+# WatchCat 1.8.0 Penpot 实现验收
 
-日期：2026-08-23  
-视觉基线：Penpot `猫眼 · Fleet Monitoring · V1`，Desktop Light 1440 × 1024  
+日期：2026-08-23
+视觉基线：Penpot `WatchCat · Fleet Monitoring · V1`，Desktop Light 1440 × 1024
 数据基线：生产 API 与实时 Collector 状态
 
 ## 本轮修正
@@ -34,16 +34,16 @@ go vet ./...
 npm --prefix frontend test -- --run
 npm --prefix frontend run build
 lzc-cli project lint .
-lzc-cli lpk lint lazycat-maoyan-1.8.0.lpk
+lzc-cli lpk lint lazycat-watchcat-1.8.0.lpk
 ```
 
 ## nasw 实机确认
 
-- 已安装 `lazycat-maoyan-1.8.0.lpk`，Package Manager 显示猫眼 `running`、版本 `1.8.0`。
+- 已安装 `lazycat-watchcat-1.8.0.lpk`，Package Manager 显示 WatchCat `running`、版本 `1.8.0`。
 - `/api/v1/health`、`version`、`settings`、`overview`、`applications`、
   `operations`、`database/status` 和 `stability` 均返回 HTTP 200。
-- Package Manager 实时返回 45 个应用实例；猫眼自身只有一个 running 实例。
-- 应用列表中不存在独立 Collector；nasw 只有一个猫眼业务进程，
+- Package Manager 实时返回 45 个应用实例；WatchCat 自身只有一个 running 实例。
+- 应用列表中不存在独立 Collector；nasw 只有一个 WatchCat 业务进程，
   本机 Collector 由该进程内置运行。
 - 主机/容器指标、能力状态、告警、巡检、备份和稳定性数据均正常回读。
 - Sidebar 实测 224 px、Topbar 实测 72 px、Logo 实测 40 × 40 px，

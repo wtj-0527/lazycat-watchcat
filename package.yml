@@ -1,6 +1,6 @@
-package: community.lazycat.app.maoyan
-version: 1.17.0
-name: 猫眼
+package: community.lazycat.app.watchcat
+version: 1.0.0
+name: WatchCat
 description: LazyCat Fleet Monitoring，集中查看设备、应用、存储与告警健康状态
 min_os_version: 1.5.2
 permissions:
@@ -8,5 +8,5 @@ permissions:
     - user.notify
 locales:
   zh:
-    name: 猫眼
+    name: WatchCat
     description: LazyCat 设备集群健康监控与巡检中心

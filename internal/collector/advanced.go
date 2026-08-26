@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 type AdvancedConfig struct {
@@ -34,7 +34,7 @@ func (osCommandRunner) Run(ctx context.Context, name string, args ...string) ([]
 var safeDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 
 func AdvancedConfigFromEnv() AdvancedConfig {
-	return AdvancedConfig{SmartDevices: validatedDevices(splitCSV(os.Getenv("MAOYAN_SMART_DEVICES"))), BtrfsMounts: validatedMounts(splitCSV(os.Getenv("MAOYAN_BTRFS_MOUNTS"))), LPKStatusFile: os.Getenv("MAOYAN_LPK_STATUS_FILE")}
+	return AdvancedConfig{SmartDevices: validatedDevices(splitCSV(os.Getenv("WATCHCAT_SMART_DEVICES"))), BtrfsMounts: validatedMounts(splitCSV(os.Getenv("WATCHCAT_BTRFS_MOUNTS"))), LPKStatusFile: os.Getenv("WATCHCAT_LPK_STATUS_FILE")}
 }
 func CollectAdvanced(ctx context.Context, cfg AdvancedConfig, now time.Time) ([]protocol.MetricPoint, []string) {
 	return collectAdvanced(ctx, osCommandRunner{}, cfg, now)

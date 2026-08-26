@@ -48,7 +48,7 @@ interface ComparisonPayload {
   updatedAt: string
 }
 
-const query = ref(sessionStorage.getItem('maoyanSearch') || '')
+const query = ref(sessionStorage.getItem('watchcatSearch') || '')
 const statusFilter = ref('all')
 const userFilter = ref('all')
 const instanceFilter = ref('all')

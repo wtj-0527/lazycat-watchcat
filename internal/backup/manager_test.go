@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 func TestCreateValidateAndRestore(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	dbPath := filepath.Join(root, "data", "maoyan.db")
+	dbPath := filepath.Join(root, "data", "watchcat.db")
 	manager := New(dbPath, filepath.Join(root, "backups"), "1.4.0")
 	if err := manager.Prepare(ctx); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestCreateValidateAndRestore(t *testing.T) {
 func TestCorruptBackupIsRejectedAndUpgradeBackupIsCreated(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	dbPath, backupDir := filepath.Join(root, "maoyan.db"), filepath.Join(root, "backups")
+	dbPath, backupDir := filepath.Join(root, "watchcat.db"), filepath.Join(root, "backups")
 	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestCorruptBackupIsRejectedAndUpgradeBackupIsCreated(t *testing.T) {
 func TestDeleteBackupRemovesManifestAndDatabase(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	dbPath, backupDir := filepath.Join(root, "maoyan.db"), filepath.Join(root, "backups")
+	dbPath, backupDir := filepath.Join(root, "watchcat.db"), filepath.Join(root, "backups")
 	manager := New(dbPath, backupDir, "1.12.5")
 	if err := manager.Prepare(ctx); err != nil {
 		t.Fatal(err)

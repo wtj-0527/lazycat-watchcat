@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 func TestObservationPersistsAcrossMonitorRestart(t *testing.T) {

@@ -2,12 +2,12 @@
 
 ## nasw 数据校准（2026-08-23）
 
-| 指标 | 宿主机基准 | 猫眼数据源 | 结论 |
+| 指标 | 宿主机基准 | WatchCat 数据源 | 结论 |
 |---|---:|---|---|
 | 1 分钟负载 | `/proc/loadavg` | 应用内共享 `/proc/loadavg` | 可用 |
 | 内存总量/可用量 | `/proc/meminfo` | 应用内共享 `/proc/meminfo` | 可用 |
 | LazyCat 数据池 | `/lzcsys/data` 使用率 89% | `/lzcapp/var` 所在文件系统 | 可用，语义已由“根文件系统”校准为“LazyCat data” |
-| 网络累计流量 | `/proc/net/dev` | 应用网络命名空间 | 可用，但仅代表猫眼应用网络 |
+| 网络累计流量 | `/proc/net/dev` | 应用网络命名空间 | 可用，但仅代表 WatchCat 应用网络 |
 | SMART/NVMe | 宿主机 `smartctl` 可读 | 应用未映射宿主机块设备 | 不可用，界面必须明确显示，不得推断健康 |
 | Btrfs 物理池 | 宿主机 `btrfs filesystem show` 可读 | 应用未映射宿主机挂载 | 不可用，界面必须明确显示 |
 | LPK Runtime | 宿主机运行时可见 | 尚无稳定只读状态源 | 不可用，界面必须明确显示 |

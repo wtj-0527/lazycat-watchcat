@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 type LatestMetric struct {

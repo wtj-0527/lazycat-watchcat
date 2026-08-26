@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 const stateKey = "stability_observation"

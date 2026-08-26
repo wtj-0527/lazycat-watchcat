@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"gitee.com/linakesi/lzc-sdk/lang/go/sys"
-	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
-	"github.com/wtj-0527/lazycat-maoyan/internal/runtimeapps"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeapps"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -94,9 +94,9 @@ func (f *fakeRuntimePackageManager) QueryApplication(ctx context.Context, _ *sys
 		}
 	}
 	running, paused := sys.InstanceStatus_Status_Running, sys.InstanceStatus_Status_Paused
-	v1, v2, title1, title2 := "1.6.0", "2.0.0", "猫眼", "文件服务"
+	v1, v2, title1, title2 := "1.6.0", "2.0.0", "WatchCat", "文件服务"
 	return &sys.QueryApplicationResponse{InfoList: []*sys.AppInfo{
-		{Appid: "community.lazycat.app.maoyan", DeployId: "maoyan6", Version: &v1, Title: &title1, Status: sys.AppStatus_Installed, InstanceStatus: &running},
+		{Appid: "community.lazycat.app.watchcat", DeployId: "watchcat6", Version: &v1, Title: &title1, Status: sys.AppStatus_Installed, InstanceStatus: &running},
 		{Appid: "cloud.lazycat.app.files", DeployId: "files6", Version: &v2, Title: &title2, Status: sys.AppStatus_Installed, InstanceStatus: &paused},
 	}}, nil
 }

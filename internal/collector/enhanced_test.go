@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 type fakeHALClient struct {
@@ -37,14 +37,14 @@ func TestHALCollectorOnlyEmitsPositiveReadOnlyFanRPM(t *testing.T) {
 
 func TestDockerLabelsPreferLazyCatRuntimeLabel(t *testing.T) {
 	labels := dockerLabels(dockerContainer{
-		ID: "0123456789abcdef", Names: []string{"/maoyan"}, Image: "image:v1", State: "running",
+		ID: "0123456789abcdef", Names: []string{"/watchcat"}, Image: "image:v1", State: "running",
 		Labels: map[string]string{
 			"home-cloud.app-id":          "legacy.app",
-			"lzcapp.app-id":              "community.lazycat.app.maoyan",
+			"lzcapp.app-id":              "community.lazycat.app.watchcat",
 			"com.docker.compose.service": "main",
 		},
 	})
-	if labels["app"] != "community.lazycat.app.maoyan" || labels["container"] != "0123456789ab" || labels["service"] != "main" {
+	if labels["app"] != "community.lazycat.app.watchcat" || labels["container"] != "0123456789ab" || labels["service"] != "main" {
 		t.Fatalf("labels=%+v", labels)
 	}
 }

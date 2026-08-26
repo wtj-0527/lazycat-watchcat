@@ -54,7 +54,7 @@ func LoadOrCreate(dir string) (*Authority, error) {
 	if err != nil {
 		return nil, err
 	}
-	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Maoyan Private Collector CA", Organization: []string{"Maoyan"}}, NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(10, 0, 0), KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature, BasicConstraintsValid: true, IsCA: true, MaxPathLen: 0}
+	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "WatchCat Private Collector CA", Organization: []string{"WatchCat"}}, NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(10, 0, 0), KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature, BasicConstraintsValid: true, IsCA: true, MaxPathLen: 0}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, key)
 	if err != nil {
 		return nil, err
@@ -136,7 +136,7 @@ func (a *Authority) EnsureServerIdentity(dir string, hosts []string) (ServerIden
 	now := time.Now().UTC()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "maoyan-hub", OrganizationalUnit: []string{"hub"}},
+		Subject:      pkix.Name{CommonName: "watchcat-hub", OrganizationalUnit: []string{"hub"}},
 		NotBefore:    now.Add(-time.Minute),
 		NotAfter:     now.AddDate(2, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

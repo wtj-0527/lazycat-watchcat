@@ -11,7 +11,7 @@ import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
 
 const emit = defineEmits<{ toast: [message: string] }>()
-const query = ref(sessionStorage.getItem('maoyanSearch') || '')
+const query = ref(sessionStorage.getItem('watchcatSearch') || '')
 const filter = ref('active')
 const severityFilter = ref('all')
 const timeFilter = ref('168')

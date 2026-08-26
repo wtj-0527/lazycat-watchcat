@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
-	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
+	"github.com/wtj-0527/lazycat-watchcat/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-watchcat/internal/collector"
 )
 
 type runtimeConfig struct {
@@ -47,30 +47,30 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	var status atomic.Value
 	status.Store("starting")
-	dataDir := env("MAOYAN_COLLECTOR_DATA_DIR", "/lzcapp/var/data")
+	dataDir := env("WATCHCAT_COLLECTOR_DATA_DIR", "/lzcapp/var/data")
 	configPath := filepath.Join(dataDir, "setup.json")
 	credsPath := filepath.Join(dataDir, "credentials.json")
 	config := loadRuntimeConfig(configPath)
 	if config.HubURL == "" {
-		config.HubURL = strings.TrimSpace(os.Getenv("MAOYAN_HUB_URL"))
+		config.HubURL = strings.TrimSpace(os.Getenv("WATCHCAT_HUB_URL"))
 	}
 	if config.CollectorURL == "" {
-		config.CollectorURL = strings.TrimSpace(os.Getenv("MAOYAN_COLLECTOR_URL"))
+		config.CollectorURL = strings.TrimSpace(os.Getenv("WATCHCAT_COLLECTOR_URL"))
 	}
 	hostname, _ := os.Hostname()
 	if config.DeviceName == "" {
-		config.DeviceName = env("MAOYAN_DEVICE_NAME", hostname)
+		config.DeviceName = env("WATCHCAT_DEVICE_NAME", hostname)
 	}
 	if config.CollectorURL == "" && config.HubURL != "" {
 		config.CollectorURL, _ = deriveCollectorURL(config.HubURL)
 	}
 	ready := make(chan pairedRuntime, 1)
 	setup := &setupServer{status: &status, configPath: configPath, credsPath: credsPath, current: config, ready: ready, logger: logger}
-	startSetupServer(env("MAOYAN_HEALTH_ADDR", ":8090"), setup, logger)
+	startSetupServer(env("WATCHCAT_HEALTH_ADDR", ":8090"), setup, logger)
 
 	creds, err := collector.LoadCredentials(credsPath)
 	if err != nil {
-		code := strings.TrimSpace(os.Getenv("MAOYAN_PAIRING_CODE"))
+		code := strings.TrimSpace(os.Getenv("WATCHCAT_PAIRING_CODE"))
 		if code != "" && config.HubURL != "" {
 			paired, pairErr := pairAndSave(config, code, hostname, configPath, credsPath)
 			if pairErr != nil {
@@ -85,7 +85,7 @@ func main() {
 		}
 		if creds.DeviceID == "" {
 			status.Store("unpaired")
-			logger.Warn("collector is waiting for frontend setup", "setup_addr", env("MAOYAN_HEALTH_ADDR", ":8090"))
+			logger.Warn("collector is waiting for frontend setup", "setup_addr", env("WATCHCAT_HEALTH_ADDR", ":8090"))
 			paired := <-ready
 			config, creds = paired.config, paired.creds
 			logger.Info("collector paired from frontend", "device_id", creds.DeviceID, "certificate_expires_at", creds.CertificateExpiresAt)
@@ -127,7 +127,7 @@ func main() {
 	advancedConfig := collector.AdvancedConfigFromEnv()
 	var lastAdvanced time.Time
 	interval := 30 * time.Second
-	if raw := os.Getenv("MAOYAN_COLLECT_INTERVAL"); raw != "" {
+	if raw := os.Getenv("WATCHCAT_COLLECT_INTERVAL"); raw != "" {
 		if parsed, e := time.ParseDuration(raw); e == nil && parsed >= 10*time.Second {
 			interval = parsed
 		}
@@ -284,7 +284,7 @@ func pairAndSave(config runtimeConfig, code, hostname, configPath, credsPath str
 
 func validateRuntimeConfig(config runtimeConfig, pairingCode string) error {
 	if config.HubURL == "" || strings.TrimSpace(pairingCode) == "" {
-		return errors.New("猫眼地址和配对码均为必填项")
+		return errors.New("WatchCat 地址和配对码均为必填项")
 	}
 	hub, err := url.Parse(config.HubURL)
 	if err != nil || hub.Host == "" || (hub.Scheme != "http" && hub.Scheme != "https") {
@@ -300,7 +300,7 @@ func validateRuntimeConfig(config runtimeConfig, pairingCode string) error {
 func deriveCollectorURL(hubURL string) (string, error) {
 	hub, err := url.Parse(strings.TrimSpace(hubURL))
 	if err != nil || hub.Hostname() == "" || (hub.Scheme != "http" && hub.Scheme != "https") {
-		return "", errors.New("猫眼地址必须是有效的 HTTP 或 HTTPS 地址")
+		return "", errors.New("WatchCat 地址必须是有效的 HTTP 或 HTTPS 地址")
 	}
 	return (&url.URL{Scheme: "https", Host: net.JoinHostPort(hub.Hostname(), "18443")}).String(), nil
 }
@@ -355,13 +355,13 @@ func (s *setupServer) page(w http.ResponseWriter, _ *http.Request) {
 	_, _ = fmt.Fprint(w, setupPage)
 }
 
-const setupPage = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>猫眼 Collector 配置</title><style>
-:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#162033;background:#f5f7fb}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}.shell{width:min(620px,100%)}.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}.logo{width:44px;height:44px;border-radius:14px;background:#111827;color:#fff;display:grid;place-items:center;font-size:24px}.brand h1{font-size:22px;margin:0}.brand p{margin:3px 0 0;color:#667085}.card{background:#fff;border:1px solid #e5e9f2;border-radius:18px;padding:26px;box-shadow:0 18px 45px rgba(34,51,84,.08)}.status{padding:12px 14px;border-radius:10px;background:#f3f6fb;margin-bottom:20px}.status.ok{background:#ecfdf3;color:#087443}.status.bad{background:#fff1f2;color:#b42318}label{display:block;margin:15px 0 0;font-weight:650}textarea{display:block;width:100%;min-height:110px;resize:vertical;margin-top:7px;border:1px solid #ccd4e0;border-radius:9px;padding:11px 12px;font:inherit;line-height:1.55}small{display:block;color:#667085;margin-top:5px;line-height:1.55}button{width:100%;margin-top:22px;border:0;border-radius:10px;padding:12px 16px;background:#2563eb;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.note{margin-top:18px;padding-top:16px;border-top:1px solid #edf0f5;color:#667085;line-height:1.65}code{background:#f3f4f6;padding:2px 5px;border-radius:5px}</style></head><body><main class="shell"><div class="brand"><div class="logo">◉</div><div><h1>猫眼 Collector 配置</h1><p>粘贴从主猫眼复制的完整配对链接</p></div></div><section class="card"><div id="status" class="status">正在读取状态…</div><form id="form"><label>完整配对链接<textarea id="inviteLink" required autocomplete="off" placeholder="http://目标猫眼地址/#pairing-code=一次性配对码"></textarea></label><small>链接中已经包含猫眼地址和一次性配对码；无需分别填写，也无需填写设备名称。</small><button id="submit" type="submit">验证并完成配对</button></form><div class="note">设备名称自动读取当前主机名；配对码只使用一次，不会保存在本机配置中。</div></section></main><script>
+const setupPage = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WatchCat Collector 配置</title><style>
+:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#162033;background:#f5f7fb}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}.shell{width:min(620px,100%)}.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}.logo{width:44px;height:44px;border-radius:14px;background:#111827;color:#fff;display:grid;place-items:center;font-size:24px}.brand h1{font-size:22px;margin:0}.brand p{margin:3px 0 0;color:#667085}.card{background:#fff;border:1px solid #e5e9f2;border-radius:18px;padding:26px;box-shadow:0 18px 45px rgba(34,51,84,.08)}.status{padding:12px 14px;border-radius:10px;background:#f3f6fb;margin-bottom:20px}.status.ok{background:#ecfdf3;color:#087443}.status.bad{background:#fff1f2;color:#b42318}label{display:block;margin:15px 0 0;font-weight:650}textarea{display:block;width:100%;min-height:110px;resize:vertical;margin-top:7px;border:1px solid #ccd4e0;border-radius:9px;padding:11px 12px;font:inherit;line-height:1.55}small{display:block;color:#667085;margin-top:5px;line-height:1.55}button{width:100%;margin-top:22px;border:0;border-radius:10px;padding:12px 16px;background:#2563eb;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.note{margin-top:18px;padding-top:16px;border-top:1px solid #edf0f5;color:#667085;line-height:1.65}code{background:#f3f4f6;padding:2px 5px;border-radius:5px}</style></head><body><main class="shell"><div class="brand"><div class="logo">◉</div><div><h1>WatchCat Collector 配置</h1><p>粘贴从主 WatchCat 复制的完整配对链接</p></div></div><section class="card"><div id="status" class="status">正在读取状态…</div><form id="form"><label>完整配对链接<textarea id="inviteLink" required autocomplete="off" placeholder="http://目标 WatchCat 地址/#pairing-code=一次性配对码"></textarea></label><small>链接中已经包含 WatchCat 地址和一次性配对码；无需分别填写，也无需填写设备名称。</small><button id="submit" type="submit">验证并完成配对</button></form><div class="note">设备名称自动读取当前主机名；配对码只使用一次，不会保存在本机配置中。</div></section></main><script>
 const statusEl=document.querySelector('#status'),form=document.querySelector('#form'),button=document.querySelector('#submit');
 function parseInvite(value){const u=new URL(value.trim()),p=new URLSearchParams(u.hash.slice(1)),code=p.get('pairing-code')||p.get('code')||u.searchParams.get('pairing-code')||u.searchParams.get('code');if(!code)throw new Error('配对链接中没有找到配对码');u.hash='';u.search='';return{hubUrl:u.toString().replace(/\/$/,''),pairingCode:code}}
 function prefill(){const p=new URLSearchParams(location.hash.slice(1)),invite=p.get('invite');if(invite)inviteLink.value=invite;else if(p.get('hub')&&p.get('code')){const u=new URL(p.get('hub'));u.hash=new URLSearchParams({'pairing-code':p.get('code')}).toString();inviteLink.value=u.toString()}if(location.hash)history.replaceState(null,'',location.pathname+location.search)}
 async function load(){prefill();try{const r=await fetch('/api/v1/setup'),d=await r.json();if(d.paired){statusEl.className='status ok';statusEl.textContent='已完成配对，Collector 正在使用证书上报数据。';form.hidden=true}else{statusEl.textContent=d.pairing?'正在配对…':'尚未配对，请粘贴完整配对链接。'}}catch(e){statusEl.className='status bad';statusEl.textContent='无法读取 Collector 状态：'+e.message}}
-form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;button.textContent='正在验证并配对…';statusEl.className='status';statusEl.textContent='正在连接猫眼服务并签发证书…';try{const config=parseInvite(inviteLink.value),r=await fetch('/api/v1/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)}),d=await r.json();if(!r.ok)throw new Error(d.error?.message||('HTTP '+r.status));statusEl.className='status ok';statusEl.textContent='配对成功，设备 ID：'+d.deviceId;form.hidden=true}catch(e){statusEl.className='status bad';statusEl.textContent=e.message;button.disabled=false;button.textContent='验证并完成配对'}});load();
+form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;button.textContent='正在验证并配对…';statusEl.className='status';statusEl.textContent='正在连接 WatchCat 服务并签发证书…';try{const config=parseInvite(inviteLink.value),r=await fetch('/api/v1/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)}),d=await r.json();if(!r.ok)throw new Error(d.error?.message||('HTTP '+r.status));statusEl.className='status ok';statusEl.textContent='配对成功，设备 ID：'+d.deviceId;form.hidden=true}catch(e){statusEl.className='status bad';statusEl.textContent=e.message;button.disabled=false;button.textContent='验证并完成配对'}});load();
 </script></body></html>`
 
 func flush(logger *slog.Logger, q *collector.Queue, client *http.Client, hub string, creds collector.Credentials) {

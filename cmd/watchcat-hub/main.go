@@ -10,17 +10,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/api"
-	"github.com/wtj-0527/lazycat-maoyan/internal/backup"
-	"github.com/wtj-0527/lazycat-maoyan/internal/buildinfo"
-	"github.com/wtj-0527/lazycat-maoyan/internal/collector"
-	"github.com/wtj-0527/lazycat-maoyan/internal/config"
-	"github.com/wtj-0527/lazycat-maoyan/internal/notify"
-	"github.com/wtj-0527/lazycat-maoyan/internal/pki"
-	"github.com/wtj-0527/lazycat-maoyan/internal/runtimeapps"
-	"github.com/wtj-0527/lazycat-maoyan/internal/scheduler"
-	"github.com/wtj-0527/lazycat-maoyan/internal/stability"
-	"github.com/wtj-0527/lazycat-maoyan/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/api"
+	"github.com/wtj-0527/lazycat-watchcat/internal/backup"
+	"github.com/wtj-0527/lazycat-watchcat/internal/buildinfo"
+	"github.com/wtj-0527/lazycat-watchcat/internal/collector"
+	"github.com/wtj-0527/lazycat-watchcat/internal/config"
+	"github.com/wtj-0527/lazycat-watchcat/internal/notify"
+	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
+	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeapps"
+	"github.com/wtj-0527/lazycat-watchcat/internal/scheduler"
+	"github.com/wtj-0527/lazycat-watchcat/internal/stability"
+	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
 
 func main() {
@@ -133,7 +133,7 @@ func main() {
 		}
 	}()
 	srv := &http.Server{Addr: cfg.Addr, Handler: handlers.Handler(), ReadHeaderTimeout: 5e9, IdleTimeout: 60e9, MaxHeaderBytes: 1 << 20}
-	logger.Info("maoyan hub started", "addr", cfg.Addr, "database", cfg.DatabasePath(), "version", buildinfo.Version, "protocol", "v1")
+	logger.Info("watchcat hub started", "addr", cfg.Addr, "database", cfg.DatabasePath(), "version", buildinfo.Version, "protocol", "v1")
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)

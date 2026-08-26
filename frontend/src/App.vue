@@ -79,7 +79,7 @@ async function loadShell() {
 function submitGlobalSearch() {
   const value = globalQuery.value.trim().toLowerCase()
   if (!value) return
-  sessionStorage.setItem('maoyanSearch', globalQuery.value.trim())
+  sessionStorage.setItem('watchcatSearch', globalQuery.value.trim())
   if (value.includes('告警') || value.includes('alert')) navigate('alerts')
   else if (value.includes('应用') || value.includes('app')) navigate('apps')
   else navigate('devices')
@@ -108,8 +108,8 @@ onBeforeUnmount(() => {
 <template>
   <aside class="sidebar">
     <div class="brand">
-      <img class="brand-logo" src="/cat-eye-logo-64.png" alt="猫眼 Logo">
-      <div><b>猫眼</b><small>设备群监控</small></div>
+      <img class="brand-logo" src="/watchcat-logo-64.png" alt="WatchCat Logo">
+      <div><b>WatchCat</b><small>设备群监控</small></div>
     </div>
     <nav aria-label="主导航">
       <button v-for="[key, label] in navs" :key="key" class="nav-item" :class="{ active: page === key }" :aria-current="page === key ? 'page' : undefined" @click="navigate(key)">

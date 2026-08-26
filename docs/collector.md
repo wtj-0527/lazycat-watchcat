@@ -46,7 +46,7 @@ SMART 调用仅使用固定的 `smartctl -j -a` 参数，并在明确识别到 U
 - `GET /containers/{id}/stats?stream=false`
 - 每 5 分钟创建短生命周期 SMART helper，完成后立即删除
 
-SMART helper 使用当前猫眼镜像，不增加常驻 Service，并强制：
+SMART helper 使用当前 WatchCat 镜像，不增加常驻 Service，并强制：
 
 - `network_mode=none`
 - 只读根文件系统
@@ -61,7 +61,7 @@ SMART helper 使用当前猫眼镜像，不增加常驻 Service，并强制：
 设备发现 helper 仅只读挂载 `/sys`，执行内置固定脚本列举顶层 `sdX` 与 `nvmeXnY`。
 SMART helper 不使用 `privileged`，也不挂载完整 `/dev`。
 
-猫眼不开放任意 Docker API 代理。除上述受控 helper 生命周期外，不执行 Docker 写操作。
+WatchCat 不开放任意 Docker API 代理。除上述受控 helper 生命周期外，不执行 Docker 写操作。
 
 ## 离线队列
 
@@ -74,16 +74,16 @@ SMART helper 不使用 `privileged`，也不挂载完整 `/dev`。
 
 | 环境变量 | 说明 |
 |---|---|
-| `MAOYAN_HUB_URL` | Hub 的配对入口 |
-| `MAOYAN_COLLECTOR_URL` | Hub 的 mTLS 指标入口 |
-| `MAOYAN_PAIRING_CODE` | 首次启动使用的一次性配对码 |
-| `MAOYAN_DEVICE_NAME` | 设备显示名称 |
-| `MAOYAN_COLLECT_INTERVAL` | 采集周期，最低 10 秒，默认 30 秒 |
-| `MAOYAN_COLLECTOR_DATA_DIR` | 凭据和离线队列目录 |
-| `MAOYAN_SMART_DEVICES` | SMART 白名单设备，逗号分隔 |
-| `MAOYAN_BTRFS_MOUNTS` | Btrfs 白名单挂载点，逗号分隔 |
-| `MAOYAN_LPK_STATUS_FILE` | LazyCat Runtime 提供的只读应用状态 JSON 文件 |
-| `MAOYAN_DOCKER_SOCKET` | LazyCat Docker socket，默认 `/lzcapp/run/lzc-docker/docker.sock` |
+| `WATCHCAT_HUB_URL` | Hub 的配对入口 |
+| `WATCHCAT_COLLECTOR_URL` | Hub 的 mTLS 指标入口 |
+| `WATCHCAT_PAIRING_CODE` | 首次启动使用的一次性配对码 |
+| `WATCHCAT_DEVICE_NAME` | 设备显示名称 |
+| `WATCHCAT_COLLECT_INTERVAL` | 采集周期，最低 10 秒，默认 30 秒 |
+| `WATCHCAT_COLLECTOR_DATA_DIR` | 凭据和离线队列目录 |
+| `WATCHCAT_SMART_DEVICES` | SMART 白名单设备，逗号分隔 |
+| `WATCHCAT_BTRFS_MOUNTS` | Btrfs 白名单挂载点，逗号分隔 |
+| `WATCHCAT_LPK_STATUS_FILE` | LazyCat Runtime 提供的只读应用状态 JSON 文件 |
+| `WATCHCAT_DOCKER_SOCKET` | LazyCat Docker socket，默认 `/lzcapp/run/lzc-docker/docker.sock` |
 
 首次配对成功后，证书、私钥和设备令牌会以 `0600` 权限保存。后续启动不再需要配对码。
 

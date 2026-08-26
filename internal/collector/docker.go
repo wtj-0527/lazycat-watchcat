@@ -19,13 +19,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wtj-0527/lazycat-maoyan/internal/protocol"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
 
 const defaultDockerSocket = "/lzcapp/run/lzc-docker/docker.sock"
 const defaultDockerStatsBatchSize = 8
 const defaultDockerStatsConcurrency = 2
-const smartHelperLabel = "community.lazycat.app.maoyan.smart-helper"
+const smartHelperLabel = "community.lazycat.app.watchcat.smart-helper"
 
 var smartBlockDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 var dockerImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
@@ -185,11 +185,11 @@ func NewDockerCollector(socket string) *DockerCollector {
 		},
 	}
 	statsBatch := defaultDockerStatsBatchSize
-	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAOYAN_DOCKER_STATS_BATCH_SIZE"))); err == nil && configured > 0 && configured <= 64 {
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WATCHCAT_DOCKER_STATS_BATCH_SIZE"))); err == nil && configured > 0 && configured <= 64 {
 		statsBatch = configured
 	}
 	statsConcurrency := defaultDockerStatsConcurrency
-	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAOYAN_DOCKER_STATS_CONCURRENCY"))); err == nil && configured > 0 && configured <= 8 {
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WATCHCAT_DOCKER_STATS_CONCURRENCY"))); err == nil && configured > 0 && configured <= 8 {
 		statsConcurrency = configured
 	}
 	return &DockerCollector{

@@ -134,11 +134,11 @@ func recordAlertTransition(ctx context.Context, tx *sql.Tx, a AlertSignal, from,
 		return nil
 	}
 	transition := to
-	title := "猫眼告警"
+	title := "WatchCat 告警"
 	body := fmt.Sprintf("[%s] %s · %s：%s", a.Severity, a.DeviceName, a.Resource, a.Message)
 	if to == "resolved" {
 		transition = "recovery"
-		title = "猫眼告警已恢复"
+		title = "WatchCat 告警已恢复"
 		body = fmt.Sprintf("%s · %s：%s", a.DeviceName, a.Resource, a.Message)
 	}
 	var recent int
@@ -152,7 +152,7 @@ func recordAlertTransition(ctx context.Context, tx *sql.Tx, a AlertSignal, from,
 	}
 	dedupe := fmt.Sprintf("%s:%s:%d", a.Fingerprint, transition, now.UTC().UnixNano())
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_outbox(dedupe_key,alert_fingerprint,transition,title,body,deeplink,next_attempt_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		dedupe, a.Fingerprint, transition, title, body, "lzc://community.lazycat.app.maoyan/alerts", now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+		dedupe, a.Fingerprint, transition, title, body, "lzc://community.lazycat.app.watchcat/alerts", now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }
 

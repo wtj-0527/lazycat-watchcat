@@ -1,6 +1,6 @@
-# 猫眼 Design Handoff · 第二版
+# WatchCat Design Handoff · 第二版
 
-本目录现以 Penpot 页面 `猫眼 · 产品原型 · 第二版` 为唯一视觉基线。
+本目录现以 Penpot 页面 `WatchCat · 产品原型 · 第二版` 为唯一视觉基线。
 
 ## 基线
 
@@ -40,4 +40,4 @@
 - 所有数字必须能追溯至 API 或明确显示未知。
 - 写操作只有在服务端回读确认后显示成功。
 - 页面根节点不得横向溢出；矩阵与宽表在组件内部滚动。
-- 单一 `maoyan` Service，不安装第二个 Collector LPK。
+- 单一 `watchcat` Service，不安装第二个 Collector LPK。

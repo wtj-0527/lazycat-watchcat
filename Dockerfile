@@ -23,7 +23,7 @@ COPY internal ./internal
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -trimpath -ldflags="-s -w" -o /out/maoyan ./cmd/maoyan-hub
+    go build -trimpath -ldflags="-s -w" -o /out/watchcat ./cmd/watchcat-hub
 
 FROM alpine:3.22
 
@@ -32,21 +32,21 @@ RUN apk add --no-cache \
       ca-certificates \
       smartmontools \
       tzdata \
-    && addgroup -S maoyan \
-    && adduser -S -D -H -G maoyan maoyan \
-    && mkdir -p /opt/maoyan/web
+    && addgroup -S watchcat \
+    && adduser -S -D -H -G watchcat watchcat \
+    && mkdir -p /opt/watchcat/web
 
-COPY --from=backend /out/maoyan /usr/local/bin/maoyan
-COPY --from=frontend /src/web /opt/maoyan/web
+COPY --from=backend /out/watchcat /usr/local/bin/watchcat
+COPY --from=frontend /src/web /opt/watchcat/web
 
-ENV MAOYAN_ADDR=:8080 \
-    MAOYAN_COLLECTOR_ADDR=:8443 \
-    MAOYAN_DATA_DIR=/lzcapp/var/data \
-    MAOYAN_WEB_DIR=/opt/maoyan/web
+ENV WATCHCAT_ADDR=:8080 \
+    WATCHCAT_COLLECTOR_ADDR=:8443 \
+    WATCHCAT_DATA_DIR=/lzcapp/var/data \
+    WATCHCAT_WEB_DIR=/opt/watchcat/web
 
 EXPOSE 8080 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
   CMD wget -q -T 3 -O /dev/null http://127.0.0.1:8080/api/v1/health || exit 1
 
-ENTRYPOINT ["/usr/local/bin/maoyan"]
+ENTRYPOINT ["/usr/local/bin/watchcat"]

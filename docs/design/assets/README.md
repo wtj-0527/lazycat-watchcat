@@ -4,8 +4,8 @@
 
 | File | Size | Purpose |
 |---|---:|---|
-| `cat-eye-logo.png` | 512 × 512 | 用户批准的原始蓝金色卡通猫头鹰图像 |
-| `cat-eye-logo-64.png` | 64 × 64 | Sidebar、导航和紧凑 UI 使用的 PNG |
+| `watchcat-logo.png` | 512 × 512 | 用户批准的原始蓝金色卡通猫头鹰图像 |
+| `watchcat-logo-64.png` | 64 × 64 | Sidebar、导航和紧凑 UI 使用的 PNG |
 
 ## Usage
 
@@ -21,10 +21,10 @@
 
 ```html
 <img
-  src="/path/to/cat-eye-logo-64.png"
+  src="/path/to/watchcat-logo-64.png"
   width="40"
   height="40"
-  alt="猫眼"
+  alt="WatchCat"
 />
 ```
 
