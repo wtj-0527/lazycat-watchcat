@@ -54,7 +54,7 @@ const statusFilter = ref('all')
 const userFilter = ref('all')
 const deviceFilter = ref('all')
 const viewMode = ref<'detail' | 'compare'>('detail')
-const sortMetric = ref<'cpu' | 'memory' | 'network' | 'disk'>('cpu')
+const sortMetric = ref<'name' | 'cpu' | 'memory' | 'network' | 'disk'>('cpu')
 const sortDescending = ref(true)
 const selectedAppId = ref('')
 const selectedInstanceKey = ref('all')
@@ -72,6 +72,7 @@ const historyError = ref('')
 const comparisons = ref<Partial<Record<ComparisonMetric, ComparisonPayload>>>({})
 const comparisonLoading = ref(false)
 const comparisonError = ref('')
+const comparisonInstanceKey = ref('all')
 let historyRequest = 0
 let comparisonRequest = 0
 const { data, loading, error, refresh } = usePolling(() => api<Payload>('/api/v1/applications'))
@@ -127,6 +128,10 @@ const filtered = computed(() => (data.value?.items || []).filter((item) => {
   const matchesScope = (userFilter.value === 'all' && deviceFilter.value === 'all') || visibleDevices(item).length > 0
   return matchesQuery && matchesStatus && matchesScope
 }).sort((a, b) => {
+  if (sortMetric.value === 'name') {
+    const delta = (a.title || a.id).localeCompare(b.title || b.id)
+    return sortDescending.value ? -delta : delta
+  }
   const delta = applicationSortValue(a) - applicationSortValue(b)
   return (sortDescending.value ? -delta : delta) || (a.title || a.id).localeCompare(b.title || b.id)
 }))
@@ -257,6 +262,16 @@ function applicationSortValue(item: ApplicationItem) {
     default: return resources.cpuPercent
   }
 }
+function toggleApplicationSort(metric: typeof sortMetric.value) {
+  if (sortMetric.value === metric) sortDescending.value = !sortDescending.value
+  else {
+    sortMetric.value = metric
+    sortDescending.value = metric !== 'name'
+  }
+}
+function sortIndicator(metric: typeof sortMetric.value) {
+  return sortMetric.value === metric ? (sortDescending.value ? ' ↓' : ' ↑') : ''
+}
 function toLocalDateTime(value: Date) {
   const offset = value.getTimezoneOffset() * 60_000
   return new Date(value.getTime() - offset).toISOString().slice(0, 16)
@@ -326,19 +341,45 @@ function comparisonItems(metric: ComparisonMetric) {
       const scopeName = device?.userName || item.userId
       return {
         ...item,
+        key: comparisonItemKey(item),
+        appTitle: application.title || application.id,
+        scopeName,
         title: `${application.title || application.id} / ${scopeName ? `${scopeName} · ` : ''}${device?.deviceName || item.deviceId}`,
         deviceName: device?.deviceName || item.deviceId || '未知设备',
       }
     })
     .sort((a, b) => (sortDescending.value ? b.value - a.value : a.value - b.value) || a.title.localeCompare(b.title))
 }
+function comparisonItemKey(item: ComparisonItem) {
+  return `${item.appId}\0${item.deviceId || ''}\0${item.deployId || ''}\0${item.userId || ''}`
+}
 const comparisonPalette = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#4f46e5', '#65a30d', '#db2777', '#475569']
 function comparisonColor(item: ComparisonItem) {
-  const key = `${item.appId}\0${item.deviceId || ''}\0${item.deployId || ''}\0${item.userId || ''}`
+  const key = comparisonItemKey(item)
   let hash = 0
   for (const character of key) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0
   return comparisonPalette[Math.abs(hash) % comparisonPalette.length]
 }
+const comparisonInstanceOptions = computed<SmartOption[]>(() => {
+  const options = new Map<string, SmartOption>()
+  for (const metric of ['cpu', 'memory', 'network', 'disk'] as ComparisonMetric[]) {
+    for (const item of comparisonItems(metric)) {
+      if (!options.has(item.key)) options.set(item.key, {
+        value: item.key,
+        label: `${item.appTitle}${item.scopeName ? ` · ${item.scopeName}` : ''}`,
+        group: item.deviceName,
+        meta: item.deployId || item.appId,
+      })
+    }
+  }
+  return [...options.values()].sort((a, b) => `${a.group} ${a.label}`.localeCompare(`${b.group} ${b.label}`))
+})
+function selectComparisonSeries(key: string) {
+  comparisonInstanceKey.value = comparisonInstanceKey.value === key ? 'all' : key
+}
+watch(comparisonInstanceOptions, (options) => {
+  if (comparisonInstanceKey.value !== 'all' && !options.some((item) => item.value === comparisonInstanceKey.value)) comparisonInstanceKey.value = 'all'
+})
 const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: string; unit: string; loaded: boolean; series: ChartSeries[] }>>(() => {
   const definitions: Array<{ metric: ComparisonMetric; title: string; unit: string; scale: number }> = [
     { metric: 'cpu', title: '所有应用 CPU', unit: '%', scale: 1 },
@@ -349,7 +390,10 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
   return definitions.map((definition) => ({
     ...definition,
     loaded: Boolean(comparisons.value[definition.metric]),
-    series: comparisonItems(definition.metric).map((item) => ({
+    series: comparisonItems(definition.metric)
+      .filter((item) => comparisonInstanceKey.value === 'all' || item.key === comparisonInstanceKey.value)
+      .map((item) => ({
+      id: item.key,
       name: item.title,
       color: comparisonColor(item),
       points: chartPoints(item.points, definition.scale),
@@ -370,8 +414,6 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
         <select v-model="statusFilter" aria-label="应用状态"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
         <select v-model="userFilter" aria-label="实例用户"><option value="all">全部用户</option><option v-for="user in availableUsers" :key="user.id" :value="user.id">{{ user.name || user.id }}</option></select>
         <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称"></label>
-        <select v-model="sortMetric" aria-label="排序指标"><option value="cpu">按 CPU 排序</option><option value="memory">按内存排序</option><option value="network">按网络流量排序</option><option value="disk">按磁盘 IO 排序</option></select>
-        <button class="secondary-button sort-direction" :aria-label="sortDescending ? '当前降序，点击切换升序' : '当前升序，点击切换降序'" @click="sortDescending = !sortDescending">{{ sortDescending ? '从高到低 ↓' : '从低到高 ↑' }}</button>
         <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
         <span class="filter-note">30 秒自动刷新</span>
       </div>
@@ -394,11 +436,20 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
     <div v-if="viewMode === 'detail'" class="app-resource-layout">
       <aside class="card app-resource-list-card">
         <div class="section-title compact"><div><h2>应用</h2><span class="muted">{{ filtered.length }} 个结果</span></div></div>
-        <div v-if="filtered.length" class="app-resource-list">
-          <button v-for="item in appPagination.pagedItems.value" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" @click="selectedAppId = item.id">
-            <i :class="appStatus(item)" />
-            <span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></span>
-            <span class="app-resource-now"><b>{{ formatNumber(scopedApplicationResources(item).cpuPercent) }}%</b><small>{{ bytes(scopedApplicationResources(item).memoryUsage) }}</small></span>
+        <div v-if="filtered.length" class="app-resource-list" role="table" aria-label="应用资源列表">
+          <div class="app-resource-list-head" role="row">
+            <button role="columnheader" @click="toggleApplicationSort('name')">应用{{ sortIndicator('name') }}</button>
+            <button role="columnheader" @click="toggleApplicationSort('cpu')">CPU{{ sortIndicator('cpu') }}</button>
+            <button role="columnheader" @click="toggleApplicationSort('memory')">内存{{ sortIndicator('memory') }}</button>
+            <button role="columnheader" @click="toggleApplicationSort('network')">网络{{ sortIndicator('network') }}</button>
+            <button role="columnheader" @click="toggleApplicationSort('disk')">I/O{{ sortIndicator('disk') }}</button>
+          </div>
+          <button v-for="item in appPagination.pagedItems.value" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" role="row" @click="selectedAppId = item.id">
+            <span role="cell" class="app-resource-name"><i :class="appStatus(item)" /><span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></span></span>
+            <b role="cell">{{ formatNumber(scopedApplicationResources(item).cpuPercent) }}%</b>
+            <small role="cell">{{ bytes(scopedApplicationResources(item).memoryUsage) }}</small>
+            <small role="cell">{{ bytes(scopedApplicationResources(item).networkReceive + scopedApplicationResources(item).networkTransmit) }}</small>
+            <small role="cell">{{ bytes(scopedApplicationResources(item).blockRead + scopedApplicationResources(item).blockWrite) }}</small>
           </button>
         </div>
         <div v-else class="inline-empty">没有符合当前筛选条件的应用。</div>
@@ -442,8 +493,11 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
       </main>
     </div>
 
-    <section v-else class="card app-comparison-card">
-      <div class="section-title"><div><h2>所有应用对比</h2></div></div>
+    <section v-else class="app-comparison-view">
+      <div class="comparison-instance-filter">
+        <label>应用实例</label>
+        <SmartSelect v-model="comparisonInstanceKey" :options="comparisonInstanceOptions" :all-label="`全部实例（${comparisonInstanceOptions.length}）`" control-label="对比应用实例" searchable />
+      </div>
       <p v-if="userFilter !== 'all'" class="operation-evidence">对比数据已按所选用户的部署实例筛选；实例级历史从 v1.3.7 开始积累。</p>
       <p v-if="comparisonLoading" class="operation-evidence">正在依次计算 CPU、内存、网络流量和磁盘 I/O…</p>
       <div v-if="comparisonError" class="inline-empty">对比数据加载失败：{{ comparisonError }} <button class="row-link" @click="loadComparison">重试</button></div>
@@ -452,7 +506,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           <section v-for="group in comparisonGroups" :key="group.metric" class="all-app-metric-panel">
             <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.series.length }} 个应用实例</span></div>
             <div v-if="!group.loaded" class="metric-panel-loading">正在计算…</div>
-            <LineChart v-else :series="group.series" :min="0" :unit="group.unit" :height="360" />
+            <LineChart v-else :series="group.series" :min="0" :unit="group.unit" :height="360" :show-legend="false" selectable @series-select="selectComparisonSeries" />
           </section>
         </div>
         <div v-if="!comparisonLoading && comparisonGroups.every((group) => !group.series.some((series) => series.points.length))" class="inline-empty">当前时间范围内没有可对比的应用指标。</div>

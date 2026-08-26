@@ -140,6 +140,18 @@ function applyProcessFilters() {
   processPage.value = 1
   void loadProcesses()
 }
+function sortProcesses(column: string) {
+  if (processSort.value === column) processOrder.value = processOrder.value === 'desc' ? 'asc' : 'desc'
+  else {
+    processSort.value = column
+    processOrder.value = column === 'name' || column === 'user' || column === 'state' || column === 'pid' ? 'asc' : 'desc'
+  }
+  processPage.value = 1
+  void loadProcesses()
+}
+function processSortIndicator(column: string) {
+  return processSort.value === column ? (processOrder.value === 'desc' ? ' ↓' : ' ↑') : ''
+}
 function changeProcessPage(page: number) {
   processPage.value = page
   void loadProcesses()
@@ -757,15 +769,24 @@ watch(selectedTab, (tab) => {
           </div>
           <div class="process-toolbar">
             <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="processQuery" placeholder="搜索 PID、名称、用户或命令" @keyup.enter="applyProcessFilters"></label>
-            <select v-model="processSort" aria-label="进程排序指标" @change="applyProcessFilters"><option value="cpu">按 CPU</option><option value="memory">按内存</option><option value="read">按读取速率</option><option value="write">按写入速率</option><option value="pid">按 PID</option><option value="name">按名称</option></select>
-            <select v-model="processOrder" aria-label="进程排序方向" @change="applyProcessFilters"><option value="desc">降序</option><option value="asc">升序</option></select>
             <button class="secondary-button" @click="applyProcessFilters">查询</button>
           </div>
           <div v-if="processError" class="inline-empty">进程读取失败：{{ processError }} <button class="row-link" @click="loadProcesses">重试</button></div>
           <div v-else-if="processLoading" class="inline-empty">正在读取宿主机进程…</div>
           <div v-else class="table-scroll process-table-wrap">
             <table class="process-table">
-              <thead><tr><th>PID</th><th>进程</th><th>用户</th><th>状态</th><th>CPU</th><th>内存</th><th>读取</th><th>写入</th><th>线程</th><th>运行时间</th></tr></thead>
+              <thead><tr>
+                <th><button @click="sortProcesses('pid')">PID{{ processSortIndicator('pid') }}</button></th>
+                <th><button @click="sortProcesses('name')">进程{{ processSortIndicator('name') }}</button></th>
+                <th><button @click="sortProcesses('user')">用户{{ processSortIndicator('user') }}</button></th>
+                <th><button @click="sortProcesses('state')">状态{{ processSortIndicator('state') }}</button></th>
+                <th><button @click="sortProcesses('cpu')">CPU{{ processSortIndicator('cpu') }}</button></th>
+                <th><button @click="sortProcesses('memory')">内存{{ processSortIndicator('memory') }}</button></th>
+                <th><button @click="sortProcesses('read')">读取{{ processSortIndicator('read') }}</button></th>
+                <th><button @click="sortProcesses('write')">写入{{ processSortIndicator('write') }}</button></th>
+                <th><button @click="sortProcesses('threads')">线程{{ processSortIndicator('threads') }}</button></th>
+                <th><button @click="sortProcesses('uptime')">运行时间{{ processSortIndicator('uptime') }}</button></th>
+              </tr></thead>
               <tbody>
                 <tr v-for="item in processItems" :key="`${item.pid}:${item.startTime}`" :class="{ selected: selectedProcess?.pid === item.pid && selectedProcess?.startTime === item.startTime }" @click="selectProcess(item)">
                   <td>{{ item.pid }}</td><td><b>{{ item.name }}</b><small :title="item.command">{{ item.command || item.cgroup || '无命令行' }}</small></td><td>{{ item.user || '未知' }}</td><td>{{ item.state }}</td>

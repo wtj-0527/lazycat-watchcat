@@ -33,4 +33,19 @@ describe('LineChart', () => {
     await svg.trigger('mouseleave')
     expect(wrapper.find('.chart-tooltip').exists()).toBe(false)
   })
+
+  it('hides the legend and emits the selected series from its curve', async () => {
+    const onSeriesSelect = vi.fn()
+    const wrapper = mount(LineChart, {
+      props: {
+        series: [{ id: 'instance-1', name: '实例一', color: '#2563eb', points: [{ value: 1 }, { value: 2 }] }],
+        showLegend: false,
+        selectable: true,
+        onSeriesSelect,
+      },
+    })
+    expect(wrapper.find('.chart-legend').exists()).toBe(false)
+    await wrapper.get('.chart-line-hit').trigger('click')
+    expect(onSeriesSelect).toHaveBeenCalledWith('instance-1')
+  })
 })

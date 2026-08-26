@@ -263,7 +263,8 @@ func (s *Store) LatestProcesses(ctx context.Context, deviceID string, options Pr
 	}
 	orderColumns := map[string]string{
 		"cpu": "cpu_percent", "memory": "memory_rss_bytes", "read": "read_rate",
-		"write": "write_rate", "pid": "pid", "name": "name",
+		"write": "write_rate", "pid": "pid", "name": "name", "user": "user_name",
+		"state": "state", "threads": "threads", "uptime": "uptime_seconds",
 	}
 	column := orderColumns[options.Sort]
 	if column == "" {

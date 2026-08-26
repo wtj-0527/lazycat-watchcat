@@ -219,7 +219,7 @@ describe('AppsPage', () => {
 
     const wrapper = mount(AppsPage)
     await flushPromises()
-    await wrapper.get('[aria-label="排序指标"]').setValue('memory')
+    await wrapper.findAll('[role="columnheader"]').find((item) => item.text().startsWith('内存'))!.trigger('click')
     expect(wrapper.findAll('.app-resource-item')[0].text()).toContain('大内存应用')
     expect(wrapper.find('[aria-label="用户实例"]').exists()).toBe(false)
     expect(wrapper.get('[aria-label="应用设备"]').text()).toContain('全部设备')
@@ -233,7 +233,9 @@ describe('AppsPage', () => {
     for (const metric of ['cpu', 'memory', 'network', 'disk']) {
       expect(apiMock.mock.calls.some(([path]) => String(path).includes(`/metrics/compare?metric=${metric}&scope=instance`))).toBe(true)
     }
-    expect(wrapper.text()).toContain('所有应用对比')
+    expect(wrapper.text()).not.toContain('所有应用对比')
+    expect(wrapper.find('.app-comparison-card').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="对比应用实例"]').text()).toContain('全部实例')
     expect(wrapper.findAll('.all-app-metric-panel')).toHaveLength(4)
     expect(wrapper.find('.app-comparison-table').exists()).toBe(false)
     expect(wrapper.text()).toContain('所有应用 CPU')
@@ -242,8 +244,12 @@ describe('AppsPage', () => {
     expect(wrapper.text()).toContain('所有应用磁盘 I/O')
     expect(wrapper.findAll('.all-app-metric-panel .line-chart')).toHaveLength(4)
     expect(wrapper.findAll('.all-app-metric-panel .chart-line')).toHaveLength(4)
+    expect(wrapper.findAll('.all-app-metric-panel .chart-legend')).toHaveLength(0)
     expect(wrapper.text()).toContain('1 个应用实例')
-    expect(wrapper.text()).toContain('小内存应用 / 用户一 · 设备二')
+
+    await wrapper.get('.all-app-metric-panel .chart-line-hit').trigger('click')
+    expect(wrapper.get('[aria-label="对比应用实例"]').text()).toContain('小内存应用')
+    expect(wrapper.findAll('.all-app-metric-panel .chart-line')).toHaveLength(4)
     wrapper.unmount()
   })
 

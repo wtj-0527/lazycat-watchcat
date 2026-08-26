@@ -2,8 +2,11 @@
 import { computed, ref } from 'vue'
 
 export interface ChartPoint { value: number; label?: string; at?: string }
-export interface ChartSeries { name: string; color: string; points: ChartPoint[] }
-const props = withDefaults(defineProps<{ series: ChartSeries[]; min?: number; max?: number; unit?: string; height?: number }>(), { min: 0, unit: '', height: 220 })
+export interface ChartSeries { id?: string; name: string; color: string; points: ChartPoint[] }
+const props = withDefaults(defineProps<{ series: ChartSeries[]; min?: number; max?: number; unit?: string; height?: number; showLegend?: boolean; selectable?: boolean }>(), {
+  min: 0, unit: '', height: 220, showLegend: true, selectable: false,
+})
+const emit = defineEmits<{ 'series-select': [id: string] }>()
 const width = 900
 const pad = { left: 42, right: 18, top: 18, bottom: 30 }
 const hover = ref<{ ratio: number; left: number }>()
@@ -55,6 +58,9 @@ function showHover(event: MouseEvent) {
     left: Math.max(112, Math.min(rect.width - 112, event.clientX - rect.left)),
   }
 }
+function selectSeries(item: ChartSeries) {
+  if (props.selectable) emit('series-select', item.id || item.name)
+}
 </script>
 
 <template>
@@ -66,9 +72,10 @@ function showHover(event: MouseEvent) {
           <text x="4" :y="y(tick) + 4">{{ tick.toFixed(tick >= 10 ? 0 : 1) }}{{ unit }}</text>
         </template>
       </g>
-      <g v-for="item in normalizedSeries" :key="item.name">
+      <g v-for="item in normalizedSeries" :key="item.name" :class="{ 'selectable-series': selectable }" @click="selectSeries(item)">
+        <path v-if="selectable" class="chart-line-hit" :d="path(item.points)" />
         <path class="chart-line" :d="path(item.points)" :stroke="item.color" />
-        <circle v-for="(point, index) in item.points" :key="index" :cx="x(index, item.points.length)" :cy="y(point.value)" r="3" :fill="item.color" />
+        <circle v-for="(point, index) in item.points" :key="index" :cx="x(index, item.points.length)" :cy="y(point.value)" r="3" :fill="item.color" :class="{ selectable }" />
       </g>
       <g v-if="hover" class="chart-hover-layer">
         <line :x1="hoverX" :x2="hoverX" :y1="pad.top" :y2="height - pad.bottom" />
@@ -81,6 +88,6 @@ function showHover(event: MouseEvent) {
       <span v-for="item in hoverItems" :key="item.name"><i :style="{ background: item.color }" />{{ item.name }}<strong>{{ formatHoverValue(item.point.value) }}</strong></span>
     </div>
     <div v-if="!all.length" class="inline-empty">当前时间范围内没有历史数据。</div>
-    <div v-if="series.length" class="chart-legend"><span v-for="item in series" :key="item.name"><i :style="{ background: item.color }" />{{ item.name }}</span></div>
+    <div v-if="showLegend && series.length" class="chart-legend"><span v-for="item in series" :key="item.name"><i :style="{ background: item.color }" />{{ item.name }}</span></div>
   </div>
 </template>
