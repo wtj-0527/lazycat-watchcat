@@ -1,5 +1,8 @@
 import type { Device, Inspection, Metric } from './types'
 
+export const BEIJING_TIME_ZONE = 'Asia/Shanghai'
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000
+
 export function formatNumber(value: unknown, digits = 1): string {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric.toFixed(digits) : '—'
@@ -118,7 +121,42 @@ export function percent(part: number, total: number): string {
 export function dateTime(value?: string): string {
   if (!value) return '未知'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString('zh-CN', {
+    timeZone: BEIJING_TIME_ZONE,
+    hour12: false,
+  })
+}
+
+export function timeOfDay(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('zh-CN', {
+    timeZone: BEIJING_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+export function monthDay(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('zh-CN', {
+    timeZone: BEIJING_TIME_ZONE,
+    month: 'numeric',
+    day: 'numeric',
+  })
+}
+
+export function toBeijingDateTimeInput(date: Date): string {
+  if (Number.isNaN(date.getTime())) return ''
+  return new Date(date.getTime() + BEIJING_OFFSET_MS).toISOString().slice(0, 16)
+}
+
+export function parseBeijingDateTimeInput(value: string): Date {
+  if (!value) return new Date(Number.NaN)
+  const normalized = value.length === 16 ? `${value}:00` : value
+  return new Date(`${normalized}+08:00`)
 }
 
 export function metricLabel(point?: Metric): string {

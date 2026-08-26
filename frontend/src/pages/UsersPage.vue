@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling } from '@/composables'
-import { ago } from '@/utils'
+import { ago, dateTime } from '@/utils'
 import AppPagination from '@/components/AppPagination.vue'
 import PageState from '@/components/PageState.vue'
 import { appConfirm, appPrompt } from '@/dialog'
@@ -36,7 +36,6 @@ watch(selected, item=>{userPagination.resetPage();appAccessPagination.resetPage(
 watch(accessSearch,appAccessPagination.resetPage)
 const onlineCount=computed(()=>(data.value?.items||[]).filter(x=>x.online).length)
 const duration=(seconds?:number)=>{const value=Number.isFinite(seconds)?Number(seconds):0;const h=Math.floor(value/3600),m=Math.floor((value%3600)/60);return h?`${h} 小时 ${m} 分钟`:`${m} 分钟`}
-const dateTime=(value?:string)=>value?new Date(value).toLocaleString('zh-CN'):'—'
 const presence=(item:UserItem)=>item.online?'在线':item.totalDevices>0?'离线':'未发现终端'
 const presenceClass=(item:UserItem)=>item.online?'healthy':'unknown'
 function toggleApp(id:string){allowedAppIds.value=allowedAppIds.value.includes(id)?allowedAppIds.value.filter(x=>x!==id):[...allowedAppIds.value,id]}

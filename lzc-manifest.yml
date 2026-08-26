@@ -11,7 +11,7 @@ application:
 
 services:
   watchcat:
-    image: registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.2@sha256:b380347fde557e874c19c8c06ad6ca192a321a9481a3efa845dbf05671710e94
+    image: registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.3@sha256:b3283fa0cbd7353663c8f62f698e7f1a92fce11591c036c0b6de283505da0658
     environment:
       - WATCHCAT_ADDR=:8080
       - WATCHCAT_COLLECTOR_ADDR=:8443

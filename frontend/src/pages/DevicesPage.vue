@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling, useRovingTabs } from '@/composables'
 import type { Capability, Device, HostProcess, Metric, Overview } from '@/types'
-import { ago, bytes, connectivityState, dateTime, deviceState, formatMetricValue, formatNumber, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
+import { ago, bytes, connectivityState, dateTime, deviceState, formatMetricValue, formatNumber, metricValueAny, monthDay, parseBeijingDateTimeInput, statusRank, storageRiskStatus, timeOfDay, toBeijingDateTimeInput } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
@@ -172,15 +172,15 @@ const processKpis = computed(() => ({
 }))
 const processCpuSeries = computed<ChartSeries[]>(() => selectedProcess.value ? [{
   name: selectedProcess.value.name, color: '#2563eb',
-  points: processHistory.value.map((item) => ({ value: item.cpuPercent, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })),
+  points: processHistory.value.map((item) => ({ value: item.cpuPercent, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })),
 }] : [])
 const processMemorySeries = computed<ChartSeries[]>(() => selectedProcess.value ? [{
   name: selectedProcess.value.name, color: '#7c3aed',
-  points: processHistory.value.map((item) => ({ value: item.memoryRssBytes / 1024 ** 2, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })),
+  points: processHistory.value.map((item) => ({ value: item.memoryRssBytes / 1024 ** 2, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })),
 }] : [])
 const processIoSeries = computed<ChartSeries[]>(() => selectedProcess.value ? [
-  { name: '读取', color: '#118847', points: processHistory.value.map((item) => ({ value: item.readRate / 1024, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })) },
-  { name: '写入', color: '#c05600', points: processHistory.value.map((item) => ({ value: item.writeRate / 1024, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })) },
+  { name: '读取', color: '#118847', points: processHistory.value.map((item) => ({ value: item.readRate / 1024, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })) },
+  { name: '写入', color: '#c05600', points: processHistory.value.map((item) => ({ value: item.writeRate / 1024, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })) },
 ] : [])
 function trendRangeQuery() {
   return trendMode.value === 'custom' && trendAppliedFrom.value && trendAppliedTo.value
@@ -218,17 +218,13 @@ function showTrendCustomRange() {
   trendMode.value = 'custom'
   if (!trendCustomTo.value) {
     const now = new Date()
-    trendCustomTo.value = toLocalInput(now)
-    trendCustomFrom.value = toLocalInput(new Date(now.getTime() - 24 * 60 * 60 * 1000))
+    trendCustomTo.value = toBeijingDateTimeInput(now)
+    trendCustomFrom.value = toBeijingDateTimeInput(new Date(now.getTime() - 24 * 60 * 60 * 1000))
   }
 }
-function toLocalInput(date: Date) {
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
-}
 function applyTrendCustomRange() {
-  const from = new Date(trendCustomFrom.value)
-  const to = new Date(trendCustomTo.value)
+  const from = parseBeijingDateTimeInput(trendCustomFrom.value)
+  const to = parseBeijingDateTimeInput(trendCustomTo.value)
   if (!trendCustomFrom.value || !trendCustomTo.value || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
     trendError.value = '请选择有效的开始和结束时间'
     return
@@ -313,7 +309,7 @@ const trendSeries = computed<ChartSeries[]>(() => [
   points: item.points.map((point) => ({
     value: point.value,
     at: dateTime(point.collectedAt),
-    label: new Date(point.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+    label: timeOfDay(point.collectedAt),
   })),
 })))
 
@@ -336,7 +332,7 @@ function historySeries(name: string, label: string, color: string, transform: (v
     points: (trend.value[name] || []).map((point) => ({
       value: transform(point.value),
       at: dateTime(point.collectedAt),
-      label: new Date(point.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      label: timeOfDay(point.collectedAt),
     })),
   }
 }
@@ -438,7 +434,7 @@ const storageTrendSeries = computed<ChartSeries[]>(() => {
     points: points.map((point) => ({
       value: point.value,
       at: dateTime(point.collectedAt),
-      label: new Date(point.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      label: timeOfDay(point.collectedAt),
     })),
   }] : []
 })
@@ -459,7 +455,7 @@ function counterRateSeries(points: Metric[], label: string, color: string): Char
     result.push({
       value: rate,
       at: dateTime(ordered[index][0]),
-      label: new Date(ordered[index][0]).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      label: timeOfDay(ordered[index][0]),
     })
   }
   return { name: label, color, points: result }
@@ -597,8 +593,7 @@ const eventTypeItems = computed<BarItem[]>(() => {
 const eventTimelineItems = computed<BarItem[]>(() => {
   const counts = new Map<string, number>()
   for (const item of deviceEvents.value) {
-    const date = new Date(item.createdAt)
-    const key = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+    const key = monthDay(item.createdAt) || '未知时间'
     counts.set(key, (counts.get(key) || 0) + 1)
   }
   return [...counts.entries()].map(([label, value]) => ({ label, value, color: '#7c3aed' })).slice(-14)
@@ -679,8 +674,8 @@ watch(selectedTab, (tab) => {
                 </div>
               </div>
               <div v-if="trendMode === 'custom'" class="device-trend-custom-range">
-                <label>开始<input v-model="trendCustomFrom" type="datetime-local"></label>
-                <label>结束<input v-model="trendCustomTo" type="datetime-local"></label>
+                <label>开始（北京时间）<input v-model="trendCustomFrom" type="datetime-local"></label>
+                <label>结束（北京时间）<input v-model="trendCustomTo" type="datetime-local"></label>
                 <button class="secondary-button" @click="applyTrendCustomRange">应用</button>
               </div>
               <p v-if="trendError" class="operation-evidence warning">{{ trendError }}</p>
@@ -724,8 +719,8 @@ watch(selectedTab, (tab) => {
               </div>
             </div>
             <div v-if="trendMode === 'custom'" class="device-trend-custom-range">
-              <label>开始<input v-model="trendCustomFrom" type="datetime-local"></label>
-              <label>结束<input v-model="trendCustomTo" type="datetime-local"></label>
+              <label>开始（北京时间）<input v-model="trendCustomFrom" type="datetime-local"></label>
+              <label>结束（北京时间）<input v-model="trendCustomTo" type="datetime-local"></label>
               <button class="secondary-button" @click="applyTrendCustomRange">应用</button>
             </div>
             <LineChart :series="systemUsageSeries" :min="0" :max="100" unit="%" :height="220" />
@@ -805,8 +800,8 @@ watch(selectedTab, (tab) => {
               </div>
             </div>
             <div v-if="trendMode === 'custom'" class="device-trend-custom-range">
-              <label>开始<input v-model="trendCustomFrom" type="datetime-local"></label>
-              <label>结束<input v-model="trendCustomTo" type="datetime-local"></label>
+              <label>开始（北京时间）<input v-model="trendCustomFrom" type="datetime-local"></label>
+              <label>结束（北京时间）<input v-model="trendCustomTo" type="datetime-local"></label>
               <button class="secondary-button" @click="applyTrendCustomRange">应用</button>
             </div>
             <div v-if="processHistoryLoading" class="inline-empty">正在读取单进程历史…</div>

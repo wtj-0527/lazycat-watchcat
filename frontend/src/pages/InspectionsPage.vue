@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling } from '@/composables'
 import type { Inspection } from '@/types'
-import { ago, dateTime, inspectionState, signed } from '@/utils'
+import { ago, dateTime, inspectionState, monthDay, signed } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import DonutChart from '@/components/DonutChart.vue'
@@ -44,7 +44,7 @@ const inspectionTrend = computed<ChartSeries[]>(() => {
   const points = (key: 'healthyCount' | 'warningCount' | 'criticalCount') => items.map((item) => ({
     value: item[key],
     at: dateTime(item.startedAt),
-    label: new Date(item.startedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
+    label: monthDay(item.startedAt),
   }))
   return items.length ? [
     { name: '健康', color: '#118847', points: points('healthyCount') },

@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling, useRovingTabs } from '@/composables'
 import type { Backup, Capability, Device, Stability } from '@/types'
-import { ago, backupType, bytes, dateTime, duration } from '@/utils'
+import { ago, backupType, bytes, dateTime, duration, parseBeijingDateTimeInput } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -191,9 +191,15 @@ async function saveRules() {
 }
 async function addMaintenanceWindow() {
   if (!maintenanceName.value || !maintenanceStart.value || !maintenanceEnd.value) return
+  const startsAt = parseBeijingDateTimeInput(maintenanceStart.value)
+  const endsAt = parseBeijingDateTimeInput(maintenanceEnd.value)
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || startsAt >= endsAt) {
+    settingsEvidence.value = { status: 'error', message: '请选择有效的北京时间范围，且结束时间必须晚于开始时间' }
+    return
+  }
   await api('/api/v1/maintenance-windows', {
     method: 'POST',
-    body: JSON.stringify({ name: maintenanceName.value, startsAt: new Date(maintenanceStart.value).toISOString(), endsAt: new Date(maintenanceEnd.value).toISOString(), enabled: true }),
+    body: JSON.stringify({ name: maintenanceName.value, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), enabled: true }),
   })
   maintenanceName.value = maintenanceStart.value = maintenanceEnd.value = ''
   settingsEvidence.value = { status: 'success', message: '维护窗口已创建；窗口内告警通知将自动抑制' }
@@ -587,7 +593,7 @@ async function deleteUnusedImage(image: UnusedImage) {
     <section v-else-if="data && tab === 'maintenance'" class="card">
       <div class="section-title"><div><h2>维护窗口与巡检计划</h2></div><button class="primary-button" @click="saveOperationalSettings">保存计划</button></div>
       <div class="settings-grid"><label><span>每日巡检小时</span><input v-model.number="data.settings.dailyInspectionHour" type="number" min="0" max="23"></label><label><span>每周日巡检小时</span><input v-model.number="data.settings.weeklyInspectionHour" type="number" min="0" max="23"></label><div><span>时区</span><b>{{ data.operations.schedule.timezone }}</b><StatusPill status="available" /></div></div>
-      <div class="maintenance-form"><input v-model="maintenanceName" placeholder="窗口名称"><input v-model="maintenanceStart" type="datetime-local" aria-label="开始时间"><input v-model="maintenanceEnd" type="datetime-local" aria-label="结束时间"><button class="primary-button" @click="addMaintenanceWindow">创建窗口</button></div>
+      <div class="maintenance-form"><input v-model="maintenanceName" placeholder="窗口名称"><input v-model="maintenanceStart" type="datetime-local" aria-label="开始时间（北京时间）" title="北京时间"><input v-model="maintenanceEnd" type="datetime-local" aria-label="结束时间（北京时间）" title="北京时间"><button class="primary-button" @click="addMaintenanceWindow">创建窗口</button></div>
       <div class="backup-list"><div v-for="item in maintenancePagination.pagedItems.value" :key="item.id" class="backup-row"><div><b>{{ item.name }}</b><p>{{ dateTime(item.startsAt) }} — {{ dateTime(item.endsAt) }}</p></div><div><StatusPill :status="item.enabled ? 'available' : 'unknown'" /><button class="tiny danger-button" @click="deleteMaintenanceWindow(item.id)">删除</button></div></div><div v-if="!data.windows.length" class="inline-empty">尚无维护窗口。</div></div>
       <AppPagination v-model:page="maintenancePagination.page.value" v-model:page-size="maintenancePagination.pageSize.value" :total="maintenancePagination.total.value" :page-count="maintenancePagination.pageCount.value" :range-start="maintenancePagination.rangeStart.value" :range-end="maintenancePagination.rangeEnd.value" label="维护窗口分页" />
     </section>

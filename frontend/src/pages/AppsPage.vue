@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling } from '@/composables'
 import type { ApplicationItem } from '@/types'
-import { bytes, formatNumber, percent } from '@/utils'
+import { bytes, dateTime, formatNumber, parseBeijingDateTimeInput, percent, timeOfDay, toBeijingDateTimeInput } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
@@ -61,8 +61,8 @@ const selectedInstanceKey = ref('all')
 const historyHours = ref(24)
 const historyMode = ref<'preset' | 'custom'>('preset')
 const showCustomRange = ref(false)
-const customFrom = ref(toLocalDateTime(new Date(Date.now() - 24 * 60 * 60 * 1000)))
-const customTo = ref(toLocalDateTime(new Date()))
+const customFrom = ref(toBeijingDateTimeInput(new Date(Date.now() - 24 * 60 * 60 * 1000)))
+const customTo = ref(toBeijingDateTimeInput(new Date()))
 const appliedCustomFrom = ref('')
 const appliedCustomTo = ref('')
 const customRangeError = ref('')
@@ -272,10 +272,6 @@ function toggleApplicationSort(metric: typeof sortMetric.value) {
 function sortIndicator(metric: typeof sortMetric.value) {
   return sortMetric.value === metric ? (sortDescending.value ? ' ↓' : ' ↑') : ''
 }
-function toLocalDateTime(value: Date) {
-  const offset = value.getTimezoneOffset() * 60_000
-  return new Date(value.getTime() - offset).toISOString().slice(0, 16)
-}
 function selectPreset(hours: number) {
   historyMode.value = 'preset'
   showCustomRange.value = false
@@ -284,8 +280,8 @@ function selectPreset(hours: number) {
   else historyHours.value = hours
 }
 function applyCustomRange() {
-  const from = new Date(customFrom.value)
-  const to = new Date(customTo.value)
+  const from = parseBeijingDateTimeInput(customFrom.value)
+  const to = parseBeijingDateTimeInput(customTo.value)
   if (!customFrom.value || !customTo.value || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
     customRangeError.value = '请选择完整的开始和结束时间。'
     return
@@ -308,8 +304,8 @@ function applyCustomRange() {
 function chartPoints(items: HistoryPoint[] | undefined, scale = 1) {
   return (items || []).map((item) => ({
     value: item.value / scale,
-    at: new Date(item.collectedAt).toLocaleString('zh-CN'),
-    label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+    at: dateTime(item.collectedAt),
+    label: timeOfDay(item.collectedAt),
   }))
 }
 const cpuSeries = computed<ChartSeries[]>(() => [{ name: 'CPU', color: '#2563eb', points: chartPoints(history.value?.series.cpuPercent) }])
@@ -323,7 +319,7 @@ const blockSeries = computed<ChartSeries[]>(() => [
   { name: '写入', color: '#c51d23', points: chartPoints(history.value?.series.blockWriteRate, 1024) },
 ])
 const customHistoryRangeLabel = computed(() => historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
-  ? `${new Date(appliedCustomFrom.value).toLocaleString('zh-CN')} 至 ${new Date(appliedCustomTo.value).toLocaleString('zh-CN')}`
+  ? `${dateTime(appliedCustomFrom.value)} 至 ${dateTime(appliedCustomTo.value)}`
   : '')
 function comparisonItems(metric: ComparisonMetric) {
   const payload = comparisons.value[metric]
@@ -424,8 +420,8 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           <button :class="{ active: historyMode === 'custom' }" @click="showCustomRange = !showCustomRange">自定义</button>
         </div>
         <div v-if="showCustomRange" class="custom-history-range">
-          <label><span>开始时间</span><input v-model="customFrom" type="datetime-local"></label>
-          <label><span>结束时间</span><input v-model="customTo" type="datetime-local"></label>
+          <label><span>开始时间（北京时间）</span><input v-model="customFrom" type="datetime-local"></label>
+          <label><span>结束时间（北京时间）</span><input v-model="customTo" type="datetime-local"></label>
           <button class="primary-button" @click="applyCustomRange">应用时间范围</button>
           <button class="secondary-button" @click="showCustomRange = false">取消</button>
           <small v-if="customRangeError">{{ customRangeError }}</small>

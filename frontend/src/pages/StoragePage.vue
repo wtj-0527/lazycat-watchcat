@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling } from '@/composables'
 import type { Capability, Metric } from '@/types'
-import { ago, bytes, formatMetricValue, metricLabel, storageRiskAdvice, storageRiskStatus } from '@/utils'
+import { ago, bytes, dateTime, formatMetricValue, metricLabel, monthDay, parseBeijingDateTimeInput, storageRiskAdvice, storageRiskStatus, toBeijingDateTimeInput } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
@@ -141,8 +141,7 @@ function historyRange() {
     : `hours=${historyHours.value}`
 }
 function chartPoint(item: Metric) {
-  const date = new Date(item.collectedAt)
-  return { value: item.value, at: date.toLocaleString('zh-CN'), label: date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) }
+  return { value: item.value, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt) }
 }
 function counterRates(items: Metric[], device: string) {
   const points = items.filter((item) => String(item.labels?.device || '').replace('/dev/', '') === device).sort((a, b) => metricTime(a) - metricTime(b))
@@ -207,17 +206,13 @@ function showCustomRange() {
   if (!customTo.value) {
     const now = new Date()
     const from = new Date(now.getTime() - 7 * 24 * 3600 * 1000)
-    customTo.value = toLocalInput(now)
-    customFrom.value = toLocalInput(from)
+    customTo.value = toBeijingDateTimeInput(now)
+    customFrom.value = toBeijingDateTimeInput(from)
   }
 }
-function toLocalInput(date: Date) {
-  const offset = date.getTimezoneOffset() * 60000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
-}
 function applyCustomRange() {
-  const from = new Date(customFrom.value)
-  const to = new Date(customTo.value)
+  const from = parseBeijingDateTimeInput(customFrom.value)
+  const to = parseBeijingDateTimeInput(customTo.value)
   if (!customFrom.value || !customTo.value || !Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from >= to) { historyError.value = '请选择有效的开始和结束时间'; return }
   if (to.getTime() - from.getTime() > 30 * 24 * 3600 * 1000) { historyError.value = '单次查询范围不能超过 30 天'; return }
   appliedCustomFrom.value = from.toISOString(); appliedCustomTo.value = to.toISOString(); historyError.value = ''; loadAllHistory()
@@ -246,7 +241,7 @@ async function runStorageCheck() {
 
     <section class="card storage-resource-card">
       <div class="section-title storage-expanded-title"><div><h2>存储资源</h2></div><div class="range-tabs"><button v-for="option in [{ h: 24, l: '24小时' }, { h: 168, l: '7天' }, { h: 336, l: '14天' }, { h: 720, l: '30天' }]" :key="option.h" :class="{ active: historyMode === 'preset' && historyHours === option.h }" @click="setPreset(option.h)">{{ option.l }}</button><button :class="{ active: historyMode === 'custom' }" @click="showCustomRange">自定义</button></div></div>
-      <div v-if="historyMode === 'custom'" class="storage-custom-range"><label>开始<input v-model="customFrom" type="datetime-local" /></label><label>结束<input v-model="customTo" type="datetime-local" /></label><button class="secondary-button" @click="applyCustomRange">应用</button></div>
+      <div v-if="historyMode === 'custom'" class="storage-custom-range"><label>开始（北京时间）<input v-model="customFrom" type="datetime-local" /></label><label>结束（北京时间）<input v-model="customTo" type="datetime-local" /></label><button class="secondary-button" @click="applyCustomRange">应用</button></div>
       <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
       <div v-if="historyLoading" class="inline-empty">正在读取全部磁盘与卷的历史数据…</div>
       <div class="storage-expanded-list">

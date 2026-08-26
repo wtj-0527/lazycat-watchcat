@@ -5,16 +5,21 @@ import {
   backupType,
   bytes,
   connectivityState,
+  dateTime,
   deviceState,
   duration,
   formatMetricValue,
   formatNumber,
   inspectionState,
   metricValueAny,
+  monthDay,
+  parseBeijingDateTimeInput,
   storageRiskAdvice,
   storageRiskStatus,
   storageUsageMetric,
   storageUsageMetrics,
+  timeOfDay,
+  toBeijingDateTimeInput,
 } from './utils'
 
 const baseDevice: Device = {
@@ -72,6 +77,15 @@ describe('format helpers', () => {
     expect(ago('2026-08-23T11:59:30Z')).toBe('30 秒前')
     expect(ago('2026-08-23T10:00:00Z')).toBe('2 小时前')
     vi.useRealTimers()
+  })
+
+  it('formats and parses every absolute time as Beijing time', () => {
+    expect(dateTime('2026-08-26T04:00:00Z')).toContain('12:00')
+    expect(timeOfDay('2026-08-26T16:30:00Z')).toBe('00:30')
+    expect(monthDay('2026-08-26T16:30:00Z')).toContain('8')
+    expect(monthDay('2026-08-26T16:30:00Z')).toContain('27')
+    expect(toBeijingDateTimeInput(new Date('2026-08-26T04:00:00Z'))).toBe('2026-08-26T12:00')
+    expect(parseBeijingDateTimeInput('2026-08-26T12:00').toISOString()).toBe('2026-08-26T04:00:00.000Z')
   })
 })
 
