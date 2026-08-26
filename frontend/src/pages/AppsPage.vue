@@ -452,7 +452,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           <section v-for="group in comparisonGroups" :key="group.metric" class="all-app-metric-panel">
             <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.series.length }} 个应用实例</span></div>
             <div v-if="!group.loaded" class="metric-panel-loading">正在计算…</div>
-            <LineChart v-else :series="group.series" :min="0" :unit="group.unit" :height="300" />
+            <LineChart v-else :series="group.series" :min="0" :unit="group.unit" :height="360" />
           </section>
         </div>
         <div v-if="!comparisonLoading && comparisonGroups.every((group) => !group.series.some((series) => series.points.length))" class="inline-empty">当前时间范围内没有可对比的应用指标。</div>

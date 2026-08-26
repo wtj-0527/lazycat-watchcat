@@ -82,6 +82,51 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(device_id,name,labels_json)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_latest_metrics_device_name ON latest_metrics(device_id,name);`,
+		`CREATE TABLE IF NOT EXISTS process_samples (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			pid INTEGER NOT NULL,
+			start_time TEXT NOT NULL,
+			name TEXT NOT NULL,
+			user_name TEXT NOT NULL DEFAULT '',
+			command TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL DEFAULT '',
+			cgroup_path TEXT NOT NULL DEFAULT '',
+			cpu_percent REAL NOT NULL DEFAULT 0,
+			memory_rss_bytes INTEGER NOT NULL DEFAULT 0,
+			read_bytes INTEGER NOT NULL DEFAULT 0,
+			write_bytes INTEGER NOT NULL DEFAULT 0,
+			read_rate REAL NOT NULL DEFAULT 0,
+			write_rate REAL NOT NULL DEFAULT 0,
+			threads INTEGER NOT NULL DEFAULT 0,
+			uptime_seconds REAL NOT NULL DEFAULT 0,
+			collected_at TEXT NOT NULL,
+			received_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_process_samples_identity_time ON process_samples(device_id,pid,start_time,collected_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_process_samples_collected ON process_samples(collected_at);`,
+		`CREATE TABLE IF NOT EXISTS latest_processes (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			pid INTEGER NOT NULL,
+			start_time TEXT NOT NULL,
+			name TEXT NOT NULL,
+			user_name TEXT NOT NULL DEFAULT '',
+			command TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL DEFAULT '',
+			cgroup_path TEXT NOT NULL DEFAULT '',
+			cpu_percent REAL NOT NULL DEFAULT 0,
+			memory_rss_bytes INTEGER NOT NULL DEFAULT 0,
+			read_bytes INTEGER NOT NULL DEFAULT 0,
+			write_bytes INTEGER NOT NULL DEFAULT 0,
+			read_rate REAL NOT NULL DEFAULT 0,
+			write_rate REAL NOT NULL DEFAULT 0,
+			threads INTEGER NOT NULL DEFAULT 0,
+			uptime_seconds REAL NOT NULL DEFAULT 0,
+			collected_at TEXT NOT NULL,
+			received_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,pid,start_time)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_latest_processes_device_cpu ON latest_processes(device_id,cpu_percent DESC);`,
 		`CREATE TABLE IF NOT EXISTS alert_instances (
 			fingerprint TEXT PRIMARY KEY,
 			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -509,6 +554,43 @@ func (s *Store) IngestMetrics(ctx context.Context, batch protocol.MetricBatch) e
 		}
 		if _, err := latestStmt.ExecContext(ctx, batch.DeviceID, point.Name, point.Value, point.Unit, string(labels), collectedAt, receivedAt); err != nil {
 			return err
+		}
+	}
+	if batch.ProcessesCollected {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM latest_processes WHERE device_id=?`, batch.DeviceID); err != nil {
+			return err
+		}
+		latestProcessStmt, err := tx.PrepareContext(ctx, `INSERT INTO latest_processes(
+			device_id,pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
+			read_bytes,write_bytes,read_rate,write_rate,threads,uptime_seconds,collected_at,received_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer latestProcessStmt.Close()
+		historyProcessStmt, err := tx.PrepareContext(ctx, `INSERT INTO process_samples(
+			device_id,pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
+			read_bytes,write_bytes,read_rate,write_rate,threads,uptime_seconds,collected_at,received_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer historyProcessStmt.Close()
+		for _, process := range batch.Processes {
+			args := []any{
+				batch.DeviceID, process.PID, process.StartTime, process.Name, process.User, process.Command,
+				process.State, process.Cgroup, process.CPUPercent, process.MemoryRSSBytes, process.ReadBytes,
+				process.WriteBytes, process.ReadRate, process.WriteRate, process.Threads, process.UptimeSeconds,
+				process.CollectedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
+			}
+			if _, err := latestProcessStmt.ExecContext(ctx, args...); err != nil {
+				return err
+			}
+			if process.RecordHistory {
+				if _, err := historyProcessStmt.ExecContext(ctx, args...); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET last_seen_at=?,status='online' WHERE id=?`, now.Format(time.RFC3339Nano), batch.DeviceID); err != nil {

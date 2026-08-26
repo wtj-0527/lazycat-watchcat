@@ -84,6 +84,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/devices/{id}", s.deviceDetail)
 	s.mux.HandleFunc("PUT /api/v1/devices/{id}/metadata", s.updateDeviceMetadata)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/metrics", s.metricHistory)
+	s.mux.HandleFunc("GET /api/v1/devices/{id}/processes", s.deviceProcesses)
+	s.mux.HandleFunc("GET /api/v1/devices/{id}/processes/{pid}/metrics", s.processMetrics)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/events", s.deviceEvents)
 	s.mux.HandleFunc("GET /api/v1/applications", s.applications)
 	s.mux.HandleFunc("GET /api/v1/users", s.usersView)
@@ -368,7 +370,10 @@ func (s *Server) rotateCertificateMTLS(w http.ResponseWriter, r *http.Request) {
 }
 
 func validBatch(batch protocol.MetricBatch) bool {
-	if batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 || len(batch.Applications) > 5000 || len(batch.Users) > 1000 {
+	if batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 || len(batch.Processes) > 5000 || len(batch.Applications) > 5000 || len(batch.Users) > 1000 {
+		return false
+	}
+	if !batch.ProcessesCollected && len(batch.Processes) > 0 {
 		return false
 	}
 	if !batch.ApplicationsCollected && len(batch.Applications) > 0 {

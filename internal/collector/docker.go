@@ -39,6 +39,16 @@ type DockerCollector struct {
 	statsConcurrency int
 	cursorMu         sync.Mutex
 	statsCursor      int
+	processMu        sync.Mutex
+	processPrevious  map[string]processCounter
+	processSampleAt  time.Time
+	processHistory   int
+}
+
+type processCounter struct {
+	cpuTicks   uint64
+	readBytes  uint64
+	writeBytes uint64
 }
 
 type dockerContainer struct {
@@ -192,9 +202,14 @@ func NewDockerCollector(socket string) *DockerCollector {
 	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WATCHCAT_DOCKER_STATS_CONCURRENCY"))); err == nil && configured > 0 && configured <= 8 {
 		statsConcurrency = configured
 	}
+	processHistory := 100
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WATCHCAT_PROCESS_HISTORY_LIMIT"))); err == nil && configured > 0 && configured <= 500 {
+		processHistory = configured
+	}
 	return &DockerCollector{
 		socket: socket, client: &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		statsBatch: statsBatch, statsConcurrency: statsConcurrency,
+		processPrevious: map[string]processCounter{}, processHistory: processHistory,
 	}
 }
 
@@ -397,6 +412,86 @@ func (d *DockerCollector) Collect(ctx context.Context, now time.Time) ([]protoco
 		return nil, firstErr
 	}
 	return points, firstErr
+}
+
+func (d *DockerCollector) CollectProcesses(ctx context.Context, now time.Time) ([]protocol.ProcessSample, error) {
+	if !d.Available() {
+		return nil, fmt.Errorf("docker socket unavailable: %s", d.socket)
+	}
+	image, err := d.helperImage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg := newDockerHelperConfig(image, []string{"/usr/local/bin/watchcat"}, []string{"process-snapshot"})
+	cfg.HostConfig.Binds = []string{"/proc:/host-proc:ro", "/etc/passwd:/host-passwd:ro"}
+	cfg.HostConfig.PidsLimit = 64
+	cfg.HostConfig.Memory = 96 << 20
+	raw, code, err := d.runHelper(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("process snapshot helper exited %d: %s", code, strings.TrimSpace(string(raw)))
+	}
+	var captured []rawProcessSample
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	for {
+		var item rawProcessSample
+		if err := decoder.Decode(&item); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("decode process snapshot: %w", err)
+		}
+		captured = append(captured, item)
+	}
+
+	d.processMu.Lock()
+	defer d.processMu.Unlock()
+	elapsed := now.Sub(d.processSampleAt).Seconds()
+	next := make(map[string]processCounter, len(captured))
+	out := make([]protocol.ProcessSample, 0, len(captured))
+	for _, item := range captured {
+		key := strconv.Itoa(item.PID) + "\x00" + strconv.FormatUint(item.StartTicks, 10)
+		current := processCounter{cpuTicks: item.CPUTicks, readBytes: item.ReadBytes, writeBytes: item.WriteBytes}
+		next[key] = current
+		sample := protocol.ProcessSample{
+			PID: item.PID, StartTime: strconv.FormatUint(item.StartTicks, 10), Name: item.Name,
+			User: item.User, Command: item.Command, State: item.State, Cgroup: item.Cgroup,
+			MemoryRSSBytes: item.MemoryRSSBytes, ReadBytes: item.ReadBytes, WriteBytes: item.WriteBytes,
+			Threads: item.Threads, UptimeSeconds: float64(item.UptimeTicks) / 100, CollectedAt: now,
+		}
+		if sample.User == "" {
+			sample.User = item.UID
+		}
+		if previous, ok := d.processPrevious[key]; ok && elapsed > 0 {
+			sample.CPUPercent = float64(nonNegativeDelta(item.CPUTicks, previous.cpuTicks)) / 100 / elapsed * 100
+			sample.ReadRate = float64(nonNegativeDelta(item.ReadBytes, previous.readBytes)) / elapsed
+			sample.WriteRate = float64(nonNegativeDelta(item.WriteBytes, previous.writeBytes)) / elapsed
+		}
+		out = append(out, sample)
+	}
+	d.processPrevious = next
+	d.processSampleAt = now
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CPUPercent != out[j].CPUPercent {
+			return out[i].CPUPercent > out[j].CPUPercent
+		}
+		if out[i].MemoryRSSBytes != out[j].MemoryRSSBytes {
+			return out[i].MemoryRSSBytes > out[j].MemoryRSSBytes
+		}
+		return out[i].PID < out[j].PID
+	})
+	for index := range out {
+		out[index].RecordHistory = index < d.processHistory
+	}
+	return out, nil
+}
+
+func nonNegativeDelta(current, previous uint64) uint64 {
+	if current < previous {
+		return 0
+	}
+	return current - previous
 }
 
 func (d *DockerCollector) nextStatsTargets(running []dockerContainer) []dockerContainer {

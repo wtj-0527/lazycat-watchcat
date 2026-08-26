@@ -54,10 +54,32 @@ type MetricPoint struct {
 type MetricBatch struct {
 	DeviceID              string               `json:"deviceId"`
 	Points                []MetricPoint        `json:"points"`
+	Processes             []ProcessSample      `json:"processes,omitempty"`
+	ProcessesCollected    bool                 `json:"processesCollected,omitempty"`
 	Applications          []RuntimeApplication `json:"applications,omitempty"`
 	ApplicationsCollected bool                 `json:"applicationsCollected,omitempty"`
 	Users                 []RuntimeUser        `json:"users,omitempty"`
 	UsersCollected        bool                 `json:"usersCollected,omitempty"`
+}
+
+type ProcessSample struct {
+	PID            int       `json:"pid"`
+	StartTime      string    `json:"startTime"`
+	Name           string    `json:"name"`
+	User           string    `json:"user"`
+	Command        string    `json:"command,omitempty"`
+	State          string    `json:"state"`
+	Cgroup         string    `json:"cgroup,omitempty"`
+	CPUPercent     float64   `json:"cpuPercent"`
+	MemoryRSSBytes uint64    `json:"memoryRssBytes"`
+	ReadBytes      uint64    `json:"readBytes"`
+	WriteBytes     uint64    `json:"writeBytes"`
+	ReadRate       float64   `json:"readRate"`
+	WriteRate      float64   `json:"writeRate"`
+	Threads        int       `json:"threads"`
+	UptimeSeconds  float64   `json:"uptimeSeconds"`
+	RecordHistory  bool      `json:"recordHistory,omitempty"`
+	CollectedAt    time.Time `json:"collectedAt"`
 }
 
 type RuntimeUser struct {

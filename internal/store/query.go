@@ -4,11 +4,27 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 )
+
+type ProcessListOptions struct {
+	Query  string
+	Sort   string
+	Order  string
+	Limit  int
+	Offset int
+}
+
+type ProcessPage struct {
+	Items       []protocol.ProcessSample `json:"items"`
+	Total       int                      `json:"total"`
+	CollectedAt time.Time                `json:"collectedAt,omitempty"`
+}
 
 type LatestMetric struct {
 	DeviceID    string            `json:"deviceId"`
@@ -236,6 +252,112 @@ func (s *Store) LatestMetricTimestamp(ctx context.Context) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	return parseTime(value.String), nil
+}
+
+func (s *Store) LatestProcesses(ctx context.Context, deviceID string, options ProcessListOptions) (ProcessPage, error) {
+	if options.Limit <= 0 || options.Limit > 200 {
+		options.Limit = 20
+	}
+	if options.Offset < 0 {
+		options.Offset = 0
+	}
+	orderColumns := map[string]string{
+		"cpu": "cpu_percent", "memory": "memory_rss_bytes", "read": "read_rate",
+		"write": "write_rate", "pid": "pid", "name": "name",
+	}
+	column := orderColumns[options.Sort]
+	if column == "" {
+		column = "cpu_percent"
+	}
+	direction := "DESC"
+	if strings.EqualFold(options.Order, "asc") {
+		direction = "ASC"
+	}
+	where := `device_id=?`
+	args := []any{deviceID}
+	if query := strings.TrimSpace(options.Query); query != "" {
+		where += ` AND (name LIKE ? OR user_name LIKE ? OR command LIKE ? OR CAST(pid AS TEXT) LIKE ?)`
+		like := "%" + query + "%"
+		args = append(args, like, like, like, like)
+	}
+	var page ProcessPage
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),MAX(collected_at) FROM latest_processes WHERE `+where, args...).Scan(&page.Total, nullableTimeScanner{dest: &page.CollectedAt}); err != nil {
+		return page, err
+	}
+	query := `SELECT pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
+		read_bytes,write_bytes,read_rate,write_rate,threads,uptime_seconds,collected_at
+		FROM latest_processes WHERE ` + where + ` ORDER BY ` + column + ` ` + direction + `,pid ASC LIMIT ? OFFSET ?`
+	args = append(args, options.Limit, options.Offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		item, err := scanProcess(rows)
+		if err != nil {
+			return page, err
+		}
+		page.Items = append(page.Items, item)
+	}
+	return page, rows.Err()
+}
+
+func (s *Store) ProcessHistory(ctx context.Context, deviceID string, pid int, startTime string, since, until time.Time, limit int) ([]protocol.ProcessSample, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
+		read_bytes,write_bytes,read_rate,write_rate,threads,uptime_seconds,collected_at
+		FROM process_samples WHERE device_id=? AND pid=? AND start_time=? AND collected_at>=? AND collected_at<=?
+		ORDER BY collected_at ASC LIMIT ?`,
+		deviceID, pid, startTime, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []protocol.ProcessSample
+	for rows.Next() {
+		item, err := scanProcess(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+type processScanner interface{ Scan(...any) error }
+
+func scanProcess(scanner processScanner) (protocol.ProcessSample, error) {
+	var item protocol.ProcessSample
+	var collected string
+	err := scanner.Scan(
+		&item.PID, &item.StartTime, &item.Name, &item.User, &item.Command, &item.State, &item.Cgroup,
+		&item.CPUPercent, &item.MemoryRSSBytes, &item.ReadBytes, &item.WriteBytes, &item.ReadRate,
+		&item.WriteRate, &item.Threads, &item.UptimeSeconds, &collected,
+	)
+	item.CollectedAt = parseTime(collected)
+	return item, err
+}
+
+type nullableTimeScanner struct{ dest *time.Time }
+
+func (s nullableTimeScanner) Scan(value any) error {
+	if value == nil {
+		return nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		if bytes, bytesOK := value.([]byte); bytesOK {
+			text, ok = string(bytes), true
+		}
+	}
+	if !ok {
+		return fmt.Errorf("unsupported time value %T", value)
+	}
+	*s.dest = parseTime(text)
+	return nil
 }
 
 func IsNotFound(err error) bool { return err == sql.ErrNoRows }

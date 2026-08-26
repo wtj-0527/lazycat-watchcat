@@ -115,6 +115,50 @@ func (s *Server) metricHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"deviceId": id, "name": name, "items": samples})
 }
 
+func (s *Server) deviceProcesses(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	result, err := s.store.LatestProcesses(r.Context(), r.PathValue("id"), store.ProcessListOptions{
+		Query: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Order: r.URL.Query().Get("order"),
+		Limit: limit, Offset: (page - 1) * limit,
+	})
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取宿主机进程")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": result.Items, "total": result.Total, "page": page, "pageSize": limit, "collectedAt": result.CollectedAt,
+	})
+}
+
+func (s *Server) processMetrics(w http.ResponseWriter, r *http.Request) {
+	pid, err := strconv.Atoi(r.PathValue("pid"))
+	startTime := strings.TrimSpace(r.URL.Query().Get("startTime"))
+	if err != nil || pid <= 0 || startTime == "" {
+		problem(w, http.StatusBadRequest, "process_identity_required", "pid 和 startTime 必填")
+		return
+	}
+	from, to, code, message := deviceMetricTimeRange(r)
+	if code != "" {
+		problem(w, http.StatusBadRequest, code, message)
+		return
+	}
+	items, err := s.store.ProcessHistory(r.Context(), r.PathValue("id"), pid, startTime, from, to, 2000)
+	if err != nil {
+		problem(w, 500, "internal_error", "无法读取进程历史")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deviceId": r.PathValue("id"), "pid": pid, "startTime": startTime, "items": items,
+	})
+}
+
 func deviceMetricTimeRange(r *http.Request) (time.Time, time.Time, string, string) {
 	now := time.Now().UTC()
 	fromRaw, toRaw := strings.TrimSpace(r.URL.Query().Get("from")), strings.TrimSpace(r.URL.Query().Get("to"))

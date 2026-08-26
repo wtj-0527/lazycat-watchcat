@@ -14,6 +14,7 @@ type RetentionResult struct {
 	RollupsDeleted     int `json:"rollupsDeleted"`
 	AuditDeleted       int `json:"auditDeleted"`
 	InspectionsDeleted int `json:"inspectionsDeleted"`
+	ProcessesDeleted   int `json:"processesDeleted"`
 }
 
 type rollupKey struct {
@@ -105,6 +106,7 @@ func (s *Store) RunRetention(ctx context.Context, now time.Time) (RetentionResul
 	}
 	for _, item := range []cleanup{
 		{`DELETE FROM metrics WHERE collected_at<?`, now.Add(-time.Duration(settings.RawRetentionDays) * 24 * time.Hour), &result.RawDeleted},
+		{`DELETE FROM process_samples WHERE collected_at<?`, now.Add(-time.Duration(settings.RawRetentionDays) * 24 * time.Hour), &result.ProcessesDeleted},
 		{`DELETE FROM metric_rollups_hourly WHERE bucket_start<?`, now.Add(-time.Duration(settings.RollupRetentionDays) * 24 * time.Hour), &result.RollupsDeleted},
 		{`DELETE FROM audit_log WHERE created_at<?`, now.Add(-time.Duration(settings.AuditRetentionDays) * 24 * time.Hour), &result.AuditDeleted},
 		{`DELETE FROM inspections WHERE started_at<?`, now.Add(-time.Duration(settings.InspectionRetentionDays) * 24 * time.Hour), &result.InspectionsDeleted},

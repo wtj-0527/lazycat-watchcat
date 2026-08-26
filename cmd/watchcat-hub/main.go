@@ -25,6 +25,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "process-snapshot" {
+		if err := collector.WriteHostProcessSnapshot(os.Stdout, "/host-proc", "/host-passwd"); err != nil {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	cfg := config.Load()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	backupManager := backup.New(cfg.DatabasePath(), filepath.Join(cfg.DataDir, "backups"), buildinfo.Version)

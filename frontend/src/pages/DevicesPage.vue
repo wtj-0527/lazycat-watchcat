@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling, useRovingTabs } from '@/composables'
-import type { Capability, Device, Metric, Overview } from '@/types'
+import type { Capability, Device, HostProcess, Metric, Overview } from '@/types'
 import { ago, bytes, connectivityState, dateTime, deviceState, formatMetricValue, formatNumber, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
@@ -14,9 +14,9 @@ import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { appConfirm, appPrompt } from '@/dialog'
 
-type DetailTab = 'overview' | 'system' | 'storage' | 'apps' | 'network' | 'events'
+type DetailTab = 'overview' | 'system' | 'processes' | 'storage' | 'apps' | 'network' | 'events'
 const detailTabs: Array<[DetailTab, string]> = [
-  ['overview', '概览'], ['system', '系统'], ['storage', '存储与硬件'],
+  ['overview', '概览'], ['system', '系统'], ['processes', '进程'], ['storage', '存储与硬件'],
   ['apps', '应用与容器'], ['network', '网络'], ['events', '事件'],
 ]
 
@@ -45,6 +45,18 @@ const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail
 const eventFilter = ref<'all' | 'alert' | 'audit'>('all')
 const deviceCapabilities = ref<Capability[]>([])
 const applicationTitles = ref<Record<string, string>>({})
+const processItems = ref<HostProcess[]>([])
+const processTotal = ref(0)
+const processPage = ref(1)
+const processPageSize = ref(20)
+const processQuery = ref('')
+const processSort = ref('cpu')
+const processOrder = ref<'asc' | 'desc'>('desc')
+const processLoading = ref(false)
+const processError = ref('')
+const selectedProcess = ref<HostProcess>()
+const processHistory = ref<HostProcess[]>([])
+const processHistoryLoading = ref(false)
 interface SavedView { id: string; name: string; query: { query?: string; status?: string; connectivity?: string; capability?: string; group?: string } }
 interface Payload extends Overview { savedViews: SavedView[] }
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
@@ -91,6 +103,73 @@ async function showDevice(id: string) {
     detailLoading.value = false
   }
 }
+async function loadProcesses() {
+  const id = selected.value?.id || detailDeviceId.value
+  if (!id) return
+  processLoading.value = true
+  processError.value = ''
+  try {
+    const params = new URLSearchParams({
+      page: String(processPage.value), limit: String(processPageSize.value),
+      sort: processSort.value, order: processOrder.value,
+    })
+    if (processQuery.value.trim()) params.set('q', processQuery.value.trim())
+    const result = await api<{ items: HostProcess[]; total: number }>(`/api/v1/devices/${encodeURIComponent(id)}/processes?${params}`)
+    processItems.value = result.items || []
+    processTotal.value = result.total || 0
+  } catch (reason) {
+    processError.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    processLoading.value = false
+  }
+}
+async function selectProcess(item: HostProcess) {
+  selectedProcess.value = item
+  processHistoryLoading.value = true
+  try {
+    const result = await api<{ items: HostProcess[] }>(`/api/v1/devices/${encodeURIComponent(selected.value!.id)}/processes/${item.pid}/metrics?startTime=${encodeURIComponent(item.startTime)}&${trendRangeQuery()}`)
+    processHistory.value = result.items || []
+  } catch (reason) {
+    processError.value = reason instanceof Error ? reason.message : String(reason)
+    processHistory.value = []
+  } finally {
+    processHistoryLoading.value = false
+  }
+}
+function applyProcessFilters() {
+  processPage.value = 1
+  void loadProcesses()
+}
+function changeProcessPage(page: number) {
+  processPage.value = page
+  void loadProcesses()
+}
+function changeProcessPageSize(size: number) {
+  processPageSize.value = size
+  processPage.value = 1
+  void loadProcesses()
+}
+const processPageCount = computed(() => Math.max(1, Math.ceil(processTotal.value / processPageSize.value)))
+const processRangeStart = computed(() => processTotal.value ? (processPage.value - 1) * processPageSize.value + 1 : 0)
+const processRangeEnd = computed(() => Math.min(processTotal.value, processPage.value * processPageSize.value))
+const processKpis = computed(() => ({
+  total: processTotal.value,
+  running: processItems.value.filter((item) => item.state === 'R').length,
+  cpu: [...processItems.value].sort((a, b) => b.cpuPercent - a.cpuPercent)[0],
+  memory: [...processItems.value].sort((a, b) => b.memoryRssBytes - a.memoryRssBytes)[0],
+}))
+const processCpuSeries = computed<ChartSeries[]>(() => selectedProcess.value ? [{
+  name: selectedProcess.value.name, color: '#2563eb',
+  points: processHistory.value.map((item) => ({ value: item.cpuPercent, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })),
+}] : [])
+const processMemorySeries = computed<ChartSeries[]>(() => selectedProcess.value ? [{
+  name: selectedProcess.value.name, color: '#7c3aed',
+  points: processHistory.value.map((item) => ({ value: item.memoryRssBytes / 1024 ** 2, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })),
+}] : [])
+const processIoSeries = computed<ChartSeries[]>(() => selectedProcess.value ? [
+  { name: '读取', color: '#118847', points: processHistory.value.map((item) => ({ value: item.readRate / 1024, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })) },
+  { name: '写入', color: '#c05600', points: processHistory.value.map((item) => ({ value: item.writeRate / 1024, at: dateTime(item.collectedAt), label: new Date(item.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) })) },
+] : [])
 function trendRangeQuery() {
   return trendMode.value === 'custom' && trendAppliedFrom.value && trendAppliedTo.value
     ? `from=${encodeURIComponent(trendAppliedFrom.value)}&to=${encodeURIComponent(trendAppliedTo.value)}`
@@ -121,6 +200,7 @@ function selectTrendPreset(hours: number) {
   trendMode.value = 'preset'
   trendHours.value = hours
   void loadTrend()
+  if (selectedProcess.value) void selectProcess(selectedProcess.value)
 }
 function showTrendCustomRange() {
   trendMode.value = 'custom'
@@ -149,6 +229,7 @@ function applyTrendCustomRange() {
   trendAppliedTo.value = to.toISOString()
   trendError.value = ''
   void loadTrend()
+  if (selectedProcess.value) void selectProcess(selectedProcess.value)
 }
 const groups = computed(() => [...new Set((data.value?.devices || []).map((item) => item.group).filter(Boolean))] as string[])
 function applyView(view: SavedView['query']) {
@@ -405,6 +486,9 @@ function closeDetail() {
   selected.value = undefined
   detailDeviceId.value = ''
   detailError.value = ''
+  selectedProcess.value = undefined
+  processItems.value = []
+  processHistory.value = []
 }
 function metrics(device: Device): Metric[] {
   return Object.values(device.latest || {}).flat().sort((a, b) => a.name.localeCompare(b.name))
@@ -412,7 +496,7 @@ function metrics(device: Device): Metric[] {
 function categoryMetrics(device: Device, category: DetailTab): Metric[] {
   const prefixes: Record<DetailTab, string[]> = {
     overview: [], system: ['system.'], storage: ['filesystem.', 'disk.', 'btrfs.'],
-    apps: ['container.'], network: ['network.', 'container.network.'], events: [],
+    apps: ['container.'], network: ['network.', 'container.network.'], processes: [], events: [],
   }
   if (!prefixes[category].length) return metrics(device)
   return metrics(device).filter((point) => prefixes[category].some((prefix) => point.name.startsWith(prefix)))
@@ -515,6 +599,9 @@ const riskMetrics = computed(() => selected.value ? metrics(selected.value).filt
 const capabilityCount = computed(() => selected.value
   ? ['system.', 'container.', 'filesystem.', 'disk.', 'btrfs.'].filter((prefix) => Object.keys(selected.value?.latest || {}).some((name) => name.startsWith(prefix))).length
   : 0)
+watch(selectedTab, (tab) => {
+  if (tab === 'processes') void loadProcesses()
+})
 </script>
 
 <template>
@@ -658,6 +745,55 @@ const capabilityCount = computed(() => selected.value
               <div v-for="point in btrfsEvidence" :key="`${point.name}:${metricResource(point)}`"><span><b>{{ point.name }}</b><small>{{ metricResource(point) }} · {{ dateTime(point.collectedAt) }}</small></span><strong>{{ formatMetricValue(point.value, point.unit) }}</strong></div>
             </div>
             <div v-else class="healthy-empty horizontal"><span>✓</span><div><b>未发现 Btrfs 或 SMART 错误</b><small>以最近一次真实采集结果为准。</small></div></div>
+          </section>
+        </section>
+
+        <section v-else-if="selectedTab === 'processes'" class="device-detail-insights process-insights">
+          <div class="detail-kpi-grid">
+            <article><span>进程数</span><strong>{{ processKpis.total }}</strong><small>当前宿主机快照</small></article>
+            <article><span>运行中</span><strong>{{ processKpis.running }}</strong><small>当前页状态为 R</small></article>
+            <article><span>CPU 最高</span><strong>{{ processKpis.cpu ? `${formatNumber(processKpis.cpu.cpuPercent)}%` : '未知' }}</strong><small>{{ processKpis.cpu?.name || '尚无数据' }}</small></article>
+            <article><span>内存最高</span><strong>{{ processKpis.memory ? bytes(processKpis.memory.memoryRssBytes) : '未知' }}</strong><small>{{ processKpis.memory?.name || '尚无数据' }}</small></article>
+          </div>
+          <div class="process-toolbar">
+            <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="processQuery" placeholder="搜索 PID、名称、用户或命令" @keyup.enter="applyProcessFilters"></label>
+            <select v-model="processSort" aria-label="进程排序指标" @change="applyProcessFilters"><option value="cpu">按 CPU</option><option value="memory">按内存</option><option value="read">按读取速率</option><option value="write">按写入速率</option><option value="pid">按 PID</option><option value="name">按名称</option></select>
+            <select v-model="processOrder" aria-label="进程排序方向" @change="applyProcessFilters"><option value="desc">降序</option><option value="asc">升序</option></select>
+            <button class="secondary-button" @click="applyProcessFilters">查询</button>
+          </div>
+          <div v-if="processError" class="inline-empty">进程读取失败：{{ processError }} <button class="row-link" @click="loadProcesses">重试</button></div>
+          <div v-else-if="processLoading" class="inline-empty">正在读取宿主机进程…</div>
+          <div v-else class="table-scroll process-table-wrap">
+            <table class="process-table">
+              <thead><tr><th>PID</th><th>进程</th><th>用户</th><th>状态</th><th>CPU</th><th>内存</th><th>读取</th><th>写入</th><th>线程</th><th>运行时间</th></tr></thead>
+              <tbody>
+                <tr v-for="item in processItems" :key="`${item.pid}:${item.startTime}`" :class="{ selected: selectedProcess?.pid === item.pid && selectedProcess?.startTime === item.startTime }" @click="selectProcess(item)">
+                  <td>{{ item.pid }}</td><td><b>{{ item.name }}</b><small :title="item.command">{{ item.command || item.cgroup || '无命令行' }}</small></td><td>{{ item.user || '未知' }}</td><td>{{ item.state }}</td>
+                  <td>{{ formatNumber(item.cpuPercent) }}%</td><td>{{ bytes(item.memoryRssBytes) }}</td><td>{{ bytes(item.readRate) }}/s</td><td>{{ bytes(item.writeRate) }}/s</td><td>{{ item.threads }}</td><td>{{ formatNumber(item.uptimeSeconds / 3600, 1) }} 小时</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <AppPagination :page="processPage" :page-size="processPageSize" :total="processTotal" :page-count="processPageCount" :range-start="processRangeStart" :range-end="processRangeEnd" label="宿主机进程分页" @update:page="changeProcessPage" @update:page-size="changeProcessPageSize" />
+          <section v-if="selectedProcess" class="process-history-section">
+            <div class="section-title compact device-trend-title">
+              <div><h3>{{ selectedProcess.name }} · PID {{ selectedProcess.pid }}</h3><span class="muted">{{ selectedProcess.user }} · {{ selectedProcess.command || selectedProcess.cgroup }}</span></div>
+              <div class="range-tabs" aria-label="单进程历史时间范围">
+                <button v-for="option in [{ h: 1, l: '1 小时' }, { h: 6, l: '6 小时' }, { h: 24, l: '24 小时' }, { h: 168, l: '7 天' }]" :key="option.h" :class="{ active: trendMode === 'preset' && trendHours === option.h }" @click="selectTrendPreset(option.h)">{{ option.l }}</button>
+                <button :class="{ active: trendMode === 'custom' }" @click="showTrendCustomRange">自定义</button>
+              </div>
+            </div>
+            <div v-if="trendMode === 'custom'" class="device-trend-custom-range">
+              <label>开始<input v-model="trendCustomFrom" type="datetime-local"></label>
+              <label>结束<input v-model="trendCustomTo" type="datetime-local"></label>
+              <button class="secondary-button" @click="applyTrendCustomRange">应用</button>
+            </div>
+            <div v-if="processHistoryLoading" class="inline-empty">正在读取单进程历史…</div>
+            <div v-else class="process-history-grid">
+              <div><h4>CPU</h4><LineChart :series="processCpuSeries" :min="0" unit="%" :height="220" /></div>
+              <div><h4>内存</h4><LineChart :series="processMemorySeries" :min="0" unit=" MiB" :height="220" /></div>
+              <div><h4>磁盘 I/O 速率</h4><LineChart :series="processIoSeries" :min="0" unit=" KiB/s" :height="220" /></div>
+            </div>
           </section>
         </section>
 

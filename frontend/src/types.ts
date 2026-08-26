@@ -32,6 +32,25 @@ export interface Device {
   latest: Record<string, Metric[]>
 }
 
+export interface HostProcess {
+  pid: number
+  startTime: string
+  name: string
+  user: string
+  command?: string
+  state: string
+  cgroup?: string
+  cpuPercent: number
+  memoryRssBytes: number
+  readBytes: number
+  writeBytes: number
+  readRate: number
+  writeRate: number
+  threads: number
+  uptimeSeconds: number
+  collectedAt: string
+}
+
 export interface Alert {
   fingerprint: string
   deviceId?: string

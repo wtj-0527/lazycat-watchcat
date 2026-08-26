@@ -21,6 +21,7 @@ type capabilityEvidence struct {
 	dockerRestricted bool
 	smartAttempted   bool
 	smartRestricted  bool
+	processReachable bool
 }
 
 type Embedded struct {
@@ -126,6 +127,16 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 		if dockerErr != nil {
 			evidence.dockerRestricted = permissionDenied(dockerErr)
 			warnings = append(warnings, "docker runtime: "+dockerErr.Error())
+		}
+		processCtx, processCancel := context.WithTimeout(ctx, 20*time.Second)
+		processes, processErr := e.docker.CollectProcesses(processCtx, now)
+		processCancel()
+		if processErr != nil {
+			warnings = append(warnings, "host processes: "+processErr.Error())
+		} else {
+			batch.Processes = processes
+			batch.ProcessesCollected = true
+			evidence.processReachable = true
 		}
 	} else if includeAdvanced {
 		warnings = append(warnings, "docker runtime: read-only LazyCat Docker socket unavailable")
@@ -240,6 +251,7 @@ func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points
 		capabilityFromConfig("system.metrics.gopsutil", true, has("system.cpu.usage") && has("system.load.5m"), warnings, "gopsutil 扩展指标不可用", now),
 		{Capability: "filesystem.lazycat_data", Status: "available", Detail: "校准路径 " + e.dataPath + "，对应 LazyCat 数据存储池", CheckedAt: now},
 		{Capability: "network.metrics", Status: statusOf(has("network.")), Detail: "读取网络命名空间累计流量", CheckedAt: now},
+		optionalCapability("process.metrics", evidence.processReachable, "通过受控 Docker helper 只读采集宿主机进程", "当前无法读取宿主机 PID namespace", "error", now),
 		optionalCapability("system.temperature", has("system.temperature"), "读取 /sys 硬件温度传感器", "当前运行环境未暴露硬件温度传感器", "unsupported", now),
 		accessCapability("system.fan", evidence.halReachable, true, false, warnings, "hal fan:", "LazyCat HAL GetFanRpm 只读接口", "LazyCat HAL 调用失败", now),
 		accessCapability("container.runtime", evidence.dockerReachable, evidence.dockerMapped, evidence.dockerRestricted, warnings, "docker runtime:", "LazyCat Docker socket，仅调用 List/Stats", "只读 LazyCat Docker socket 未授权或不可用", now),
