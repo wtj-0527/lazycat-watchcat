@@ -133,11 +133,7 @@ function capabilityDetail(device: Device): string {
 
     </div>
 
-    <section class="fleet-realtime-card">
-      <div class="section-title">
-        <div><h2>设备实时指标</h2></div>
-        <span class="overview-card-meta">{{ orderedDevices.length }} 台设备</span>
-      </div>
+    <section class="fleet-realtime-section">
       <div v-if="orderedDevices.length" class="fleet-realtime-grid">
         <article v-for="device in orderedDevices" :key="device.id" class="fleet-device-metrics">
           <header>

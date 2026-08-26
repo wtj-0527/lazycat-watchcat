@@ -519,7 +519,7 @@ const capabilityCount = computed(() => selected.value
 
 <template>
   <div v-if="selected || detailLoading || detailError">
-    <button class="back-button" @click="closeDetail"><AppIcon name="arrow-left" :size="16" /> 返回设备清单</button>
+    <button class="back-button" @click="closeDetail"><AppIcon name="arrow-left" :size="16" /> 返回设备</button>
     <PageState :loading="detailLoading" :error="detailError" @retry="detailDeviceId && showDevice(detailDeviceId)">
       <template v-if="selected">
         <section class="device-hero">
@@ -610,7 +610,6 @@ const capabilityCount = computed(() => selected.value
         </div>
 
         <section v-else-if="selectedTab === 'system'" class="device-detail-insights">
-          <div class="section-title"><div><h2>系统</h2></div><span class="pill unknown">{{ ago(selected.lastSeenAt) }}</span></div>
           <div class="detail-kpi-grid">
             <article><span>CPU</span><strong>{{ pointValue('system.cpu.usage') }}</strong><small>当前使用率</small></article>
             <article><span>内存</span><strong>{{ pointValue('system.memory.usage') }}</strong><small>当前使用率</small></article>
@@ -642,7 +641,6 @@ const capabilityCount = computed(() => selected.value
         </section>
 
         <section v-else-if="selectedTab === 'storage'" class="device-detail-insights">
-          <div class="section-title"><div><h2>存储与硬件</h2></div><span class="pill unknown">{{ storageDisks.length }} 块物理磁盘</span></div>
           <div class="physical-disk-grid">
             <article v-for="disk in storageDisks" :key="disk.device" class="physical-disk-card" :class="{ warning: (disk.temperature || 0) >= 55 || disk.smartErrors > 0 }">
               <header><div><i /><span><b>/dev/{{ disk.device }}</b><small>{{ disk.media.toUpperCase() }} · {{ disk.transport }}</small></span></div><StatusPill :status="disk.smartErrors ? 'critical' : 'healthy'" /></header>
@@ -664,7 +662,6 @@ const capabilityCount = computed(() => selected.value
         </section>
 
         <section v-else-if="selectedTab === 'network'" class="device-detail-insights">
-          <div class="section-title"><div><h2>网络</h2></div><span class="pill unknown">实时速率与累计流量分开显示</span></div>
           <div class="detail-kpi-grid">
             <article><span>当前下载</span><strong>{{ formatNumber(currentNetworkRates['下载'] || 0) }} MiB/s</strong><small>根据相邻采集计数计算</small></article>
             <article><span>当前上传</span><strong>{{ formatNumber(currentNetworkRates['上传'] || 0) }} MiB/s</strong><small>根据相邻采集计数计算</small></article>
@@ -688,7 +685,6 @@ const capabilityCount = computed(() => selected.value
         </section>
 
         <section v-else-if="selectedTab === 'events'" class="device-detail-insights">
-          <div class="section-title"><div><h2>设备事件</h2></div><span class="pill unknown">最近 {{ deviceEvents.length }} 条</span></div>
           <div class="detail-kpi-grid event-kpis">
             <article><span>全部事件</span><strong>{{ eventStats.total }}</strong><small>当前保留窗口</small></article>
             <article><span>告警变化</span><strong>{{ eventStats.alert }}</strong><small>触发、升级与恢复</small></article>
@@ -709,8 +705,7 @@ const capabilityCount = computed(() => selected.value
         </section>
 
         <section v-else-if="selectedTab === 'apps'" class="device-app-insights">
-          <div class="section-title"><div><h2>应用与容器指标</h2></div><span class="pill unknown">{{ containerResources.length }} 个实例</span></div>
-          <section v-if="containerResources.length" class="application-ranking-panel">
+          <section v-if="containerResources.length" class="application-ranking-section">
             <div class="section-title compact">
               <div><h3>资源热点</h3><span class="muted">四项指标分别排序；每张卡片均可上下滚动查看全部实例。</span></div>
             </div>
@@ -748,11 +743,10 @@ const capabilityCount = computed(() => selected.value
       <select v-model="groupFilter" aria-label="设备组" @change="markCustomView"><option value="all">设备组</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select>
       <button class="secondary-button save-view-button" @click="saveView">保存当前视图</button>
     </div>
-    <section class="card">
-      <div class="section-title"><div><h2>设备清单</h2></div></div>
+    <section class="device-list-section">
       <DeviceTable v-if="filteredDevices.length" :items="devicePagination.pagedItems.value" clickable @select="showDevice" />
       <div v-else class="inline-empty">没有符合当前筛选条件的设备。</div>
-      <AppPagination v-model:page="devicePagination.page.value" v-model:page-size="devicePagination.pageSize.value" :total="devicePagination.total.value" :page-count="devicePagination.pageCount.value" :range-start="devicePagination.rangeStart.value" :range-end="devicePagination.rangeEnd.value" label="设备清单分页" />
+      <AppPagination v-model:page="devicePagination.page.value" v-model:page-size="devicePagination.pageSize.value" :total="devicePagination.total.value" :page-count="devicePagination.pageCount.value" :range-start="devicePagination.rangeStart.value" :range-end="devicePagination.rangeEnd.value" label="设备列表分页" />
     </section>
   </PageState>
 </template>
