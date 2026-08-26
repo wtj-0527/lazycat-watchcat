@@ -708,6 +708,63 @@ body { font-size: 12px; }
 .metric-chart-panel h3 { margin: 0 0 14px; font-size: 14px; }
 .metric-chart-panel .bar-chart { max-height: 440px; overflow-x: hidden; overflow-y: auto; }
 .device-app-insights { display: grid; gap: 18px; }
+.device-detail-insights { display: grid; gap: 14px; }
+.detail-kpi-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.detail-kpi-grid article { position: relative; display: grid; align-content: center; min-width: 0; min-height: 92px; padding: 14px 17px; }
+.detail-kpi-grid article + article::before { position: absolute; top: 17px; bottom: 17px; left: 0; width: 1px; background: #e7edf4; content: ""; }
+.detail-kpi-grid span { color: var(--muted); font-size: 10px; font-weight: 800; }
+.detail-kpi-grid strong { margin-top: 5px; overflow: hidden; color: var(--text); font-size: 21px; text-overflow: ellipsis; white-space: nowrap; }
+.detail-kpi-grid small { margin-top: 4px; overflow: hidden; color: #8794a8; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.detail-chart-card,.detail-evidence-card,.event-timeline-card { min-width: 0; padding: 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fbfdff; }
+.detail-chart-card.full { width: 100%; }
+.detail-two-column,.event-layout { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.temperature-summary-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.temperature-summary-grid article { position: relative; display: grid; grid-template-columns: 10px minmax(0,1fr) auto; align-items: center; gap: 7px; min-width: 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+.temperature-summary-grid article>i { width: 8px; height: 32px; border-radius: 4px; }
+.temperature-summary-grid article>span { color: var(--secondary); font-size: 10px; font-weight: 800; }
+.temperature-summary-grid article>strong { color: var(--text); font-size: 14px; }
+.temperature-summary-grid article>small { grid-column: 2/-1; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.physical-disk-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.physical-disk-card { min-width: 0; padding: 13px; border: 1px solid #dfe7ef; border-radius: 11px; background: #fff; box-shadow: 0 4px 12px rgba(15,23,42,.035); }
+.physical-disk-card.warning { border-color: #fed7aa; background: #fffaf5; }
+.physical-disk-card>header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.physical-disk-card>header>div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.physical-disk-card>header>div>i { width: 8px; height: 28px; border-radius: 4px; background: #2563eb; }
+.physical-disk-card>header span { display: grid; min-width: 0; }
+.physical-disk-card>header b { color: var(--text); font-size: 11px; }
+.physical-disk-card>header small { color: var(--muted); font-size: 8px; }
+.physical-disk-card h3,.physical-disk-card p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.physical-disk-card h3 { margin: 12px 0 3px; font-size: 11px; }
+.physical-disk-card p { margin: 0 0 10px; color: var(--muted); font-size: 8px; }
+.physical-disk-card dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin: 0; }
+.physical-disk-card dl div { display: grid; gap: 2px; padding: 7px; border-radius: 7px; background: #f5f8fb; }
+.physical-disk-card dt { color: var(--muted); font-size: 8px; }
+.physical-disk-card dd { margin: 0; overflow: hidden; color: var(--secondary); font-size: 10px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.storage-detail-grid .bar-chart { max-height: 260px; overflow-y: auto; }
+.detail-evidence-list { display: grid; }
+.detail-evidence-list>div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 7px 4px; border-bottom: 1px solid #e8eef5; }
+.detail-evidence-list>div:last-child { border-bottom: 0; }
+.detail-evidence-list span { display: grid; min-width: 0; }
+.detail-evidence-list b,.detail-evidence-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-evidence-list b { color: var(--secondary); font-size: 10px; }
+.detail-evidence-list small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.detail-evidence-list strong { color: var(--text); font-size: 11px; white-space: nowrap; }
+.event-filter-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #eef2f7; }
+.event-filter-tabs button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 9px; font-weight: 800; cursor: pointer; }
+.event-filter-tabs button.active { background: #fff; color: var(--text); box-shadow: 0 1px 4px rgba(15,23,42,.1); }
+.device-event-timeline { position: relative; display: grid; max-height: 520px; padding-left: 18px; overflow-y: auto; }
+.device-event-timeline::before { position: absolute; top: 8px; bottom: 8px; left: 8px; width: 1px; background: #dbe4ee; content: ""; }
+.device-event-timeline details { position: relative; border-bottom: 1px solid #e8eef5; }
+.device-event-timeline summary { display: grid; grid-template-columns: 12px minmax(0,1fr) auto; align-items: center; gap: 10px; min-height: 60px; cursor: pointer; list-style: none; }
+.device-event-timeline summary::-webkit-details-marker { display: none; }
+.device-event-timeline summary>i { position: relative; z-index: 1; width: 9px; height: 9px; margin-left: -14px; border: 2px solid #fff; border-radius: 50%; background: #64748b; box-shadow: 0 0 0 2px #cbd5e1; }
+.device-event-timeline summary>i.alert { background: #c05600; box-shadow: 0 0 0 2px #fed7aa; }
+.device-event-timeline summary>span { display: grid; min-width: 0; }
+.device-event-timeline summary b,.device-event-timeline summary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-event-timeline summary b { color: var(--text); font-size: 10px; }
+.device-event-timeline summary small { margin-top: 4px; color: var(--muted); font-size: 8px; }
+.device-event-timeline summary em { color: #2563eb; font-size: 9px; font-style: normal; font-weight: 800; }
+.device-event-timeline details>p { margin: 0 0 10px 12px; padding: 9px 11px; border-radius: 8px; background: #f1f5f9; color: #475569; font-size: 9px; line-height: 1.6; overflow-wrap: anywhere; }
 .application-ranking-panel { min-width: 0; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 12px; background: #fbfdff; }
 .resource-ranking-board { position: relative; min-width: 0; }
 .resource-summary-strip { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); margin-bottom: 14px; overflow: hidden; border: 1px solid #e4eaf1; border-radius: 11px; background: #fff; }
@@ -776,10 +833,13 @@ body { font-size: 12px; }
 .trend-placeholder i { flex: 1; border-top: 2px solid var(--primary); transform: skewX(-18deg); }
 @media (max-width: 1100px) { .device-overview-grid { grid-template-columns: 1fr; } .identity-card, .realtime-card, .active-risk-card, .capability-summary-card, .resource-trend-card { grid-column: 1; } }
 @media (max-width: 1200px) { .resource-ranking-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 1200px) { .physical-disk-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 760px) {
   .device-trend-title, .device-trend-custom-range { align-items: stretch; flex-direction: column; }
   .device-metric-chart-grid { grid-template-columns: 1fr; }
   .resource-summary-strip { grid-template-columns: 1fr; }
+  .detail-kpi-grid,.temperature-summary-grid,.physical-disk-grid,.detail-two-column,.event-layout { grid-template-columns: 1fr; }
+  .detail-kpi-grid article + article::before { top: 0; right: 17px; bottom: auto; left: 17px; width: auto; height: 1px; }
   .resource-summary-strip article + article::before { top: 0; right: 16px; bottom: auto; left: 16px; width: auto; height: 1px; }
   .resource-ranking-grid { grid-template-columns: 1fr; }
 }

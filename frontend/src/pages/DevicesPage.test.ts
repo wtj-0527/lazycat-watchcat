@@ -116,7 +116,7 @@ describe('DevicesPage detail tabs', () => {
     apiMock.mockImplementation(async (path: string) => {
       if (path === '/api/v1/overview') return overview
       if (path === '/api/v1/devices/d1') return detailed
-      if (path.includes('/events')) return { items: [{ id: 'e1', type: 'alert.opened', title: '告警触发', detail: {}, createdAt: collectedAt }] }
+      if (path.includes('/events')) return { items: [{ id: 'e1', type: 'alert', title: '告警触发', detail: { severity: 'critical' }, createdAt: collectedAt }] }
       if (path === '/api/v1/operations') return { capabilities: [] }
       if (path.includes('/metrics')) return { items: [{ name: 'system.cpu.usage', value: 18, unit: '%', labels: {}, collectedAt }] }
       return detailed
@@ -133,7 +133,8 @@ describe('DevicesPage detail tabs', () => {
 
     await wrapper.get('#device-tab-system').trigger('click')
     expect(wrapper.find('.raw-metrics').exists()).toBe(false)
-    expect(wrapper.findAll('.metric-chart-panel').length).toBeGreaterThan(0)
+    expect(wrapper.findAll('.detail-chart-card').length).toBeGreaterThan(0)
+    expect(wrapper.get('.detail-kpi-grid').text()).toContain('CPU')
 
     await wrapper.get('#device-tab-overview').trigger('click')
     await wrapper.findAll('.range-tabs button').find((button) => button.text() === '自定义')!.trigger('click')
