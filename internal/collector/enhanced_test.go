@@ -41,10 +41,13 @@ func TestDockerLabelsPreferLazyCatRuntimeLabel(t *testing.T) {
 		Labels: map[string]string{
 			"home-cloud.app-id":          "legacy.app",
 			"lzcapp.app-id":              "community.lazycat.app.watchcat",
+			"lzcapp.user-id":             "wtj",
+			"com.docker.compose.project": "communitylazycatappwatchcat6",
 			"com.docker.compose.service": "main",
 		},
 	})
-	if labels["app"] != "community.lazycat.app.watchcat" || labels["container"] != "0123456789ab" || labels["service"] != "main" {
+	if labels["app"] != "community.lazycat.app.watchcat" || labels["container"] != "0123456789ab" ||
+		labels["service"] != "main" || labels["userId"] != "wtj" || labels["deployId"] != "community.lazycat.app.watchcat6" {
 		t.Fatalf("labels=%+v", labels)
 	}
 }

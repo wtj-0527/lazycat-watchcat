@@ -861,6 +861,12 @@ func dockerLabels(item dockerContainer) map[string]string {
 	if service := item.Labels["com.docker.compose.service"]; service != "" {
 		labels["service"] = service
 	}
+	if userID := strings.TrimSpace(item.Labels["lzcapp.user-id"]); userID != "" {
+		labels["userId"] = userID
+	}
+	if deployID := dockerDeployID(item); deployID != "" {
+		labels["deployId"] = deployID
+	}
 	return labels
 }
 
@@ -870,6 +876,29 @@ func dockerAppID(item dockerContainer) string {
 		appID = item.Labels["home-cloud.app-id"]
 	}
 	return appID
+}
+
+func dockerDeployID(item dockerContainer) string {
+	appID := dockerAppID(item)
+	project := strings.TrimSpace(item.Labels["com.docker.compose.project"])
+	if appID == "" || project == "" {
+		return ""
+	}
+	base := composeProjectName(appID)
+	if strings.HasPrefix(project, base) {
+		return appID + strings.TrimPrefix(project, base)
+	}
+	return project
+}
+
+func composeProjectName(value string) string {
+	var out strings.Builder
+	for _, char := range strings.ToLower(value) {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
+			out.WriteRune(char)
+		}
+	}
+	return out.String()
 }
 
 func dockerStatPoints(stats dockerStats, labels map[string]string, now time.Time) []protocol.MetricPoint {

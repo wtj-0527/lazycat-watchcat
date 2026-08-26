@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps<{ status: string }>()
+const props = defineProps<{ status: string; label?: string }>()
 const label = computed(() => ({
   critical: '严重',
   warning: '警告',
@@ -25,5 +25,5 @@ const label = computed(() => ({
 </script>
 
 <template>
-  <span class="pill" :class="status">{{ label }}</span>
+  <span class="pill" :class="status">{{ props.label || label }}</span>
 </template>

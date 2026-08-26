@@ -241,8 +241,8 @@ describe('AppsPage', () => {
     expect(wrapper.text()).toContain('所有应用网络流量')
     expect(wrapper.text()).toContain('所有应用磁盘 I/O')
     expect(wrapper.findAll('.all-app-metric-panel .bar-chart-row')).toHaveLength(4)
-    expect(wrapper.text()).toContain('1 个应用设备组合')
-    expect(wrapper.text()).toContain('小内存应用 / 设备二')
+    expect(wrapper.text()).toContain('1 个应用实例')
+    expect(wrapper.text()).toContain('小内存应用 / 用户一 · 设备二')
     wrapper.unmount()
   })
 
@@ -278,6 +278,7 @@ describe('AppsPage', () => {
     expect(wrapper.find('.app-resource-kpis').text()).toContain('0.0%')
     expect(wrapper.find('.app-resource-kpis').text()).toContain('0 B')
     expect(wrapper.text()).toContain('该实例当前未运行')
+    expect(wrapper.text()).toContain('已暂停')
     wrapper.unmount()
   })
 })

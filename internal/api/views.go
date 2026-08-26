@@ -197,10 +197,16 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 			apps[state.AppID] = a
 		}
 		resourceKey := state.DeviceID + "\x00" + state.AppID
-		instanceResource := instanceResources[resourceKey]
+		instanceResource, scoped := instanceResources[resourceKey+"\x00"+state.DeployID]
+		if !scoped && state.UserID != "" {
+			instanceResource, scoped = instanceResources[resourceKey+"\x00user:"+state.UserID]
+		}
+		if !scoped {
+			instanceResource = instanceResources[resourceKey]
+		}
 		if state.InstanceStatus == "running" {
 			if !mergedResources[resourceKey] {
-				a.Resources = mergeApplicationResources(a.Resources, instanceResource)
+				a.Resources = mergeApplicationResources(a.Resources, instanceResources[resourceKey])
 				mergedResources[resourceKey] = true
 			}
 		} else {
@@ -341,6 +347,8 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	series := make(map[string][]applicationHistoryPoint, len(metrics))
 	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
+	deployID := strings.TrimSpace(r.URL.Query().Get("deployId"))
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	for _, metric := range metrics {
 		var samples []store.ApplicationMetricSample
 		var err error
@@ -353,6 +361,7 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusInternalServerError, "internal_error", "无法读取应用资源历史")
 			return
 		}
+		samples = filterApplicationSamples(samples, deployID, userID)
 		if metric.counter {
 			points, total := aggregateApplicationCounterWithTotal(samples, bucket)
 			series[metric.key] = points
@@ -364,9 +373,48 @@ func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {
 	summary["networkTotalBytes"] = summary["networkReceiveRateBytes"] + summary["networkTransmitRateBytes"]
 	summary["blockTotalBytes"] = summary["blockReadRateBytes"] + summary["blockWriteRateBytes"]
 	writeJSON(w, http.StatusOK, map[string]any{
-		"appId": appID, "deviceId": deviceID, "from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
+		"appId": appID, "deviceId": deviceID, "deployId": deployID, "userId": userID,
+		"from": from, "to": to, "bucketSeconds": int(bucket.Seconds()),
 		"series": series, "summary": summary, "updatedAt": now,
 	})
+}
+
+func filterApplicationSamples(samples []store.ApplicationMetricSample, deployID, userID string) []store.ApplicationMetricSample {
+	if deployID == "" && userID == "" {
+		return preferScopedApplicationSamples(samples)
+	}
+	out := make([]store.ApplicationMetricSample, 0, len(samples))
+	for _, sample := range samples {
+		if deployID != "" && sample.Labels["deployId"] != deployID {
+			continue
+		}
+		if userID != "" && sample.Labels["userId"] != userID {
+			continue
+		}
+		out = append(out, sample)
+	}
+	return out
+}
+
+func preferScopedApplicationSamples(samples []store.ApplicationMetricSample) []store.ApplicationMetricSample {
+	scoped := map[string]bool{}
+	for _, sample := range samples {
+		if sample.Labels["deployId"] != "" || sample.Labels["userId"] != "" {
+			scoped[sample.DeviceID+"\x00"+sample.Labels["app"]] = true
+		}
+	}
+	if len(scoped) == 0 {
+		return samples
+	}
+	out := make([]store.ApplicationMetricSample, 0, len(samples))
+	for _, sample := range samples {
+		base := sample.DeviceID + "\x00" + sample.Labels["app"]
+		if scoped[base] && sample.Labels["deployId"] == "" && sample.Labels["userId"] == "" {
+			continue
+		}
+		out = append(out, sample)
+	}
+	return out
 }
 
 func applicationTimeRange(r *http.Request) (time.Time, time.Time, string, string) {
@@ -430,30 +478,49 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 	type comparisonItem struct {
 		AppID    string                    `json:"appId"`
 		DeviceID string                    `json:"deviceId,omitempty"`
+		DeployID string                    `json:"deployId,omitempty"`
+		UserID   string                    `json:"userId,omitempty"`
 		Value    float64                   `json:"value"`
 		Unit     string                    `json:"unit"`
 		Points   []applicationHistoryPoint `json:"points"`
 	}
 	items := map[string]*comparisonItem{}
-	itemIdentity := func(key string, samples []store.ApplicationMetricSample) (string, string) {
+	itemIdentity := func(key string, samples []store.ApplicationMetricSample) (string, string, string, string) {
 		if len(samples) == 0 {
-			return "", ""
+			return "", "", "", ""
 		}
 		appID := samples[0].Labels["app"]
 		if scope == "instance" {
-			return appID, samples[0].DeviceID
+			return appID, samples[0].DeviceID, samples[0].Labels["deployId"], samples[0].Labels["userId"]
 		}
-		return appID, ""
+		return appID, "", "", ""
+	}
+	deviceFilter := strings.TrimSpace(r.URL.Query().Get("deviceId"))
+	userFilter := strings.TrimSpace(r.URL.Query().Get("userId"))
+	filterSamples := func(samples []store.ApplicationMetricSample) []store.ApplicationMetricSample {
+		samples = preferScopedApplicationSamples(samples)
+		out := make([]store.ApplicationMetricSample, 0, len(samples))
+		for _, sample := range samples {
+			if deviceFilter != "" && sample.DeviceID != deviceFilter {
+				continue
+			}
+			if userFilter != "" && sample.Labels["userId"] != userFilter {
+				continue
+			}
+			out = append(out, sample)
+		}
+		return out
 	}
 	addGauge := func(name, unit string) error {
 		samples, err := s.store.AllApplicationMetricHistory(ctx, name, from, to, 300000)
 		if err != nil {
 			return err
 		}
+		samples = filterSamples(samples)
 		for key, groupedSamples := range groupApplicationSamplesByScope(samples, scope) {
 			points := aggregateApplicationGauge(groupedSamples, bucket)
-			appID, deviceID := itemIdentity(key, groupedSamples)
-			items[key] = &comparisonItem{AppID: appID, DeviceID: deviceID, Value: averageHistoryPoints(points), Unit: unit, Points: points}
+			appID, deviceID, deployID, userID := itemIdentity(key, groupedSamples)
+			items[key] = &comparisonItem{AppID: appID, DeviceID: deviceID, DeployID: deployID, UserID: userID, Value: averageHistoryPoints(points), Unit: unit, Points: points}
 		}
 		return nil
 	}
@@ -463,12 +530,13 @@ func (s *Server) applicationMetricsComparison(w http.ResponseWriter, r *http.Req
 			if err != nil {
 				return err
 			}
+			samples = filterSamples(samples)
 			for key, groupedSamples := range groupApplicationSamplesByScope(samples, scope) {
 				points, total := aggregateApplicationCounterWithTotal(groupedSamples, bucket)
 				item := items[key]
 				if item == nil {
-					appID, deviceID := itemIdentity(key, groupedSamples)
-					item = &comparisonItem{AppID: appID, DeviceID: deviceID, Unit: "bytes"}
+					appID, deviceID, deployID, userID := itemIdentity(key, groupedSamples)
+					item = &comparisonItem{AppID: appID, DeviceID: deviceID, DeployID: deployID, UserID: userID, Unit: "bytes"}
 					items[key] = item
 				}
 				item.Value += total
@@ -536,6 +604,11 @@ func groupApplicationSamplesByScope(samples []store.ApplicationMetricSample, sco
 		key := appID
 		if scope == "instance" {
 			key = sample.DeviceID + "\x00" + appID
+			if deployID := sample.Labels["deployId"]; deployID != "" {
+				key += "\x00" + deployID
+			} else if userID := sample.Labels["userId"]; userID != "" {
+				key += "\x00user:" + userID
+			}
 		}
 		out[key] = append(out[key], sample)
 	}
@@ -678,7 +751,11 @@ func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) 
 	byDevice := aggregateApplicationResourcesByDevice(metrics, now)
 	out := map[string]applicationResourceView{}
 	for key, item := range byDevice {
-		appID := key[strings.IndexByte(key, 0)+1:]
+		firstSeparator := strings.IndexByte(key, 0)
+		if firstSeparator < 0 || strings.IndexByte(key[firstSeparator+1:], 0) >= 0 {
+			continue
+		}
+		appID := key[firstSeparator+1:]
 		out[appID] = mergeApplicationResources(out[appID], item)
 	}
 	return out
@@ -687,6 +764,17 @@ func aggregateApplicationResources(metrics []store.LatestMetric, now time.Time) 
 func aggregateApplicationResourcesByDevice(metrics []store.LatestMetric, now time.Time) map[string]applicationResourceView {
 	out := map[string]applicationResourceView{}
 	containers := map[string]map[string]struct{}{}
+	scopedBases := map[string]bool{}
+	for _, metric := range metrics {
+		if now.Sub(metric.CollectedAt) > 6*time.Minute {
+			continue
+		}
+		appID := metric.Labels["app"]
+		if appID != "" && strings.HasPrefix(metric.Name, "container.") &&
+			(metric.Labels["deployId"] != "" || metric.Labels["userId"] != "") {
+			scopedBases[metric.DeviceID+"\x00"+appID] = true
+		}
+	}
 	for _, metric := range metrics {
 		if now.Sub(metric.CollectedAt) > 6*time.Minute {
 			continue
@@ -695,7 +783,17 @@ func aggregateApplicationResourcesByDevice(metrics []store.LatestMetric, now tim
 		if appID == "" || !strings.HasPrefix(metric.Name, "container.") {
 			continue
 		}
-		key := metric.DeviceID + "\x00" + appID
+		baseKey := metric.DeviceID + "\x00" + appID
+		deployID, userID := metric.Labels["deployId"], metric.Labels["userId"]
+		if scopedBases[baseKey] && deployID == "" && userID == "" {
+			continue
+		}
+		key := baseKey
+		if deployID != "" {
+			key += "\x00" + deployID
+		} else if userID != "" {
+			key += "\x00user:" + userID
+		}
 		item := out[key]
 		switch metric.Name {
 		case "container.running":
@@ -729,6 +827,18 @@ func aggregateApplicationResourcesByDevice(metrics []store.LatestMetric, now tim
 		item := out[key]
 		item.Containers = len(set)
 		out[key] = item
+	}
+	for key, item := range out {
+		firstSeparator := strings.IndexByte(key, 0)
+		if firstSeparator < 0 {
+			continue
+		}
+		secondRelative := strings.IndexByte(key[firstSeparator+1:], 0)
+		if secondRelative < 0 {
+			continue
+		}
+		baseKey := key[:firstSeparator+1+secondRelative]
+		out[baseKey] = mergeApplicationResources(out[baseKey], item)
 	}
 	return out
 }

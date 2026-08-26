@@ -34,6 +34,23 @@ func TestAggregateApplicationResourcesIgnoresStaleContainers(t *testing.T) {
 	}
 }
 
+func TestAggregateApplicationResourcesSeparatesLazyCatDeployments(t *testing.T) {
+	now := time.Now().UTC()
+	metrics := []store.LatestMetric{
+		{Name: "container.running", Value: 1, DeviceID: "d1", Labels: map[string]string{"app": "app.one", "deployId": "app.one", "userId": "u1", "container": "a"}, CollectedAt: now},
+		{Name: "container.cpu.usage", Value: 10, DeviceID: "d1", Labels: map[string]string{"app": "app.one", "deployId": "app.one", "userId": "u1", "container": "a"}, CollectedAt: now},
+		{Name: "container.running", Value: 1, DeviceID: "d1", Labels: map[string]string{"app": "app.one", "deployId": "app.one2", "userId": "u2", "container": "b"}, CollectedAt: now},
+		{Name: "container.cpu.usage", Value: 25, DeviceID: "d1", Labels: map[string]string{"app": "app.one", "deployId": "app.one2", "userId": "u2", "container": "b"}, CollectedAt: now},
+		{Name: "container.cpu.usage", Value: 999, DeviceID: "d1", Labels: map[string]string{"app": "app.one", "container": "legacy"}, CollectedAt: now},
+	}
+	items := aggregateApplicationResourcesByDevice(metrics, now)
+	if items["d1\x00app.one"].CPUPercent != 35 ||
+		items["d1\x00app.one\x00app.one"].CPUPercent != 10 ||
+		items["d1\x00app.one\x00app.one2"].CPUPercent != 25 {
+		t.Fatalf("items=%+v", items)
+	}
+}
+
 func TestLocalizedAppTitleUsesLazyCatProductNames(t *testing.T) {
 	if got := localizedAppTitle("cloud.lazycat.app.photo", "Photos"); got != "懒猫相册" {
 		t.Fatalf("title=%q", got)
