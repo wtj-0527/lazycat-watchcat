@@ -17,7 +17,8 @@ beforeEach(() => {
   apiMock.mockImplementation(async (path: string) => {
     if (path === '/api/v1/settings') return {
       appVersion: '1.8.0', deploymentMode: 'single-lpk', embeddedCollector: true, singleUser: true, maxDevices: 100,
-      collectIntervalSeconds: 30, advancedIntervalSeconds: 300, rawRetentionDays: 7, rollupRetentionDays: 90,
+      systemIntervalSeconds: 15, runtimeIntervalSeconds: 30, storageIntervalSeconds: 120,
+      advancedIntervalSeconds: 600, rawRetentionDays: 7, rollupRetentionDays: 90,
       auditRetentionDays: 180, inspectionRetentionDays: 180, backupRetentionCount: 20,
       notificationChannel: 'lazycat', notificationDelivery: 'outbox-retry',
     }
@@ -198,6 +199,32 @@ describe('SettingsPage tabs', () => {
     expect(evidence.text()).toContain(backup.name)
     expect(evidence.text()).toContain(backup.sha256.slice(0, 16))
     expect(wrapper.text()).toContain('SHA-256 aaaaaaaaaaaaaaaa…')
+    wrapper.unmount()
+  })
+
+  it('saves the four independent collection intervals', async () => {
+    const base = apiMock.getMockImplementation()!
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/settings' && options?.method === 'PUT') return JSON.parse(String(options.body))
+      return base(path, options)
+    })
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+    await wrapper.get('#settings-tab-retention').trigger('click')
+
+    expect(wrapper.text()).toContain('系统 CPU / 内存 / 网络（秒）')
+    expect(wrapper.text()).toContain('SMART / Btrfs（秒）')
+    await wrapper.get('.retention-summary input[min="10"]').setValue(20)
+    await wrapper.get('.section-title .primary-button').trigger('click')
+    await flushPromises()
+
+    const request = apiMock.mock.calls.find(([path, options]) => path === '/api/v1/settings' && options?.method === 'PUT')
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+      systemIntervalSeconds: 20,
+      runtimeIntervalSeconds: 30,
+      storageIntervalSeconds: 120,
+      advancedIntervalSeconds: 600,
+    })
     wrapper.unmount()
   })
 

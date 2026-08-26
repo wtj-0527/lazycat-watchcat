@@ -9,7 +9,8 @@ WatchCat 是单 LPK 安装、单镜像 Service 运行的 LazyCat 设备健康监
 - 主机扩展指标使用 gopsutil 读取 CPU、负载、Swap、块设备 IO、逐接口网络 IO 和可见温度传感器
 - 风扇转速仅调用 LazyCat HAL `GetFanRpm` 只读接口，不提供风扇控制
 - 容器指标只通过 LazyCat Docker socket 调用容器列表和 Stats，并按 `lzcapp.app-id` 聚合到应用
-- 容器运行状态每 30 秒更新；资源 Stats 采用 8 容器轮转批次，完整 Fleet 在约 5 分钟内刷新，避免大规模实例同时采样拖高系统负载
+- 默认采集周期：系统 CPU/内存/网络 15 秒、进程与容器 30 秒、存储容量 2 分钟、SMART/Btrfs 10 分钟
+- 容器资源 Stats 采用 8 容器轮转批次，避免大规模实例同时采样拖高系统负载
 - 安装后自动注册当前 LazyCat 设备并开始采集，无需再安装第二个 Collector 应用
 - 每个 LPK 均可生成一次性设备邀请，或在“接入”页面粘贴邀请加入现有 WatchCat
 - 加入后继续保留本机监控，同时使用持久凭据和离线队列向主 WatchCat 上报同一批真实指标与应用实例快照
@@ -21,9 +22,9 @@ WatchCat 是单 LPK 安装、单镜像 Service 运行的 LazyCat 设备健康监
 
 ```bash
 docker build \
-  --label org.opencontainers.image.version=1.4.3 \
-  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.3 .
-docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.3
+  --label org.opencontainers.image.version=1.4.4 \
+  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.4 .
+docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.4
 # 将 lzc-manifest.yml 的 image 固定为 push 返回的 sha256 digest
 lzc-cli project lint .
 lzc-cli project deploy --release

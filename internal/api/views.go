@@ -1117,7 +1117,20 @@ func (s *Server) settingsView(w http.ResponseWriter, r *http.Request) {
 	// Exact COUNT(*) queries over the raw metrics table are intentionally not
 	// part of page initialization. Production databases can contain tens of
 	// gigabytes of samples, making those counts block the whole settings page.
-	writeJSON(w, 200, map[string]any{"appVersion": buildinfo.Version, "singleUser": true, "deploymentMode": "single-lpk", "embeddedCollector": true, "maxDevices": 100, "collectIntervalSeconds": 30, "advancedIntervalSeconds": 300, "rawRetentionDays": settings.RawRetentionDays, "rollupRetentionDays": settings.RollupRetentionDays, "auditRetentionDays": settings.AuditRetentionDays, "inspectionRetentionDays": settings.InspectionRetentionDays, "backupRetentionCount": settings.BackupRetentionCount, "dailyInspectionHour": settings.DailyInspectionHour, "weeklyInspectionHour": settings.WeeklyInspectionHour, "notificationChannel": "lazycat", "notificationDelivery": "outbox-retry", "certificateRotationDaysBeforeExpiry": 30})
+	writeJSON(w, 200, map[string]any{
+		"appVersion": buildinfo.Version, "singleUser": true, "deploymentMode": "single-lpk",
+		"embeddedCollector": true, "maxDevices": 100,
+		"systemIntervalSeconds":   settings.SystemIntervalSeconds,
+		"runtimeIntervalSeconds":  settings.RuntimeIntervalSeconds,
+		"storageIntervalSeconds":  settings.StorageIntervalSeconds,
+		"advancedIntervalSeconds": settings.AdvancedIntervalSeconds,
+		"rawRetentionDays":        settings.RawRetentionDays, "rollupRetentionDays": settings.RollupRetentionDays,
+		"auditRetentionDays": settings.AuditRetentionDays, "inspectionRetentionDays": settings.InspectionRetentionDays,
+		"backupRetentionCount": settings.BackupRetentionCount,
+		"dailyInspectionHour":  settings.DailyInspectionHour, "weeklyInspectionHour": settings.WeeklyInspectionHour,
+		"notificationChannel": "lazycat", "notificationDelivery": "outbox-retry",
+		"certificateRotationDaysBeforeExpiry": 30,
+	})
 }
 func (s *Server) operationsView(w http.ResponseWriter, r *http.Request) {
 	capabilities, err := s.store.ListCapabilityStatuses(r.Context())

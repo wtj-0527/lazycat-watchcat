@@ -20,6 +20,13 @@ import (
 var blockDeviceName = regexp.MustCompile(`^(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+|md\d+|dm-\d+)$`)
 
 func collectHostMetrics(ctx context.Context, now time.Time) []protocol.MetricPoint {
+	points := collectSystemHostMetrics(ctx, now)
+	points = append(points, collectDiskIOMetrics(ctx, now)...)
+	points = append(points, collectTemperatureMetrics(ctx, now)...)
+	return points
+}
+
+func collectSystemHostMetrics(ctx context.Context, now time.Time) []protocol.MetricPoint {
 	var points []protocol.MetricPoint
 	add := func(name string, value float64, unit string, labels map[string]string) {
 		points = append(points, protocol.MetricPoint{Name: name, Value: value, Unit: unit, Labels: labels, CollectedAt: now})
@@ -37,23 +44,6 @@ func collectHostMetrics(ctx context.Context, now time.Time) []protocol.MetricPoi
 		add("system.swap.used", float64(swap.Used), "bytes", nil)
 		add("system.swap.total", float64(swap.Total), "bytes", nil)
 	}
-	if counters, err := disk.IOCountersWithContext(ctx); err == nil {
-		names := make([]string, 0, len(counters))
-		for name := range counters {
-			if blockDeviceName.MatchString(name) {
-				names = append(names, name)
-			}
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			item := counters[name]
-			labels := map[string]string{"device": name}
-			add("disk.io.read.bytes_total", float64(item.ReadBytes), "bytes", labels)
-			add("disk.io.write.bytes_total", float64(item.WriteBytes), "bytes", labels)
-			add("disk.io.read.operations_total", float64(item.ReadCount), "count", labels)
-			add("disk.io.write.operations_total", float64(item.WriteCount), "count", labels)
-		}
-	}
 	if counters, err := gnet.IOCountersWithContext(ctx, true); err == nil {
 		sort.Slice(counters, func(i, j int) bool { return counters[i].Name < counters[j].Name })
 		for _, item := range counters {
@@ -69,13 +59,45 @@ func collectHostMetrics(ctx context.Context, now time.Time) []protocol.MetricPoi
 			add("network.interface.transmit.dropped_total", float64(item.Dropout), "count", labels)
 		}
 	}
+	return points
+}
+
+func collectDiskIOMetrics(ctx context.Context, now time.Time) []protocol.MetricPoint {
+	var points []protocol.MetricPoint
+	if counters, err := disk.IOCountersWithContext(ctx); err == nil {
+		names := make([]string, 0, len(counters))
+		for name := range counters {
+			if blockDeviceName.MatchString(name) {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			item := counters[name]
+			labels := map[string]string{"device": name}
+			points = append(points,
+				protocol.MetricPoint{Name: "disk.io.read.bytes_total", Value: float64(item.ReadBytes), Unit: "bytes", Labels: labels, CollectedAt: now},
+				protocol.MetricPoint{Name: "disk.io.write.bytes_total", Value: float64(item.WriteBytes), Unit: "bytes", Labels: labels, CollectedAt: now},
+				protocol.MetricPoint{Name: "disk.io.read.operations_total", Value: float64(item.ReadCount), Unit: "count", Labels: labels, CollectedAt: now},
+				protocol.MetricPoint{Name: "disk.io.write.operations_total", Value: float64(item.WriteCount), Unit: "count", Labels: labels, CollectedAt: now},
+			)
+		}
+	}
+	return points
+}
+
+func collectTemperatureMetrics(ctx context.Context, now time.Time) []protocol.MetricPoint {
+	var points []protocol.MetricPoint
 	if temperatures, err := sensors.TemperaturesWithContext(ctx); err == nil {
 		sort.Slice(temperatures, func(i, j int) bool { return temperatures[i].SensorKey < temperatures[j].SensorKey })
 		for _, item := range temperatures {
 			if item.Temperature <= -20 || item.Temperature >= 150 || strings.TrimSpace(item.SensorKey) == "" {
 				continue
 			}
-			add("system.temperature", item.Temperature, "celsius", map[string]string{"sensor": item.SensorKey})
+			points = append(points, protocol.MetricPoint{
+				Name: "system.temperature", Value: item.Temperature, Unit: "celsius",
+				Labels: map[string]string{"sensor": item.SensorKey}, CollectedAt: now,
+			})
 		}
 	}
 	return points

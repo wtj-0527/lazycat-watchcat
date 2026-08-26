@@ -83,6 +83,8 @@ func TestPlatformConfigurationAndExports(t *testing.T) {
 	}
 
 	response, raw = requestJSON(http.MethodPut, "/api/v1/settings", map[string]any{
+		"systemIntervalSeconds": 20, "runtimeIntervalSeconds": 25,
+		"storageIntervalSeconds": 180, "advancedIntervalSeconds": 900,
 		"rawRetentionDays": 14, "rollupRetentionDays": 180, "auditRetentionDays": 90,
 		"inspectionRetentionDays": 180, "dailyInspectionHour": 2, "weeklyInspectionHour": 5,
 	})
@@ -92,6 +94,10 @@ func TestPlatformConfigurationAndExports(t *testing.T) {
 	response, raw = requestJSON(http.MethodGet, "/api/v1/settings", nil)
 	if response.StatusCode != http.StatusOK || strings.Contains(string(raw), `"storageStats"`) {
 		t.Fatalf("settings GET must not run synchronous raw-metric counts: status=%d body=%s", response.StatusCode, raw)
+	}
+	if !strings.Contains(string(raw), `"systemIntervalSeconds":20`) ||
+		!strings.Contains(string(raw), `"advancedIntervalSeconds":900`) {
+		t.Fatalf("settings GET missing collection intervals: body=%s", raw)
 	}
 
 	now := time.Now().UTC()

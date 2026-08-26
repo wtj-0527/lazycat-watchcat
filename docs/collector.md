@@ -44,7 +44,7 @@ SMART 调用仅使用固定的 `smartctl -j -a` 参数，并在明确识别到 U
 
 - `GET /containers/json`
 - `GET /containers/{id}/stats?stream=false`
-- 每 5 分钟创建短生命周期 SMART helper，完成后立即删除
+- 默认每 10 分钟创建短生命周期 SMART helper，完成后立即删除；可在设置页配置为 5–30 分钟
 
 SMART helper 使用当前 WatchCat 镜像，不增加常驻 Service，并强制：
 

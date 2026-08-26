@@ -16,6 +16,10 @@ type CapabilityStatus struct {
 }
 
 type OperationalSettings struct {
+	SystemIntervalSeconds   int `json:"systemIntervalSeconds"`
+	RuntimeIntervalSeconds  int `json:"runtimeIntervalSeconds"`
+	StorageIntervalSeconds  int `json:"storageIntervalSeconds"`
+	AdvancedIntervalSeconds int `json:"advancedIntervalSeconds"`
 	RawRetentionDays        int `json:"rawRetentionDays"`
 	RollupRetentionDays     int `json:"rollupRetentionDays"`
 	AuditRetentionDays      int `json:"auditRetentionDays"`
@@ -27,6 +31,8 @@ type OperationalSettings struct {
 
 func DefaultOperationalSettings() OperationalSettings {
 	return OperationalSettings{
+		SystemIntervalSeconds: 15, RuntimeIntervalSeconds: 30,
+		StorageIntervalSeconds: 120, AdvancedIntervalSeconds: 600,
 		RawRetentionDays: 30, RollupRetentionDays: 365, AuditRetentionDays: 180,
 		InspectionRetentionDays: 365, BackupRetentionCount: 20,
 		DailyInspectionHour: 3, WeeklyInspectionHour: 4,
@@ -40,7 +46,11 @@ func (s *Store) OperationalSettings(ctx context.Context) OperationalSettings {
 }
 
 func (s *Store) SetOperationalSettings(ctx context.Context, value OperationalSettings) error {
-	if value.RawRetentionDays < 1 || value.RawRetentionDays > 365 ||
+	if value.SystemIntervalSeconds < 10 || value.SystemIntervalSeconds > 30 ||
+		value.RuntimeIntervalSeconds < 15 || value.RuntimeIntervalSeconds > 30 ||
+		value.StorageIntervalSeconds < 60 || value.StorageIntervalSeconds > 300 ||
+		value.AdvancedIntervalSeconds < 300 || value.AdvancedIntervalSeconds > 1800 ||
+		value.RawRetentionDays < 1 || value.RawRetentionDays > 365 ||
 		value.RollupRetentionDays < value.RawRetentionDays || value.RollupRetentionDays > 3650 ||
 		value.AuditRetentionDays < 1 || value.AuditRetentionDays > 3650 ||
 		value.InspectionRetentionDays < 1 || value.InspectionRetentionDays > 3650 ||

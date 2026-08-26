@@ -11,7 +11,8 @@ import { appConfirm } from '@/dialog'
 
 interface Settings {
   appVersion: string; deploymentMode: string; embeddedCollector: boolean; singleUser: boolean; maxDevices: number
-  collectIntervalSeconds: number; advancedIntervalSeconds: number; rawRetentionDays: number; rollupRetentionDays: number
+  systemIntervalSeconds: number; runtimeIntervalSeconds: number; storageIntervalSeconds: number; advancedIntervalSeconds: number
+  rawRetentionDays: number; rollupRetentionDays: number
   auditRetentionDays: number; inspectionRetentionDays: number; backupRetentionCount: number
   notificationChannel: string; notificationDelivery: string
   dailyInspectionHour: number; weeklyInspectionHour: number
@@ -220,6 +221,10 @@ async function saveOperationalSettings() {
   await api('/api/v1/settings', {
     method: 'PUT',
     body: JSON.stringify({
+      systemIntervalSeconds: settings.systemIntervalSeconds,
+      runtimeIntervalSeconds: settings.runtimeIntervalSeconds,
+      storageIntervalSeconds: settings.storageIntervalSeconds,
+      advancedIntervalSeconds: settings.advancedIntervalSeconds,
       rawRetentionDays: settings.rawRetentionDays,
       rollupRetentionDays: settings.rollupRetentionDays,
       auditRetentionDays: settings.auditRetentionDays,
@@ -229,7 +234,7 @@ async function saveOperationalSettings() {
       weeklyInspectionHour: settings.weeklyInspectionHour,
     }),
   })
-  settingsEvidence.value = { status: 'success', message: '巡检计划与数据保留设置已保存并立即生效' }
+  settingsEvidence.value = { status: 'success', message: '采集周期、巡检计划与数据保留设置已保存；各采集任务将在当前周期结束后使用新周期' }
   await refresh()
 }
 async function createBackup() {
@@ -599,9 +604,13 @@ async function deleteUnusedImage(image: UnusedImage) {
     </section>
 
     <template v-else-if="data && tab === 'retention'">
-      <div class="section-title"><div><h2>数据保留策略</h2></div><button class="primary-button" @click="saveOperationalSettings">保存保留策略</button></div>
+      <div class="section-title"><div><h2>采集与数据保留策略</h2><span class="muted">按指标成本分层调度，避免 SMART、Btrfs 与进程扫描过于频繁。</span></div><button class="primary-button" @click="saveOperationalSettings">保存采集与保留策略</button></div>
       <div class="settings-grid retention-summary">
-        <div><span>基础采集</span><b>{{ data.settings.collectIntervalSeconds }} 秒</b></div><div><span>高级采集</span><b>{{ data.settings.advancedIntervalSeconds }} 秒</b></div><label><span>原始数据（天）</span><input v-model.number="data.settings.rawRetentionDays" type="number" min="1" max="365"></label><label><span>降采样数据（天）</span><input v-model.number="data.settings.rollupRetentionDays" type="number" min="1" max="3650"></label><label><span>审计保留（天）</span><input v-model.number="data.settings.auditRetentionDays" type="number" min="1" max="3650"></label><label><span>巡检保留（天）</span><input v-model.number="data.settings.inspectionRetentionDays" type="number" min="1" max="3650"></label><label><span>数据库备份（份）</span><input v-model.number="data.settings.backupRetentionCount" type="number" min="1" max="100"></label>
+        <label><span>系统 CPU / 内存 / 网络（秒）</span><input v-model.number="data.settings.systemIntervalSeconds" type="number" min="10" max="30"></label>
+        <label><span>进程与容器（秒）</span><input v-model.number="data.settings.runtimeIntervalSeconds" type="number" min="15" max="30"></label>
+        <label><span>存储容量（秒）</span><input v-model.number="data.settings.storageIntervalSeconds" type="number" min="60" max="300"></label>
+        <label><span>SMART / Btrfs（秒）</span><input v-model.number="data.settings.advancedIntervalSeconds" type="number" min="300" max="1800"></label>
+        <label><span>原始数据（天）</span><input v-model.number="data.settings.rawRetentionDays" type="number" min="1" max="365"></label><label><span>降采样数据（天）</span><input v-model.number="data.settings.rollupRetentionDays" type="number" min="1" max="3650"></label><label><span>审计保留（天）</span><input v-model.number="data.settings.auditRetentionDays" type="number" min="1" max="3650"></label><label><span>巡检保留（天）</span><input v-model.number="data.settings.inspectionRetentionDays" type="number" min="1" max="3650"></label><label><span>数据库备份（份）</span><input v-model.number="data.settings.backupRetentionCount" type="number" min="1" max="100"></label>
       </div>
       <div class="operations-layout">
         <section class="card">

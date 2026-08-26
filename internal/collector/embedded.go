@@ -76,108 +76,192 @@ func (e *Embedded) Close() error {
 }
 
 func (e *Embedded) Run(ctx context.Context) {
-	basicTicker := time.NewTicker(30 * time.Second)
-	advancedTicker := time.NewTicker(5 * time.Minute)
-	defer basicTicker.Stop()
-	defer advancedTicker.Stop()
-	e.collect(ctx, true)
-	for {
+	jobs := []struct {
+		name     string
+		delay    time.Duration
+		interval func(store.OperationalSettings) int
+		collect  func(context.Context)
+	}{
+		{"system", 0, func(s store.OperationalSettings) int { return s.SystemIntervalSeconds }, e.collectSystem},
+		{"runtime", 2 * time.Second, func(s store.OperationalSettings) int { return s.RuntimeIntervalSeconds }, e.collectRuntime},
+		{"storage", 5 * time.Second, func(s store.OperationalSettings) int { return s.StorageIntervalSeconds }, e.collectStorage},
+		{"advanced", 10 * time.Second, func(s store.OperationalSettings) int { return s.AdvancedIntervalSeconds }, e.collectAdvanced},
+	}
+	for _, job := range jobs {
+		go e.runScheduled(ctx, job.name, job.delay, job.interval, job.collect)
+	}
+	<-ctx.Done()
+}
+
+func (e *Embedded) runScheduled(ctx context.Context, name string, initialDelay time.Duration, interval func(store.OperationalSettings) int, collect func(context.Context)) {
+	if initialDelay > 0 {
+		timer := time.NewTimer(initialDelay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-basicTicker.C:
-			e.collect(ctx, false)
-		case <-advancedTicker.C:
-			e.collect(ctx, true)
+		case <-timer.C:
+		}
+	}
+	for {
+		started := time.Now()
+		collect(ctx)
+		seconds := interval(e.store.OperationalSettings(ctx))
+		if seconds < 1 {
+			e.logger.Error("collector interval is invalid", "category", name, "seconds", seconds)
+			seconds = 30
+		}
+		wait := time.Duration(seconds)*time.Second - time.Since(started)
+		if wait < time.Second {
+			wait = time.Second
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }
 
-func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
+func (e *Embedded) collectSystem(ctx context.Context) {
 	now := time.Now().UTC()
-	batch, err := CollectWithFilesystem(e.deviceID, now, e.dataPath, map[string]string{"mount": "LazyCat data", "scope": "host-data-volume", "path": e.dataPath})
+	batch, err := CollectSystem(e.deviceID, now)
 	if err != nil {
-		e.logger.Warn("embedded collector basic metrics", "error", err)
+		e.logger.Warn("embedded collector system metrics", "error", err)
 		return
 	}
-	var warnings []string
-	evidence := capabilityEvidence{}
 	if e.hal != nil {
 		callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		points, halErr := e.hal.Collect(callCtx, now)
 		cancel()
 		if halErr != nil {
-			warnings = append(warnings, "hal fan: "+halErr.Error())
+			e.logger.Warn("embedded collector HAL metrics", "error", halErr)
 		} else {
-			evidence.halReachable = true
 			batch.Points = append(batch.Points, points...)
 		}
-	} else if includeAdvanced {
-		warnings = append(warnings, "hal fan: LazyCat HAL connection unavailable")
 	}
-	evidence.dockerMapped = e.docker.Available()
-	if evidence.dockerMapped {
+	e.ingest(ctx, batch, false)
+}
+
+func (e *Embedded) collectRuntime(ctx context.Context) {
+	now := time.Now().UTC()
+	batch := protocol.MetricBatch{DeviceID: e.deviceID}
+	if e.docker.Available() {
 		callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		points, dockerErr := e.docker.Collect(callCtx, now)
 		cancel()
 		batch.Points = append(batch.Points, points...)
-		if dockerErr == nil || len(points) > 0 {
-			evidence.dockerReachable = true
-		}
 		if dockerErr != nil {
-			evidence.dockerRestricted = permissionDenied(dockerErr)
-			warnings = append(warnings, "docker runtime: "+dockerErr.Error())
+			e.logger.Warn("embedded collector container metrics", "error", dockerErr)
 		}
 		processCtx, processCancel := context.WithTimeout(ctx, 20*time.Second)
 		processes, processErr := e.docker.CollectProcesses(processCtx, now)
 		processCancel()
 		if processErr != nil {
-			warnings = append(warnings, "host processes: "+processErr.Error())
+			e.logger.Warn("embedded collector host processes", "error", processErr)
 		} else {
 			batch.Processes = processes
 			batch.ProcessesCollected = true
-			evidence.processReachable = true
 		}
-	} else if includeAdvanced {
-		warnings = append(warnings, "docker runtime: read-only LazyCat Docker socket unavailable")
 	}
-	if includeAdvanced {
-		if evidence.dockerMapped {
-			evidence.smartAttempted = true
-			callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-			points, smartWarnings := e.docker.CollectSMART(callCtx, now)
-			cancel()
-			batch.Points = append(batch.Points, points...)
-			warnings = append(warnings, smartWarnings...)
-			for _, warning := range smartWarnings {
-				if permissionDenied(errors.New(warning)) {
-					evidence.smartRestricted = true
-					break
-				}
-			}
-			callCtx, cancel = context.WithTimeout(ctx, 60*time.Second)
-			storagePoints, storageWarnings := e.docker.CollectStorageInventory(callCtx, now)
-			cancel()
-			batch.Points = append(batch.Points, storagePoints...)
-			warnings = append(warnings, storageWarnings...)
-		}
-		callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		points, advancedWarnings := CollectAdvanced(callCtx, e.advanced, now)
+	e.ingest(ctx, batch, true)
+}
+
+func (e *Embedded) collectStorage(ctx context.Context) {
+	now := time.Now().UTC()
+	batch := protocol.MetricBatch{
+		DeviceID: e.deviceID,
+		Points: CollectFilesystem(now, e.dataPath, map[string]string{
+			"mount": "LazyCat data", "scope": "host-data-volume", "path": e.dataPath,
+		}),
+	}
+	if e.docker.Available() {
+		callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		points, warnings := e.docker.CollectDiskInventory(callCtx, now)
 		cancel()
 		batch.Points = append(batch.Points, points...)
-		warnings = append(warnings, advancedWarnings...)
+		callCtx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		btrfsPoints, btrfsWarnings := e.docker.CollectBtrfsUsage(callCtx, now)
+		cancel()
+		batch.Points = append(batch.Points, btrfsPoints...)
+		warnings = append(warnings, btrfsWarnings...)
 		if len(warnings) > 0 {
-			e.logger.Warn("embedded collector partially degraded", "warnings", warnings)
+			e.logger.Warn("embedded collector storage inventory partially degraded", "warnings", warnings)
 		}
-		e.recordCapabilities(ctx, now, batch.Points, warnings, evidence)
 	}
+	e.ingest(ctx, batch, false)
+}
+
+func (e *Embedded) collectAdvanced(ctx context.Context) {
+	now := time.Now().UTC()
+	batch := protocol.MetricBatch{DeviceID: e.deviceID}
+	var warnings []string
+	evidence := capabilityEvidence{dockerMapped: e.docker.Available()}
+	if e.hal != nil {
+		evidence.halReachable = true
+	} else {
+		warnings = append(warnings, "hal fan: LazyCat HAL connection unavailable")
+	}
+	if evidence.dockerMapped {
+		callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		runtimePoints, dockerErr := e.docker.Collect(callCtx, now)
+		cancel()
+		evidence.dockerReachable = dockerErr == nil || len(runtimePoints) > 0
+		if dockerErr != nil {
+			evidence.dockerRestricted = permissionDenied(dockerErr)
+			warnings = append(warnings, "docker runtime: "+dockerErr.Error())
+		}
+		processCtx, processCancel := context.WithTimeout(ctx, 20*time.Second)
+		_, processErr := e.docker.CollectProcesses(processCtx, now)
+		processCancel()
+		if processErr != nil {
+			warnings = append(warnings, "host processes: "+processErr.Error())
+		} else {
+			evidence.processReachable = true
+		}
+		evidence.smartAttempted = true
+		callCtx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		smartPoints, smartWarnings := e.docker.CollectSMART(callCtx, now)
+		cancel()
+		batch.Points = append(batch.Points, smartPoints...)
+		warnings = append(warnings, smartWarnings...)
+		for _, warning := range smartWarnings {
+			if permissionDenied(errors.New(warning)) {
+				evidence.smartRestricted = true
+				break
+			}
+		}
+		callCtx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		btrfsPoints, btrfsWarnings := e.docker.CollectBtrfsHealth(callCtx, now)
+		cancel()
+		batch.Points = append(batch.Points, btrfsPoints...)
+		warnings = append(warnings, btrfsWarnings...)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	points, advancedWarnings := CollectAdvanced(callCtx, e.advanced, now)
+	cancel()
+	points = append(points, collectTemperatureMetrics(ctx, now)...)
+	batch.Points = append(batch.Points, points...)
+	warnings = append(warnings, advancedWarnings...)
+	if len(warnings) > 0 {
+		e.logger.Warn("embedded collector advanced metrics partially degraded", "warnings", warnings)
+	}
+	e.recordCapabilities(ctx, now, batch.Points, warnings, evidence)
+	e.ingest(ctx, batch, false)
+}
+
+func (e *Embedded) ingest(ctx context.Context, batch protocol.MetricBatch, includeRuntimeState bool) {
 	if err := e.store.IngestMetrics(ctx, batch); err != nil {
 		e.logger.Warn("embedded collector metric ingest", "error", err)
 		return
 	}
 	if e.upstream != nil {
-		e.attachRuntimeApplications(ctx, &batch)
-		e.attachRuntimeUsers(ctx, &batch)
+		if includeRuntimeState {
+			e.attachRuntimeApplications(ctx, &batch)
+			e.attachRuntimeUsers(ctx, &batch)
+		}
 		sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		e.upstream.Send(sendCtx, batch)
 		cancel()

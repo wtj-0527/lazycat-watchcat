@@ -758,6 +758,12 @@ func (d *DockerCollector) CollectSMART(ctx context.Context, now time.Time) ([]pr
 }
 
 func (d *DockerCollector) CollectStorageInventory(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
+	points, warnings := d.CollectDiskInventory(ctx, now)
+	btrfsPoints, btrfsWarnings := d.CollectBtrfs(ctx, now)
+	return append(points, btrfsPoints...), append(warnings, btrfsWarnings...)
+}
+
+func (d *DockerCollector) CollectDiskInventory(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
 	if !d.Available() {
 		return nil, []string{"docker storage: Docker socket unavailable"}
 	}
@@ -811,8 +817,30 @@ done`
 		}
 		points = append(points, protocol.MetricPoint{Name: "disk.capacity", Value: sectors * 512, Unit: "bytes", Labels: labels, CollectedAt: now})
 	}
-	btrfsPoints, btrfsWarnings := d.collectBtrfs(ctx, image, now)
-	return append(points, btrfsPoints...), btrfsWarnings
+	return points, nil
+}
+
+func (d *DockerCollector) CollectBtrfs(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
+	return d.collectBtrfsMode(ctx, now, true, true)
+}
+
+func (d *DockerCollector) CollectBtrfsUsage(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
+	return d.collectBtrfsMode(ctx, now, true, false)
+}
+
+func (d *DockerCollector) CollectBtrfsHealth(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
+	return d.collectBtrfsMode(ctx, now, false, true)
+}
+
+func (d *DockerCollector) collectBtrfsMode(ctx context.Context, now time.Time, usage, health bool) ([]protocol.MetricPoint, []string) {
+	if !d.Available() {
+		return nil, []string{"docker btrfs: Docker socket unavailable"}
+	}
+	image, err := d.helperImage(ctx)
+	if err != nil {
+		return nil, []string{"docker btrfs: " + err.Error()}
+	}
+	return d.collectBtrfs(ctx, image, now, usage, health)
 }
 
 type btrfsMount struct {
@@ -862,7 +890,7 @@ func (d *DockerCollector) discoverBtrfsMounts(ctx context.Context, image string)
 	return out, nil
 }
 
-func (d *DockerCollector) collectBtrfs(ctx context.Context, image string, now time.Time) ([]protocol.MetricPoint, []string) {
+func (d *DockerCollector) collectBtrfs(ctx context.Context, image string, now time.Time, usage, health bool) ([]protocol.MetricPoint, []string) {
 	mounts, err := d.discoverBtrfsMounts(ctx, image)
 	if err != nil {
 		return nil, []string{"docker btrfs: " + err.Error()}
@@ -871,7 +899,14 @@ func (d *DockerCollector) collectBtrfs(ctx context.Context, image string, now ti
 	var warnings []string
 	for _, target := range mounts {
 		mount := target.path
-		script := `echo __USAGE__; btrfs filesystem usage -b --raw /volume; echo __STATS__; btrfs device stats /volume; echo __SCRUB__; btrfs scrub status /volume`
+		var commands []string
+		if usage {
+			commands = append(commands, `echo __USAGE__; btrfs filesystem usage -b --raw /volume`)
+		}
+		if health {
+			commands = append(commands, `echo __STATS__; btrfs device stats /volume; echo __SCRUB__; btrfs scrub status /volume`)
+		}
+		script := strings.Join(commands, "; ")
 		cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", script})
 		cfg.HostConfig.Binds = []string{mount + ":/volume:ro"}
 		cfg.HostConfig.CapAdd = []string{"SYS_ADMIN"}
@@ -879,7 +914,7 @@ func (d *DockerCollector) collectBtrfs(ctx context.Context, image string, now ti
 			PathOnHost: target.device, PathInContainer: target.device, CgroupPermissions: "r",
 		}}
 		raw, code, runErr := d.runHelper(ctx, cfg)
-		if runErr != nil || !strings.Contains(string(raw), "__USAGE__") {
+		if runErr != nil || (usage && !strings.Contains(string(raw), "__USAGE__")) || (health && !strings.Contains(string(raw), "__STATS__")) {
 			warnings = append(warnings, fmt.Sprintf("docker btrfs %s exited %d: %v", mount, code, runErr))
 			continue
 		}
