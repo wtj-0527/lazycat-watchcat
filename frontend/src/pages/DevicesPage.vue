@@ -183,7 +183,7 @@ async function editMetadata() {
 async function deleteDevice() {
   if (!selected.value || selected.value.local || deletingDevice.value) return
   const device = selected.value
-  if (!window.confirm(`确定删除设备“${device.name}”吗？该设备的指标、告警和运行状态将被永久删除，之后需要使用新配对码重新接入。`)) return
+  if (!window.confirm(`确定双向彻底移除设备“${device.name}”吗？本机将永久删除该设备的指标、告警、运行状态和凭据；对方下次通信时会自动清除上游配置。之后必须使用新邀请重新接入。`)) return
   deletingDevice.value = true
   detailError.value = ''
   try {
@@ -312,7 +312,7 @@ const capabilityCount = computed(() => selected.value
             <StatusPill :status="deviceState(selected)" /><StatusPill :status="connectivityState(selected)" />
             <span class="pill unknown">{{ ago(selected.lastSeenAt) }}</span>
             <button class="secondary-button" @click="editMetadata">编辑资料</button>
-            <button v-if="!selected.local" class="danger-button" :disabled="deletingDevice" @click="deleteDevice">{{ deletingDevice ? '删除中…' : '删除设备' }}</button>
+            <button v-if="!selected.local" class="danger-button" :disabled="deletingDevice" @click="deleteDevice">{{ deletingDevice ? '移除中…' : '双向彻底移除' }}</button>
           </div>
         </section>
 

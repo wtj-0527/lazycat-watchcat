@@ -46,13 +46,15 @@ func (s *Server) joinUpstream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, status)
 }
 
-func (s *Server) disconnectUpstream(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) disconnectUpstream(w http.ResponseWriter, r *http.Request) {
 	if s.upstream == nil {
 		problem(w, http.StatusServiceUnavailable, "upstream_unavailable", "上游连接组件未启用")
 		return
 	}
-	if err := s.upstream.Disconnect(); err != nil {
-		problem(w, http.StatusInternalServerError, "upstream_disconnect_failed", "无法删除本机上游凭据")
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := s.upstream.RemoveBoth(ctx); err != nil {
+		problem(w, http.StatusBadGateway, "upstream_remove_failed", "无法在主 WatchCat 删除设备，请检查连接后重试："+err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

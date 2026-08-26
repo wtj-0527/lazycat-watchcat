@@ -161,10 +161,10 @@ async function joinExistingWatchCat() {
   }
 }
 async function disconnectUpstream() {
-  if (!window.confirm('确定断开与现有 WatchCat 的连接吗？本机数据不会删除，重新加入需要新的设备邀请。')) return
+  if (!window.confirm('确定双向彻底移除吗？主 WatchCat 将永久删除本设备的历史指标、告警、运行状态和凭据；本机也会删除上游配置。重新加入必须生成新邀请。')) return
   await api('/api/v1/upstream', { method: 'DELETE' })
   await refresh()
-  emit('toast', '已断开上游连接')
+  emit('toast', '已从主 WatchCat 彻底移除，并清除本机上游凭据')
 }
 async function saveDeviceMetadata(device: Device) {
   await api(`/api/v1/devices/${encodeURIComponent(device.id)}/metadata`, {
@@ -471,7 +471,7 @@ async function deleteUnusedImage(image: UnusedImage) {
               <small v-else>连接已建立，正在等待第一批指标上报。</small>
               <em v-if="data.upstream.lastError">{{ data.upstream.lastError }}</em>
             </div>
-            <button class="danger-button" @click="disconnectUpstream">断开连接</button>
+            <button class="danger-button" @click="disconnectUpstream">双向彻底移除</button>
           </div>
           <template v-else>
             <div class="join-existing-heading">

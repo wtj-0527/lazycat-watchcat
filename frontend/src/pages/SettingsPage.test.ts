@@ -166,6 +166,7 @@ describe('SettingsPage tabs', () => {
     })
     expect(wrapper.text()).toContain('已加入现有 WatchCat')
     expect(wrapper.text()).toContain('http://hub:18080')
+    expect(wrapper.text()).toContain('双向彻底移除')
     wrapper.unmount()
   })
 

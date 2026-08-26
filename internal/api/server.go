@@ -68,6 +68,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	s.mux.HandleFunc("POST /api/v1/pairing-codes", s.createPairingCode)
 	s.mux.HandleFunc("POST /api/v1/collectors/pair", s.pairCollector)
+	s.mux.HandleFunc("DELETE /api/v1/collectors/self", s.removeCollectorSelf)
 	s.mux.HandleFunc("POST /api/v1/metrics/batch", s.ingestMetrics)
 	s.mux.HandleFunc("GET /api/v1/upstream", s.upstreamStatus)
 	s.mux.HandleFunc("POST /api/v1/upstream/join", s.joinUpstream)
@@ -226,6 +227,32 @@ func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.SyncAlerts(r.Context())
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
+}
+
+func (s *Server) removeCollectorSelf(w http.ResponseWriter, r *http.Request) {
+	deviceID := strings.TrimSpace(r.Header.Get("X-WatchCat-Device-ID"))
+	token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if deviceID == "" || token == "" || token == r.Header.Get("Authorization") {
+		problem(w, http.StatusUnauthorized, "unauthorized", "缺少设备凭据")
+		return
+	}
+	if err := s.store.AuthenticateDevice(r.Context(), deviceID, token); err != nil {
+		problem(w, http.StatusUnauthorized, "unauthorized", "设备凭据无效")
+		return
+	}
+	if s.localDeviceID != "" && deviceID == s.localDeviceID {
+		problem(w, http.StatusConflict, "local_device_delete_rejected", "不能删除运行 WatchCat 服务的本机设备")
+		return
+	}
+	if err := s.store.DeleteDevice(r.Context(), deviceID); err != nil {
+		if store.IsNotFound(err) {
+			problem(w, http.StatusNotFound, "device_not_found", "设备不存在")
+			return
+		}
+		problem(w, http.StatusInternalServerError, "device_delete_failed", "无法删除设备")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) ingestMetricsMTLS(w http.ResponseWriter, r *http.Request) {

@@ -159,6 +159,7 @@ describe('DevicesPage detail tabs', () => {
     await flushPromises()
     await wrapper.get('button.row-link').trigger('click')
     await flushPromises()
+    expect(wrapper.get('.danger-button').text()).toContain('双向彻底移除')
     await wrapper.get('.danger-button').trigger('click')
     await flushPromises()
     expect(apiMock).toHaveBeenCalledWith('/api/v1/devices/d1', { method: 'DELETE' })

@@ -89,6 +89,29 @@ func TestUpstreamJoinAndBearerMetricForwarding(t *testing.T) {
 	if status := upstream.Status(); !status.Paired || status.LastSuccessAt.IsZero() || status.LastError != "" {
 		t.Fatalf("unexpected upstream status: %+v", status)
 	}
+
+	removeRequest, err := http.NewRequest(http.MethodDelete, local.URL+"/api/v1/upstream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeResponse, err := http.DefaultClient.Do(removeRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeResponse.Body.Close()
+	if removeResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove status=%d", removeResponse.StatusCode)
+	}
+	if status := upstream.Status(); status.Paired {
+		t.Fatalf("upstream remained paired after removal: %+v", status)
+	}
+	remaining, err := remoteStore.ListDevices(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("remote devices remain after bidirectional removal: %+v", remaining)
+	}
 }
 
 func readBody(response *http.Response) string {

@@ -32,6 +32,8 @@ type Credentials struct {
 	CertificateExpiresAt time.Time `json:"certificateExpiresAt"`
 }
 
+var ErrCredentialsRejected = errors.New("collector credentials rejected")
+
 type Queue struct {
 	path       string
 	maxBatches int
@@ -206,9 +208,34 @@ func Send(ctx context.Context, client *http.Client, hubURL string, creds Credent
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("%w: send failed: %s: %s", ErrCredentialsRejected, resp.Status, string(b))
+		}
 		return fmt.Errorf("send failed: %s: %s", resp.Status, string(b))
 	}
 	return nil
+}
+
+func RemoveRemote(ctx context.Context, client *http.Client, hubURL string, creds Credentials) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, strings.TrimRight(hubURL, "/")+"/api/v1/collectors/self", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+creds.Token)
+	req.Header.Set("X-WatchCat-Device-ID", creds.DeviceID)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%w: remove failed: %s: %s", ErrCredentialsRejected, resp.Status, string(body))
+	}
+	return fmt.Errorf("remove failed: %s: %s", resp.Status, string(body))
 }
 func SaveCredentials(path string, creds Credentials) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

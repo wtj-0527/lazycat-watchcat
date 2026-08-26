@@ -102,6 +102,26 @@ func (u *Upstream) Join(ctx context.Context, invitation, name, hostname string) 
 func (u *Upstream) Disconnect() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	return u.disconnectLocked()
+}
+
+func (u *Upstream) RemoveBoth(ctx context.Context) error {
+	u.mu.Lock()
+	hubURL, credentials := u.config.HubURL, u.credentials
+	u.mu.Unlock()
+	if hubURL == "" || credentials.DeviceID == "" {
+		return u.Disconnect()
+	}
+	if err := RemoveRemote(ctx, upstreamHTTPClient, hubURL, credentials); err != nil && !errors.Is(err, ErrCredentialsRejected) {
+		u.mu.Lock()
+		u.lastError = err.Error()
+		u.mu.Unlock()
+		return err
+	}
+	return u.Disconnect()
+}
+
+func (u *Upstream) disconnectLocked() error {
 	var result error
 	for _, path := range []string{u.configPath, u.credentialsPath, u.queue.path} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -135,6 +155,13 @@ func (u *Upstream) Send(ctx context.Context, batch protocol.MetricBatch) {
 			return
 		}
 		if err := Send(ctx, upstreamHTTPClient, u.config.HubURL, u.credentials, next); err != nil {
+			if errors.Is(err, ErrCredentialsRejected) {
+				u.logger.Info("upstream device was removed; clearing local credentials", "hub", u.config.HubURL)
+				if clearErr := u.disconnectLocked(); clearErr != nil {
+					u.lastError = clearErr.Error()
+				}
+				return
+			}
 			u.lastError = err.Error()
 			u.logger.Warn("forward embedded metrics", "hub", u.config.HubURL, "error", err)
 			return
