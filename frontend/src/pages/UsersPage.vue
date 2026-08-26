@@ -9,9 +9,9 @@ import { appConfirm, appPrompt } from '@/dialog'
 
 interface Endpoint { id:string; name:string; model:string; remarkName:string; online:boolean; bindingTime?:string; loginTime?:string }
 interface Session { endDeviceId:string; loginAt:string; logoutAt?:string; durationSeconds:number }
-interface UserItem { deviceId:string;deviceName:string;local:boolean;userId:string;nickname:string;role:string;appInstallPermission:boolean;appAccessNoLimit:boolean;allowedAppIds:string[];online:boolean;activeDevices:number;totalDevices:number;applicationCount:number;instanceCount:number;firstObservedAt:string;updatedAt:string;lastLoginAt?:string;lastLogoutAt?:string;onlineSeconds24h:number;onlineSeconds7d:number;onlineSeconds30d:number;loginCount:number;devices:Endpoint[];sessions:Session[] }
+interface UserItem { deviceId:string;deviceName:string;local:boolean;userId:string;nickname:string;role:string;appInstallPermission:boolean;appAccessNoLimit:boolean;allowedAppIds:string[]|null;online:boolean;activeDevices:number;totalDevices:number;applicationCount:number;instanceCount:number;firstObservedAt:string;updatedAt:string;lastLoginAt?:string;lastLogoutAt?:string;onlineSeconds24h:number;onlineSeconds7d:number;onlineSeconds30d:number;loginCount:number;devices:Endpoint[]|null;sessions:Session[]|null }
 interface Payload {items:UserItem[];count:number;recordingSince?:string;updatedAt:string}
-interface ApplicationItem {id:string;title:string;devices:{deviceId:string}[]}
+interface ApplicationItem {id:string;title:string;devices:{deviceId:string}[]|null}
 interface ApplicationsPayload {items:ApplicationItem[]}
 const emit=defineEmits<{toast:[message:string]}>()
 const query=ref('');const device=ref('all');const status=ref('all');const selectedKey=ref('')
@@ -24,7 +24,7 @@ const filtered=computed(()=>(data.value?.items||[]).filter(x=>(device.value==='a
 const selected=computed(()=>filtered.value.find(x=>`${x.deviceId}\0${x.userId}`===selectedKey.value)||filtered.value[0])
 const selectedEndpoints=computed(()=>selected.value?.devices||[])
 const selectedSessions=computed(()=>selected.value?.sessions||[])
-const appOptions=computed(()=>(applications.value?.items||[]).filter(app=>app.devices.some(x=>x.deviceId===selected.value?.deviceId)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(accessSearch.value.trim().toLowerCase())))
+const appOptions=computed(()=>(applications.value?.items||[]).filter(app=>(app.devices||[]).some(x=>x.deviceId===selected.value?.deviceId)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(accessSearch.value.trim().toLowerCase())))
 const userPagination=usePagination(filtered,20)
 const appAccessPagination=usePagination(appOptions,20)
 const endpointPagination=usePagination(selectedEndpoints,10)
@@ -35,7 +35,7 @@ watch(filtered,(items)=>{if(items.length&&!items.some(x=>`${x.deviceId}\0${x.use
 watch(selected, item=>{userPagination.resetPage();appAccessPagination.resetPage();endpointPagination.resetPage();sessionPagination.resetPage();if(!item)return;accessMode.value=item.appInstallPermission||item.appAccessNoLimit?'all':'selected';allowedAppIds.value=[...(item.allowedAppIds||[])];accessSearch.value=''},{immediate:true})
 watch(accessSearch,appAccessPagination.resetPage)
 const onlineCount=computed(()=>(data.value?.items||[]).filter(x=>x.online).length)
-const duration=(seconds:number)=>{const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60);return h?`${h} 小时 ${m} 分钟`:`${m} 分钟`}
+const duration=(seconds?:number)=>{const value=Number.isFinite(seconds)?Number(seconds):0;const h=Math.floor(value/3600),m=Math.floor((value%3600)/60);return h?`${h} 小时 ${m} 分钟`:`${m} 分钟`}
 const dateTime=(value?:string)=>value?new Date(value).toLocaleString('zh-CN'):'—'
 const presence=(item:UserItem)=>item.online?'在线':item.totalDevices>0?'离线':'未发现终端'
 const presenceClass=(item:UserItem)=>item.online?'healthy':'unknown'
@@ -79,7 +79,7 @@ async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(
         <p v-else class="muted">远端用户的权限为只读；请在 {{selected.deviceName}} 上修改。</p>
       </div>
       <div class="section-title compact"><div><h3>登录终端</h3></div></div><div class="user-endpoints"><div v-for="endpoint in endpointPagination.pagedItems.value" :key="endpoint.id"><i :class="{online:endpoint.online}"/><span><b>{{endpoint.remarkName||endpoint.name||endpoint.model||'未知终端'}}</b><small>{{endpoint.model||endpoint.id}} · {{endpoint.online?'登录于 '+dateTime(endpoint.loginTime):'当前离线'}}</small></span></div></div><AppPagination v-model:page="endpointPagination.page.value" v-model:page-size="endpointPagination.pageSize.value" :total="endpointPagination.total.value" :page-count="endpointPagination.pageCount.value" :range-start="endpointPagination.rangeStart.value" :range-end="endpointPagination.rangeEnd.value" label="登录终端分页" />
-      <div class="section-title compact"><div><h3>登录历史</h3></div></div><div class="session-timeline"><div v-for="session in sessionPagination.pagedItems.value" :key="`${session.endDeviceId}-${session.loginAt}`"><i :class="{open:!session.logoutAt}"/><span><b>{{dateTime(session.loginAt)}}</b><small>{{session.logoutAt?'退出 '+dateTime(session.logoutAt):'当前在线'}} · {{duration(session.durationSeconds)}}</small></span></div><p v-if="!selected.sessions.length" class="inline-empty">从开始记录以来尚未观察到登录会话。</p></div><AppPagination v-model:page="sessionPagination.page.value" v-model:page-size="sessionPagination.pageSize.value" :total="sessionPagination.total.value" :page-count="sessionPagination.pageCount.value" :range-start="sessionPagination.rangeStart.value" :range-end="sessionPagination.rangeEnd.value" label="登录历史分页" />
+      <div class="section-title compact"><div><h3>登录历史</h3></div></div><div class="session-timeline"><div v-for="session in sessionPagination.pagedItems.value" :key="`${session.endDeviceId}-${session.loginAt}`"><i :class="{open:!session.logoutAt}"/><span><b>{{dateTime(session.loginAt)}}</b><small>{{session.logoutAt?'退出 '+dateTime(session.logoutAt):'当前在线'}} · {{duration(session.durationSeconds)}}</small></span></div><p v-if="!selectedSessions.length" class="inline-empty">从开始记录以来尚未观察到登录会话。</p></div><AppPagination v-model:page="sessionPagination.page.value" v-model:page-size="sessionPagination.pageSize.value" :total="sessionPagination.total.value" :page-count="sessionPagination.pageCount.value" :range-start="sessionPagination.rangeStart.value" :range-end="sessionPagination.rangeEnd.value" label="登录历史分页" />
     </section>
   </div>
 </PageState>

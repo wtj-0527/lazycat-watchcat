@@ -33,36 +33,36 @@ func (s *Server) usersView(w http.ResponseWriter, r *http.Request) {
 	}
 	apps, _ := s.store.ListRuntimeApplications(r.Context())
 	type item struct {
-		DeviceID             string    `json:"deviceId"`
-		DeviceName           string    `json:"deviceName"`
-		Local                bool      `json:"local"`
-		UserID               string    `json:"userId"`
-		Nickname             string    `json:"nickname"`
-		Role                 string    `json:"role"`
-		AppInstallPermission bool      `json:"appInstallPermission"`
-		AppAccessNoLimit     bool      `json:"appAccessNoLimit"`
-		AllowedAppIDs        []string  `json:"allowedAppIds"`
-		Online               bool      `json:"online"`
-		ActiveDevices        int       `json:"activeDevices"`
-		TotalDevices         int       `json:"totalDevices"`
-		ApplicationCount     int       `json:"applicationCount"`
-		InstanceCount        int       `json:"instanceCount"`
-		FirstObservedAt      time.Time `json:"firstObservedAt"`
-		UpdatedAt            time.Time `json:"updatedAt"`
-		LastLoginAt          time.Time `json:"lastLoginAt,omitempty"`
-		LastLogoutAt         time.Time `json:"lastLogoutAt,omitempty"`
-		OnlineSeconds24h     int64     `json:"onlineSeconds24h"`
-		OnlineSeconds7d      int64     `json:"onlineSeconds7d"`
-		OnlineSeconds30d     int64     `json:"onlineSeconds30d"`
-		LoginCount           int       `json:"loginCount"`
-		Devices              any       `json:"devices"`
-		Sessions             any       `json:"sessions"`
+		DeviceID             string                    `json:"deviceId"`
+		DeviceName           string                    `json:"deviceName"`
+		Local                bool                      `json:"local"`
+		UserID               string                    `json:"userId"`
+		Nickname             string                    `json:"nickname"`
+		Role                 string                    `json:"role"`
+		AppInstallPermission bool                      `json:"appInstallPermission"`
+		AppAccessNoLimit     bool                      `json:"appAccessNoLimit"`
+		AllowedAppIDs        []string                  `json:"allowedAppIds"`
+		Online               bool                      `json:"online"`
+		ActiveDevices        int                       `json:"activeDevices"`
+		TotalDevices         int                       `json:"totalDevices"`
+		ApplicationCount     int                       `json:"applicationCount"`
+		InstanceCount        int                       `json:"instanceCount"`
+		FirstObservedAt      time.Time                 `json:"firstObservedAt"`
+		UpdatedAt            time.Time                 `json:"updatedAt"`
+		LastLoginAt          time.Time                 `json:"lastLoginAt,omitempty"`
+		LastLogoutAt         time.Time                 `json:"lastLogoutAt,omitempty"`
+		OnlineSeconds24h     int64                     `json:"onlineSeconds24h"`
+		OnlineSeconds7d      int64                     `json:"onlineSeconds7d"`
+		OnlineSeconds30d     int64                     `json:"onlineSeconds30d"`
+		LoginCount           int                       `json:"loginCount"`
+		Devices              []store.RuntimeUserDevice `json:"devices"`
+		Sessions             []userSessionView         `json:"sessions"`
 	}
 	out := make([]item, 0, len(users))
 	now := time.Now().UTC()
 	for _, u := range users {
-		x := item{DeviceID: u.DeviceID, DeviceName: names[u.DeviceID], Local: u.DeviceID == s.localDeviceID, UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, AppAccessNoLimit: u.AppAccessNoLimit, AllowedAppIDs: u.AllowedAppIDs, Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices, FirstObservedAt: u.FirstObservedAt, UpdatedAt: u.UpdatedAt, Devices: u.Devices}
-		var own []userSessionView
+		x := item{DeviceID: u.DeviceID, DeviceName: names[u.DeviceID], Local: u.DeviceID == s.localDeviceID, UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, AppAccessNoLimit: u.AppAccessNoLimit, AllowedAppIDs: append([]string{}, u.AllowedAppIDs...), Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices, FirstObservedAt: u.FirstObservedAt, UpdatedAt: u.UpdatedAt, Devices: append([]store.RuntimeUserDevice{}, u.Devices...)}
+		own := make([]userSessionView, 0)
 		for _, session := range sessions {
 			if session.DeviceID != u.DeviceID || session.UserID != u.UserID {
 				continue

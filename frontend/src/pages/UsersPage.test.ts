@@ -42,4 +42,28 @@ describe('UsersPage', () => {
     expect(request?.[1]?.body).toBe(JSON.stringify({ noLimit: false, allowedAppIds: ['app.one'] }))
     wrapper.unmount()
   })
+
+  it('keeps rendering when an offline user has null endpoint and session arrays', async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/applications') return { items: [] }
+      return {
+        count: 2,
+        updatedAt: new Date().toISOString(),
+        items: [
+          { deviceId: 'd1', deviceName: 'nasw', local: true, userId: 'online', nickname: '在线用户', role: 'normal', appInstallPermission: false, appAccessNoLimit: true, allowedAppIds: [], online: true, activeDevices: 1, totalDevices: 1, applicationCount: 0, instanceCount: 0, firstObservedAt: '', updatedAt: '', onlineSeconds24h: 60, onlineSeconds7d: 60, onlineSeconds30d: 60, loginCount: 1, devices: [], sessions: [] },
+          { deviceId: 'd1', deviceName: 'nasw', local: true, userId: 'offline', nickname: '离线用户', role: 'normal', appInstallPermission: false, appAccessNoLimit: true, allowedAppIds: null, online: false, activeDevices: 0, totalDevices: 0, applicationCount: 0, instanceCount: 0, firstObservedAt: '', updatedAt: '', onlineSeconds24h: 0, onlineSeconds7d: 0, onlineSeconds30d: 0, loginCount: 0, devices: null, sessions: null },
+        ],
+      }
+    })
+
+    const wrapper = mount(UsersPage)
+    await flushPromises()
+    await wrapper.findAll('.user-list button')[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.user-detail').text()).toContain('离线用户')
+    expect(wrapper.get('.user-detail').text()).toContain('从开始记录以来尚未观察到登录会话。')
+    expect(wrapper.find('.app-access-list').exists()).toBe(false)
+    wrapper.unmount()
+  })
 })
