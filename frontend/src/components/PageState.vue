@@ -5,7 +5,7 @@ const emit = defineEmits<{ retry: [] }>()
 
 <template>
   <div v-if="loading" class="card page-state">
-    <span class="spinner" />
+    <span class="loading-orbit"><i /><i /><i /></span>
     <h2>正在读取实时数据</h2>
     <p class="muted">Collector 与服务状态返回后将自动更新。</p>
   </div>

@@ -40,6 +40,7 @@ let shellTimer: number | undefined
 let shellLoading = false
 
 const pageComponent = computed(() => pages[page.value])
+const pageLabel = computed(() => navs.find(([key]) => key === page.value)?.[1] || '总览')
 const pageProps = computed(() => page.value === 'settings'
   ? { initialTab: 'thresholds' }
   : page.value === 'onboarding' ? { initialTab: 'onboarding' } : {})
@@ -130,19 +131,28 @@ onBeforeUnmount(() => {
   </aside>
   <main class="app-main">
     <header class="topbar">
-      <div class="scope-picker" title="当前为全局设备范围">
-        <span>当前范围</span><b>全部设备 · {{ deviceCount }} 台</b>
+      <div class="topbar-context">
+        <span class="topbar-page-name">{{ pageLabel }}</span>
+        <div class="scope-picker" title="当前为全局设备范围">
+          <span>全部设备</span><b>{{ deviceCount }} 台</b>
+        </div>
       </div>
-      <span class="freshness-pill" :class="{ stale: staleCount }">数据新鲜 · {{ freshness }}</span>
-      <form class="global-search" role="search" @submit.prevent="submitGlobalSearch">
-        <AppIcon name="search" :size="16" />
-        <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
-      </form>
-      <button class="icon-button" type="button" aria-label="通知" @click="navigate('alerts')"><AppIcon name="alerts" :size="17" /></button>
-      <button class="user-avatar" type="button" aria-label="当前用户设置" @click="navigate('settings')">王</button>
+      <div class="topbar-actions">
+        <span class="freshness-pill" :class="{ stale: staleCount }">更新 {{ freshness }}</span>
+        <form class="global-search" role="search" @submit.prevent="submitGlobalSearch">
+          <AppIcon name="search" :size="16" />
+          <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
+        </form>
+        <button class="icon-button" type="button" aria-label="通知" @click="navigate('alerts')"><AppIcon name="alerts" :size="17" /></button>
+        <button class="user-avatar" type="button" aria-label="当前用户设置" @click="navigate('settings')">王</button>
+      </div>
     </header>
-    <section id="content">
-      <component :is="pageComponent" :key="`${page}-${searchNonce}`" v-bind="pageProps" @toast="toast" />
+    <section id="content" :class="`page-${page}`">
+      <Transition name="page" mode="out-in">
+        <div :key="`${page}-${searchNonce}`" class="page-view">
+          <component :is="pageComponent" v-bind="pageProps" @toast="toast" />
+        </div>
+      </Transition>
     </section>
   </main>
   <div id="toast" :class="{ show: toastMessage }">{{ toastMessage }}</div>
