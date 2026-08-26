@@ -200,6 +200,44 @@ describe('DevicesPage detail tabs', () => {
     wrapper.unmount()
   })
 
+  it('deduplicates SMART sources and maps evidence to the correct severity', async () => {
+    const collectedAt = '2026-08-26T10:00:00Z'
+    const baseLabels = { device: 'sda', model: 'Example HDD', serial: 'SERIAL-1', media: 'hdd', transport: 'sata' }
+    const detailed = {
+      ...device,
+      latest: {
+        'disk.capacity': [{ name: 'disk.capacity', value: 1024 ** 4, unit: 'bytes', labels: baseLabels, collectedAt }],
+        'disk.temperature': [{ name: 'disk.temperature', value: 35, unit: 'celsius', labels: baseLabels, collectedAt }],
+        'disk.ata.reallocated_sectors': [
+          { name: 'disk.ata.reallocated_sectors', value: 162, unit: 'count', labels: { ...baseLabels }, collectedAt },
+          { name: 'disk.ata.reallocated_sectors', value: 162, unit: 'count', labels: { ...baseLabels, source: 'lazycat-docker-helper' }, collectedAt },
+        ],
+      },
+    }
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/overview') return overview
+      if (path === '/api/v1/devices/d1') return detailed
+      if (path.includes('/events') || path.includes('/metrics')) return { items: [] }
+      if (path === '/api/v1/operations') return { capabilities: [] }
+      return detailed
+    })
+
+    const wrapper = mount(DevicesPage)
+    await flushPromises()
+    await wrapper.get('button.row-link').trigger('click')
+    await flushPromises()
+    await wrapper.get('#device-tab-storage').trigger('click')
+
+    const card = wrapper.get('.physical-disk-card')
+    expect(card.classes()).toContain('warning')
+    expect(card.text()).toContain('警告')
+    expect(card.text()).toContain('SMART 证据')
+    expect(card.text()).toContain('重映射扇区 162')
+    expect(card.text()).not.toContain('324')
+    expect(card.text()).not.toContain('SMART 错误')
+    wrapper.unmount()
+  })
+
   it('deletes a remote device after confirmation and hides deletion for the local device', async () => {
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/overview') return overview

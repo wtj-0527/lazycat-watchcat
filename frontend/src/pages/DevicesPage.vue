@@ -377,14 +377,28 @@ interface StorageDiskView {
   capacity: number
   temperature?: number
   powerHours?: number
-  smartErrors: number
+  status: 'healthy' | 'warning' | 'critical' | 'unknown'
+  smartObserved: boolean
+  smartEvidence: string[]
 }
 const storageDisks = computed<StorageDiskView[]>(() => {
   const points = selected.value ? categoryMetrics(selected.value, 'storage') : []
-  const devices = new Map<string, StorageDiskView>()
+  const normalizedDevice = (point: Metric) => String(point.labels?.device || '').replace('/dev/', '')
+  const canonical = new Map<string, Metric>()
   for (const point of points.filter((item) => item.name.startsWith('disk.'))) {
-    const device = point.labels?.device
+    const device = normalizedDevice(point)
     if (!device || device.startsWith('dm-')) continue
+    const key = `${device}\u0000${point.name}`
+    const current = canonical.get(key)
+    const pointTime = new Date(point.collectedAt).getTime()
+    const currentTime = current ? new Date(current.collectedAt).getTime() : 0
+    const preferredSource = point.labels?.source === 'lazycat-docker-helper'
+      && current?.labels?.source !== 'lazycat-docker-helper'
+    if (!current || pointTime > currentTime || (pointTime === currentTime && preferredSource)) canonical.set(key, point)
+  }
+  const devices = new Map<string, StorageDiskView>()
+  for (const point of canonical.values()) {
+    const device = normalizedDevice(point)
     const current = devices.get(device) || {
       device,
       model: point.labels?.model || '未知型号',
@@ -392,19 +406,43 @@ const storageDisks = computed<StorageDiskView[]>(() => {
       media: point.labels?.media || (device.startsWith('nvme') ? 'ssd' : '未知'),
       transport: point.labels?.transport || '未知',
       capacity: 0,
-      smartErrors: 0,
+      status: 'healthy' as const,
+      smartObserved: false,
+      smartEvidence: [],
     }
     current.model = point.labels?.model || current.model
     current.serial = point.labels?.serial || current.serial
     current.media = point.labels?.media || current.media
     current.transport = point.labels?.transport || current.transport
     if (point.name === 'disk.capacity') current.capacity = point.value
-    if (point.name === 'disk.temperature') current.temperature = point.value
-    if (point.name === 'disk.power_on_hours') current.powerHours = point.value
-    if ((point.name.includes('errors') || point.name.includes('critical_warning') || point.name.includes('reallocated')) && point.value > 0) current.smartErrors += point.value
+    if (point.name === 'disk.temperature') { current.temperature = point.value; current.smartObserved = true }
+    if (point.name === 'disk.power_on_hours') { current.powerHours = point.value; current.smartObserved = true }
+    if (point.name === 'disk.nvme.critical_warning' && point.value > 0) {
+      current.smartObserved = true
+      current.status = 'critical'
+      current.smartEvidence.push(`NVMe 严重警告 0x${Math.round(point.value).toString(16).toUpperCase()}`)
+    }
+    if (point.name === 'disk.nvme.media_errors' && point.value > 0) {
+      current.smartObserved = true
+      current.status = 'critical'
+      current.smartEvidence.push(`NVMe 介质错误 ${formatNumber(point.value, 0)}`)
+    }
+    if (point.name === 'disk.ata.reallocated_sectors' && point.value > 0) {
+      current.smartObserved = true
+      if (current.status !== 'critical') current.status = 'warning'
+      current.smartEvidence.push(`重映射扇区 ${formatNumber(point.value, 0)}`)
+    }
     devices.set(device, current)
   }
-  return [...devices.values()].sort((a, b) => b.capacity - a.capacity)
+  for (const disk of devices.values()) {
+    const warningTemperature = disk.media === 'hdd' ? 55 : 70
+    const criticalTemperature = disk.media === 'hdd' ? 65 : 80
+    if ((disk.temperature || 0) >= criticalTemperature) disk.status = 'critical'
+    else if ((disk.temperature || 0) >= warningTemperature && disk.status === 'healthy') disk.status = 'warning'
+    else if (!disk.smartObserved) disk.status = 'unknown'
+  }
+  const rank = { critical: 0, warning: 1, unknown: 2, healthy: 3 }
+  return [...devices.values()].sort((a, b) => rank[a.status] - rank[b.status] || b.capacity - a.capacity)
 })
 const storageVolumes = computed(() => {
   if (!selected.value) return []
@@ -736,10 +774,10 @@ watch(selectedTab, (tab) => {
 
         <section v-else-if="selectedTab === 'storage'" class="device-detail-insights">
           <div class="physical-disk-grid">
-            <article v-for="disk in storageDisks" :key="disk.device" class="physical-disk-card" :class="{ warning: (disk.temperature || 0) >= 55 || disk.smartErrors > 0 }">
-              <header><div><i /><span><b>/dev/{{ disk.device }}</b><small>{{ disk.media.toUpperCase() }} · {{ disk.transport }}</small></span></div><StatusPill :status="disk.smartErrors ? 'critical' : 'healthy'" /></header>
+            <article v-for="disk in storageDisks" :key="disk.device" class="physical-disk-card" :class="disk.status">
+              <header><div><i /><span><b>/dev/{{ disk.device }}</b><small>{{ disk.media.toUpperCase() }} · {{ disk.transport }}</small></span></div><StatusPill :status="disk.status" /></header>
               <h3>{{ disk.model }}</h3><p>{{ disk.serial }}</p>
-              <dl><div><dt>容量</dt><dd>{{ disk.capacity ? bytes(disk.capacity) : '未知' }}</dd></div><div><dt>温度</dt><dd>{{ disk.temperature === undefined ? '未知' : `${formatNumber(disk.temperature)} ℃` }}</dd></div><div><dt>通电</dt><dd>{{ disk.powerHours === undefined ? '未知' : `${formatNumber(disk.powerHours, 0)} 小时` }}</dd></div><div><dt>SMART 错误</dt><dd>{{ formatNumber(disk.smartErrors, 0) }}</dd></div></dl>
+              <dl><div><dt>容量</dt><dd>{{ disk.capacity ? bytes(disk.capacity) : '未知' }}</dd></div><div><dt>温度</dt><dd>{{ disk.temperature === undefined ? '未知' : `${formatNumber(disk.temperature)} ℃` }}</dd></div><div><dt>通电</dt><dd>{{ disk.powerHours === undefined ? '未知' : `${formatNumber(disk.powerHours, 0)} 小时` }}</dd></div><div><dt>SMART 证据</dt><dd :title="disk.smartEvidence.join('；')">{{ disk.smartEvidence.length ? disk.smartEvidence.join(' · ') : disk.smartObserved ? '未发现异常' : '尚无 SMART 数据' }}</dd></div></dl>
             </article>
           </div>
           <div class="detail-two-column storage-detail-grid">
