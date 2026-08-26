@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -77,7 +78,11 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 		t.Fatalf("count=%d", list.Count)
 	}
 
-	metricBody, _ := json.Marshal(protocol.MetricBatch{DeviceID: paired.DeviceID, Points: []protocol.MetricPoint{{
+	metricBody, _ := json.Marshal(protocol.MetricBatch{DeviceID: paired.DeviceID, ApplicationsCollected: true, Applications: []protocol.RuntimeApplication{{
+		DeployID: "community.lazycat.app.hermes-studio2", AppID: "community.lazycat.app.hermes-studio",
+		Title: "Hermes Studio", Version: "2.0.0", InstallStatus: "installed",
+		InstanceStatus: "paused", UserID: "zhaojie", UserName: "赵杰",
+	}}, Points: []protocol.MetricPoint{{
 		Name:        "system.cpu.usage",
 		Value:       32.5,
 		Unit:        "%",
@@ -103,6 +108,13 @@ func TestPairingCodeIsSingleUse(t *testing.T) {
 	New(st, ca, "../../web", 10*time.Minute).CollectorHandler().ServeHTTP(mtlsRecorder, mtlsRequest)
 	if mtlsRecorder.Code != http.StatusAccepted {
 		t.Fatalf("mTLS metric status=%d body=%s", mtlsRecorder.Code, mtlsRecorder.Body.String())
+	}
+	applications, err := st.ListRuntimeApplications(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applications) != 1 || applications[0].DeployID != "community.lazycat.app.hermes-studio2" || applications[0].UserID != "zhaojie" {
+		t.Fatalf("runtime applications=%+v", applications)
 	}
 	overviewResponse, err := http.Get(ts.URL + "/api/v1/overview")
 	if err != nil {

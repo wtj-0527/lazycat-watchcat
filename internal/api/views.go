@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -147,31 +148,8 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	runtimeError := ""
 	if s.runtimeApps != nil && s.localDeviceID != "" {
 		uid := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
-		items, err := s.runtimeApps.Query(r.Context(), uid)
-		if err != nil {
+		if _, err := s.SyncRuntimeApplications(r.Context(), uid); err != nil {
 			runtimeError = err.Error()
-			_ = s.store.SetCapabilityStatuses(r.Context(), s.localDeviceID, []store.CapabilityStatus{{
-				DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "error",
-				Detail: "LazyCat Package Manager API: " + err.Error(), CheckedAt: time.Now().UTC(),
-			}})
-		} else {
-			stored := make([]store.RuntimeApplication, 0, len(items))
-			for _, item := range items {
-				stored = append(stored, store.RuntimeApplication{
-					DeviceID: s.localDeviceID, DeployID: item.DeployID, AppID: item.AppID,
-					Title: item.Title, Version: item.Version, InstallStatus: item.InstallStatus,
-					InstanceStatus: item.InstanceStatus, Domain: item.Domain, Builtin: item.Builtin,
-					UserID: item.UserID, UserName: item.UserName,
-				})
-			}
-			if err := s.store.ReplaceRuntimeApplications(r.Context(), s.localDeviceID, stored); err != nil {
-				runtimeError = err.Error()
-			} else {
-				_ = s.store.SetCapabilityStatuses(r.Context(), s.localDeviceID, []store.CapabilityStatus{{
-					DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "available",
-					Detail: fmt.Sprintf("官方 Package Manager API，已同步 %d 个应用实例", len(stored)), CheckedAt: time.Now().UTC(),
-				}})
-			}
 		}
 	}
 	states, err := s.store.ListRuntimeApplications(r.Context())
@@ -260,6 +238,37 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(userList, func(i, j int) bool { return userList[i]["name"] < userList[j]["name"] })
 	writeJSON(w, 200, map[string]any{"items": out, "users": userList, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
+}
+
+func (s *Server) SyncRuntimeApplications(ctx context.Context, uid string) (int, error) {
+	if s.runtimeApps == nil || s.localDeviceID == "" {
+		return 0, errors.New("LazyCat Package Manager API is unavailable")
+	}
+	items, err := s.runtimeApps.Query(ctx, uid)
+	if err != nil {
+		_ = s.store.SetCapabilityStatuses(ctx, s.localDeviceID, []store.CapabilityStatus{{
+			DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "error",
+			Detail: "LazyCat Package Manager API: " + err.Error(), CheckedAt: time.Now().UTC(),
+		}})
+		return 0, err
+	}
+	stored := make([]store.RuntimeApplication, 0, len(items))
+	for _, item := range items {
+		stored = append(stored, store.RuntimeApplication{
+			DeviceID: s.localDeviceID, DeployID: item.DeployID, AppID: item.AppID,
+			Title: item.Title, Version: item.Version, InstallStatus: item.InstallStatus,
+			InstanceStatus: item.InstanceStatus, Domain: item.Domain, Builtin: item.Builtin,
+			UserID: item.UserID, UserName: item.UserName,
+		})
+	}
+	if err := s.store.ReplaceRuntimeApplications(ctx, s.localDeviceID, stored); err != nil {
+		return 0, err
+	}
+	_ = s.store.SetCapabilityStatuses(ctx, s.localDeviceID, []store.CapabilityStatus{{
+		DeviceID: s.localDeviceID, Capability: "lpk.runtime", Status: "available",
+		Detail: fmt.Sprintf("官方 Package Manager API，已同步 %d 个应用实例", len(stored)), CheckedAt: time.Now().UTC(),
+	}})
+	return len(stored), nil
 }
 
 func (s *Server) applicationMetrics(w http.ResponseWriter, r *http.Request) {

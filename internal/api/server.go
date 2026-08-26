@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -225,8 +226,12 @@ func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "ingest_failed", "指标写入失败")
 		return
 	}
+	if err := s.ingestRuntimeApplications(r.Context(), batch); err != nil {
+		problem(w, 500, "application_ingest_failed", "应用实例写入失败")
+		return
+	}
 	_ = s.SyncAlerts(r.Context())
-	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points), "applicationsAccepted": len(batch.Applications)})
 }
 
 func (s *Server) removeCollectorSelf(w http.ResponseWriter, r *http.Request) {
@@ -274,8 +279,28 @@ func (s *Server) ingestMetricsMTLS(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "ingest_failed", "指标写入失败")
 		return
 	}
+	if err := s.ingestRuntimeApplications(r.Context(), batch); err != nil {
+		problem(w, 500, "application_ingest_failed", "应用实例写入失败")
+		return
+	}
 	_ = s.SyncAlerts(r.Context())
-	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points)})
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points), "applicationsAccepted": len(batch.Applications)})
+}
+
+func (s *Server) ingestRuntimeApplications(ctx context.Context, batch protocol.MetricBatch) error {
+	if !batch.ApplicationsCollected {
+		return nil
+	}
+	items := make([]store.RuntimeApplication, 0, len(batch.Applications))
+	for _, item := range batch.Applications {
+		items = append(items, store.RuntimeApplication{
+			DeviceID: batch.DeviceID, DeployID: item.DeployID, AppID: item.AppID,
+			Title: item.Title, Version: item.Version, InstallStatus: item.InstallStatus,
+			InstanceStatus: item.InstanceStatus, Domain: item.Domain, Builtin: item.Builtin,
+			UserID: item.UserID, UserName: item.UserName,
+		})
+	}
+	return s.store.ReplaceRuntimeApplications(ctx, batch.DeviceID, items)
 }
 
 func (s *Server) rotateCertificateMTLS(w http.ResponseWriter, r *http.Request) {
@@ -309,12 +334,24 @@ func (s *Server) rotateCertificateMTLS(w http.ResponseWriter, r *http.Request) {
 }
 
 func validBatch(batch protocol.MetricBatch) bool {
-	if batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 {
+	if batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 || len(batch.Applications) > 5000 {
+		return false
+	}
+	if !batch.ApplicationsCollected && len(batch.Applications) > 0 {
 		return false
 	}
 	now := time.Now().UTC()
 	for _, point := range batch.Points {
 		if point.Name == "" || len(point.Name) > 128 || math.IsNaN(point.Value) || math.IsInf(point.Value, 0) || point.CollectedAt.IsZero() || point.CollectedAt.Before(now.Add(-31*24*time.Hour)) || point.CollectedAt.After(now.Add(5*time.Minute)) {
+			return false
+		}
+	}
+	for _, app := range batch.Applications {
+		if strings.TrimSpace(app.DeployID) == "" || len(app.DeployID) > 256 ||
+			strings.TrimSpace(app.AppID) == "" || len(app.AppID) > 256 ||
+			len(app.Title) > 512 || len(app.Version) > 128 || len(app.InstallStatus) > 64 ||
+			len(app.InstanceStatus) > 64 || len(app.Domain) > 512 ||
+			len(app.UserID) > 256 || len(app.UserName) > 512 {
 			return false
 		}
 	}

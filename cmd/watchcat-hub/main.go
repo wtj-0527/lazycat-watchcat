@@ -73,13 +73,28 @@ func main() {
 	handlers.ConfigureUpstream(upstream)
 	handlers.ConfigureDockerMaintenance(embedded.Docker(), embedded.DeviceID())
 	runtimeCtx, runtimeCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	runtimeSource, runtimeErr := runtimeapps.New(runtimeCtx)
+	runtimeSource, runtimeErr := runtimeapps.NewPersistent(runtimeCtx, filepath.Join(cfg.DataDir, "runtime-user-id"))
 	runtimeCancel()
 	if runtimeErr != nil {
 		logger.Warn("connect LazyCat package manager", "error", runtimeErr)
 	} else {
 		defer runtimeSource.Close()
 		handlers.ConfigureRuntimeApps(runtimeSource, embedded.DeviceID())
+		go func() {
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				uid := runtimeSource.LastUID()
+				if uid != "" {
+					syncCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+					if _, err := handlers.SyncRuntimeApplications(syncCtx, uid); err != nil {
+						logger.Warn("refresh LazyCat runtime applications", "error", err)
+					}
+					cancel()
+				}
+				<-ticker.C
+			}
+		}()
 	}
 	go embedded.Run(context.Background())
 	notifier := notify.NewLazyCat(st, logger)

@@ -52,6 +52,21 @@ type MetricPoint struct {
 }
 
 type MetricBatch struct {
-	DeviceID string        `json:"deviceId"`
-	Points   []MetricPoint `json:"points"`
+	DeviceID              string               `json:"deviceId"`
+	Points                []MetricPoint        `json:"points"`
+	Applications          []RuntimeApplication `json:"applications,omitempty"`
+	ApplicationsCollected bool                 `json:"applicationsCollected,omitempty"`
+}
+
+type RuntimeApplication struct {
+	DeployID       string `json:"deployId"`
+	AppID          string `json:"appId"`
+	Title          string `json:"title"`
+	Version        string `json:"version"`
+	InstallStatus  string `json:"installStatus"`
+	InstanceStatus string `json:"instanceStatus"`
+	Domain         string `json:"domain"`
+	Builtin        bool   `json:"builtin"`
+	UserID         string `json:"userId"`
+	UserName       string `json:"userName"`
 }

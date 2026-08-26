@@ -165,6 +165,7 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 		return
 	}
 	if e.upstream != nil {
+		e.attachRuntimeApplications(ctx, &batch)
 		sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		e.upstream.Send(sendCtx, batch)
 		cancel()
@@ -172,6 +173,25 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 	if e.syncAlerts != nil {
 		_ = e.syncAlerts(ctx)
 	}
+}
+
+func (e *Embedded) attachRuntimeApplications(ctx context.Context, batch *protocol.MetricBatch) {
+	items, err := e.store.ListRuntimeApplications(ctx)
+	if err != nil {
+		e.logger.Warn("read runtime applications for upstream", "error", err)
+		return
+	}
+	for _, item := range items {
+		if item.DeviceID != e.deviceID {
+			continue
+		}
+		batch.Applications = append(batch.Applications, protocol.RuntimeApplication{
+			DeployID: item.DeployID, AppID: item.AppID, Title: item.Title, Version: item.Version,
+			InstallStatus: item.InstallStatus, InstanceStatus: item.InstanceStatus,
+			Domain: item.Domain, Builtin: item.Builtin, UserID: item.UserID, UserName: item.UserName,
+		})
+	}
+	batch.ApplicationsCollected = len(batch.Applications) > 0
 }
 
 func (e *Embedded) recordCapabilities(ctx context.Context, now time.Time, points []protocol.MetricPoint, warnings []string, evidence capabilityEvidence) {

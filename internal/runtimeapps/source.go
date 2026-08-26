@@ -3,6 +3,8 @@ package runtimeapps
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,7 @@ type packageManager interface {
 }
 
 type userManager interface {
+	ListUIDs(context.Context, *common.ListUIDsRequest, ...grpc.CallOption) (*common.ListUIDsReply, error)
 	QueryUserInfo(context.Context, *common.UserID, ...grpc.CallOption) (*common.UserInfo, error)
 }
 
@@ -40,26 +43,37 @@ type cachedResult struct {
 }
 
 type Source struct {
-	client packageManager
-	users  userManager
-	close  func() error
-	ttl    time.Duration
-	mu     sync.Mutex
-	cache  map[string]cachedResult
+	client  packageManager
+	users   userManager
+	close   func() error
+	ttl     time.Duration
+	mu      sync.Mutex
+	cache   map[string]cachedResult
+	uidPath string
+	lastUID string
 }
 
 func New(ctx context.Context) (*Source, error) {
+	return NewPersistent(ctx, "")
+}
+
+func NewPersistent(ctx context.Context, uidPath string) (*Source, error) {
 	gateway, err := gohelper.NewAPIGateway(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &Source{
-		client: gateway.PkgManager,
-		users:  gateway.Users,
-		close:  gateway.Close,
-		ttl:    30 * time.Second,
-		cache:  map[string]cachedResult{},
-	}, nil
+	source := &Source{
+		client:  gateway.PkgManager,
+		users:   gateway.Users,
+		close:   gateway.Close,
+		ttl:     30 * time.Second,
+		cache:   map[string]cachedResult{},
+		uidPath: uidPath,
+	}
+	if data, readErr := os.ReadFile(uidPath); readErr == nil {
+		source.lastUID = strings.TrimSpace(string(data))
+	}
+	return source, nil
 }
 
 func NewWithClient(client packageManager, ttl time.Duration) *Source {
@@ -93,46 +107,113 @@ func (s *Source) Query(ctx context.Context, uid string) ([]Application, error) {
 
 	queryCtx := gohelper.WithRealUID(ctx, uid)
 	ignorePending := true
-	response, err := s.client.QueryApplication(queryCtx, &sys.QueryApplicationRequest{IgnorePendingPkg: &ignorePending})
-	if err != nil {
-		return nil, err
+	targetUIDs := []string{uid}
+	if s.users != nil {
+		response, err := s.users.ListUIDs(queryCtx, &common.ListUIDsRequest{})
+		if err != nil {
+			return nil, err
+		}
+		targetUIDs = uniqueUIDs(response.GetUids())
+		if len(targetUIDs) == 0 {
+			return nil, errors.New("LazyCat user manager returned no users")
+		}
 	}
-	items := make([]Application, 0, len(response.GetInfoList()))
-	for _, info := range response.GetInfoList() {
-		if info.GetAppid() == "" || info.GetResourceOnly() {
-			continue
-		}
-		deployID := info.GetDeployId()
-		if deployID == "" {
-			deployID = info.GetAppid()
-		}
-		owner := strings.TrimSpace(info.GetOwner())
-		if owner == "" {
-			owner = uid
-		}
-		userName := owner
+
+	items := make([]Application, 0)
+	seen := map[string]struct{}{}
+	userNames := map[string]string{}
+	for _, targetUID := range targetUIDs {
+		request := &sys.QueryApplicationRequest{IgnorePendingPkg: &ignorePending}
 		if s.users != nil {
-			if user, userErr := s.users.QueryUserInfo(ctx, &common.UserID{Uid: owner}); userErr == nil && strings.TrimSpace(user.GetNickname()) != "" {
-				userName = strings.TrimSpace(user.GetNickname())
-			}
+			otherUID := targetUID
+			request.OtherUid = &otherUID
 		}
-		items = append(items, Application{
-			DeployID:       deployID,
-			AppID:          info.GetAppid(),
-			Title:          info.GetTitle(),
-			Version:        info.GetVersion(),
-			InstallStatus:  normalizeStatus(info.GetStatus().String()),
-			InstanceStatus: normalizeInstanceStatus(info.GetInstanceStatus()),
-			Domain:         info.GetDomain(),
-			Builtin:        info.GetBuiltin(),
-			UserID:         owner,
-			UserName:       userName,
-		})
+		response, err := s.client.QueryApplication(queryCtx, request)
+		if err != nil {
+			return nil, err
+		}
+		for _, info := range response.GetInfoList() {
+			if info.GetAppid() == "" || info.GetResourceOnly() {
+				continue
+			}
+			deployID := info.GetDeployId()
+			if deployID == "" {
+				deployID = info.GetAppid()
+			}
+			if _, exists := seen[deployID]; exists {
+				continue
+			}
+			seen[deployID] = struct{}{}
+			owner := strings.TrimSpace(info.GetOwner())
+			if owner == "" {
+				owner = targetUID
+			}
+			userName, known := userNames[owner]
+			if !known {
+				userName = owner
+				if s.users != nil {
+					if user, userErr := s.users.QueryUserInfo(queryCtx, &common.UserID{Uid: owner}); userErr == nil && strings.TrimSpace(user.GetNickname()) != "" {
+						userName = strings.TrimSpace(user.GetNickname())
+					}
+				}
+				userNames[owner] = userName
+			}
+			items = append(items, Application{
+				DeployID:       deployID,
+				AppID:          info.GetAppid(),
+				Title:          info.GetTitle(),
+				Version:        info.GetVersion(),
+				InstallStatus:  normalizeStatus(info.GetStatus().String()),
+				InstanceStatus: normalizeInstanceStatus(info.GetInstanceStatus()),
+				Domain:         info.GetDomain(),
+				Builtin:        info.GetBuiltin(),
+				UserID:         owner,
+				UserName:       userName,
+			})
+		}
 	}
 	s.mu.Lock()
 	s.cache[uid] = cachedResult{items: append([]Application(nil), items...), expiresAt: now.Add(s.ttl)}
+	s.lastUID = uid
 	s.mu.Unlock()
+	s.persistUID(uid)
 	return items, nil
+}
+
+func (s *Source) LastUID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastUID
+}
+
+func (s *Source) persistUID(uid string) {
+	if s.uidPath == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.uidPath), 0o700); err != nil {
+		return
+	}
+	tmp := s.uidPath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(uid+"\n"), 0o600); err == nil {
+		_ = os.Rename(tmp, s.uidPath)
+	}
+}
+
+func uniqueUIDs(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func normalizeStatus(value string) string {
