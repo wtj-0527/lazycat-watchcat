@@ -485,7 +485,15 @@ body { font-size: 12px; }
 .stat { min-height: 108px; padding: 19px; }
 .stat strong { margin-top: 7px; font-size: 28px; }
 .stat::after { right: 20px; bottom: 15px; left: 20px; width: auto; height: 4px; border-radius: 2px; }
-.overview-layout-v2 { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(310px, 1fr); gap: 16px; margin-bottom: 20px; }
+.overview-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.overview-summary-grid > .card { min-width: 0; min-height: 290px; overflow: hidden; }
+.overview-health-distribution-card, .overview-storage-card, .device-health-card, .pending-events { display: flex; flex-direction: column; }
+.overview-health-distribution-card .donut-chart { flex: 1; width: min(100%, 520px); margin: 0 auto; grid-template-columns: 190px minmax(180px, 1fr); gap: 38px; }
+.overview-health-distribution-card .donut-legend { gap: 12px; }
+.overview-storage-card .bar-chart { flex: 1; align-content: center; gap: 14px; padding: 0; }
+.overview-storage-card .bar-chart-row { grid-template-columns: minmax(170px, 1.25fr) minmax(120px, 1fr) 54px; gap: 16px; }
+.overview-storage-card .bar-chart-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-health-card .device-health-list, .pending-events .compact-alerts { flex: 1; }
 .status-summary { display: flex; gap: 8px; }
 .device-health-list { display: grid; }
 .device-health-head { display: grid; grid-template-columns: 8px minmax(130px, 1fr) 80px 70px 80px 54px; align-items: center; gap: 10px; min-height: 34px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -564,7 +572,7 @@ body { font-size: 12px; }
   .sidebar { width: 210px; }
   .app-main { margin-left: 210px; }
   .global-search { width: 250px; }
-  .overview-layout-v2, .alert-workbench { grid-template-columns: 1fr; }
+  .overview-summary-grid, .alert-workbench { grid-template-columns: 1fr; }
   .stats.four, .stats.five, .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
@@ -676,6 +684,12 @@ body { font-size: 12px; }
 .analytics-strip { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-bottom:20px; }
 .resource-trend-card .line-chart { min-height:190px; }
 @media(max-width:1100px){.chart-panel-grid,.analytics-strip{grid-template-columns:1fr}}
+@media(max-width:760px){
+  .overview-summary-grid > .card { min-height: auto; }
+  .overview-health-distribution-card .donut-chart { grid-template-columns:1fr; gap:16px; justify-items:center; }
+  .overview-health-distribution-card .donut-legend { width:100%; }
+  .overview-storage-card .bar-chart-row { grid-template-columns:minmax(110px,1fr) minmax(80px,1fr) 48px; gap:10px; }
+}
 @media(max-width:760px){.donut-chart{grid-template-columns:1fr;justify-items:center}.chart-legend{position:static;justify-content:flex-start;margin-bottom:8px}.line-chart{padding-top:24px}}
 .capacity-evidence-list { display:grid; }
 .capacity-evidence-head,.capacity-evidence-row { display:grid; grid-template-columns:minmax(180px,1.4fr) 110px 130px 100px 90px minmax(180px,1fr); align-items:center; gap:16px; }

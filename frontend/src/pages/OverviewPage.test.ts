@@ -57,6 +57,7 @@ describe('OverviewPage', () => {
     expect(wrapper.get('.device-health-head').text()).toContain('最新数据')
     expect(wrapper.get('.capacity-evidence-head').text()).toContain('预计写满')
     expect(wrapper.get('.capacity-evidence-list').text()).toContain('采集能力 2/5')
+    expect(wrapper.findAll('.overview-summary-grid > .card')).toHaveLength(4)
     wrapper.unmount()
   })
 })
