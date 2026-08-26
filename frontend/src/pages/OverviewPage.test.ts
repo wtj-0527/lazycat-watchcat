@@ -68,7 +68,7 @@ describe('OverviewPage', () => {
     expect(wrapper.text()).not.toContain('设备实时指标')
     expect(wrapper.get('.fleet-realtime-section').text()).toContain('CPU 使用率')
     expect(wrapper.get('.fleet-realtime-section').text()).toContain('18.0%')
-    expect(wrapper.get('.fleet-realtime-section').text()).toContain('最高温度')
+    expect(wrapper.get('.fleet-realtime-section').text()).toContain('CPU 封装温度')
     expect(wrapper.get('.fleet-realtime-section').text()).toContain('51.0 ℃')
     const metricCards = wrapper.findAll('.realtime-metric')
     expect(metricCards[6].text()).toContain('收2.0 KiB')
@@ -79,6 +79,35 @@ describe('OverviewPage', () => {
     await metricCards[7].trigger('mouseenter')
     expect(metricCards[7].get('[role="tooltip"]').text()).toContain('disk.io.read.bytes_total')
     expect(wrapper.get('.capability-summary-hover').attributes('title')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('uses canonical temperature sources instead of vendor-specific NVMe sub-sensors', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockResolvedValue({
+      stats: { devices: 1, online: 1, offline: 0, critical: 0, warning: 0 },
+      devices: [{
+        id: 'd1', name: 'canway', hostname: 'canway', collectorVersion: '1.4.1',
+        status: 'online', lastSeenAt: collectedAt, online: true, stale: false, health: 'healthy',
+        latest: {
+          'system.temperature': [
+            { name: 'system.temperature', value: 60.85, unit: 'celsius', labels: { sensor: 'nvme_composite' }, collectedAt },
+            { name: 'system.temperature', value: 84.85, unit: 'celsius', labels: { sensor: 'nvme_sensor_1' }, collectedAt },
+            { name: 'system.temperature', value: 73, unit: 'celsius', labels: { sensor: 'coretemp_package_id_0' }, collectedAt },
+          ],
+        },
+      }],
+      alerts: [],
+      updatedAt: collectedAt,
+    })
+
+    const wrapper = mount(OverviewPage)
+    await flushPromises()
+    const temperature = wrapper.findAll('.realtime-metric')[3]
+    expect(temperature.text()).toContain('CPU 封装温度')
+    expect(temperature.text()).toContain('73.0 ℃')
+    expect(temperature.text()).not.toContain('84.9 ℃')
+    expect(temperature.classes()).not.toContain('critical')
     wrapper.unmount()
   })
 })

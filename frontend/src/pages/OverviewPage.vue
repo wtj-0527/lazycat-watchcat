@@ -64,12 +64,56 @@ function singleMetric(device: Device, label: string, names: string[], thresholds
     status,
   }
 }
-function maxMetric(device: Device, label: string, names: string[], thresholds?: [number, number]): RealtimeMetric {
-  const points = metricPoints(device, names)
-  if (!points.length) return { label, value: '未知', detail: '尚未采集到该指标' }
-  const point = [...points].sort((a, b) => b.value - a.value)[0]
-  const status = thresholds ? point.value >= thresholds[1] ? 'critical' : point.value >= thresholds[0] ? 'warning' : undefined : undefined
-  return { label, value: formatMetricValue(point.value, point.unit), detail: pointDetail([point]), status }
+function temperatureSource(point: Metric): string {
+  if (point.name === 'disk.temperature') {
+    return point.labels?.model || (point.labels?.device ? `/dev/${String(point.labels.device).replace('/dev/', '')}` : '磁盘 SMART')
+  }
+  const sensor = String(point.labels?.sensor || '').toLowerCase()
+  if (sensor.startsWith('coretemp_package') || sensor === 'package') return 'CPU 封装'
+  if (sensor.startsWith('coretemp_core')) return 'CPU 核心'
+  if (sensor.startsWith('nvme_composite')) return 'NVMe 综合'
+  if (sensor.startsWith('nvme_sensor_')) return 'NVMe 内部传感器'
+  if (sensor.startsWith('spd5118')) return '内存模组'
+  if (sensor.startsWith('iwlwifi')) return '无线网卡'
+  if (sensor.startsWith('acpitz')) return '主板 ACPI'
+  return point.labels?.sensor || '硬件传感器'
+}
+function temperatureThresholds(point: Metric): [number, number] {
+  if (point.name === 'disk.temperature') return [70, 80]
+  const sensor = String(point.labels?.sensor || '').toLowerCase()
+  if (sensor.startsWith('coretemp_package') || sensor.startsWith('coretemp_core') || sensor === 'package') return [90, 100]
+  if (sensor.startsWith('nvme_composite')) return [85, 90]
+  if (sensor.startsWith('spd5118')) return [55, 85]
+  return [80, 95]
+}
+function temperatureMetric(device: Device): RealtimeMetric {
+  const system = device.latest?.['system.temperature'] || []
+  const disk = device.latest?.['disk.temperature'] || []
+  const hasPackage = system.some((point) => {
+    const sensor = String(point.labels?.sensor || '').toLowerCase()
+    return sensor.startsWith('coretemp_package') || sensor === 'package'
+  })
+  const hasNVMeComposite = system.some((point) => String(point.labels?.sensor || '').toLowerCase().startsWith('nvme_composite'))
+  const candidates = [...system, ...disk].filter((point) => {
+    const sensor = String(point.labels?.sensor || '').toLowerCase()
+    if (hasPackage && sensor.startsWith('coretemp_core')) return false
+    // NVMe sensor_1/2 are vendor-specific hotspot or controller readings.
+    // Prefer the standards-based composite temperature when it is available.
+    if (hasNVMeComposite && sensor.startsWith('nvme_sensor_')) return false
+    return true
+  })
+  if (!candidates.length) return { label: '最高温度', value: '未知', detail: '尚未采集到该指标' }
+  const point = [...candidates].sort((a, b) => b.value - a.value)[0]
+  const source = temperatureSource(point)
+  const thresholds = temperatureThresholds(point)
+  const status = point.value >= thresholds[1] ? 'critical' : point.value >= thresholds[0] ? 'warning' : undefined
+  const raw = point.labels?.sensor || point.labels?.device || point.name
+  return {
+    label: `${source}温度`,
+    value: formatMetricValue(point.value, point.unit),
+    detail: `${raw} · ${point.labels?.model ? `${point.labels.model} · ` : ''}${ago(point.collectedAt)}`,
+    status,
+  }
 }
 function total(device: Device, primary: string, fallback: string): { value: number; points: Metric[] } {
   const direct = device.latest?.[primary] || []
@@ -93,7 +137,7 @@ function realtimeMetrics(device: Device): RealtimeMetric[] {
     singleMetric(device, 'CPU 使用率', ['system.cpu.usage'], [85, 95]),
     singleMetric(device, '内存使用率', ['system.memory.usage'], [85, 95]),
     singleMetric(device, '1 分钟负载', ['system.load.1m']),
-    maxMetric(device, '最高温度', ['system.temperature', 'disk.temperature'], [70, 80]),
+    temperatureMetric(device),
     storage
       ? { label: '最高存储使用率', value: formatMetricValue(storage.value, storage.unit), detail: pointDetail([storage]), percent: storage.value, status: storage.value >= 95 ? 'critical' : storage.value >= 85 ? 'warning' : undefined }
       : { label: '最高存储使用率', value: '未知', detail: '尚未采集到该指标' },
