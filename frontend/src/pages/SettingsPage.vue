@@ -45,8 +45,7 @@ const emit = defineEmits<{ toast: [message: string] }>()
 const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, props.initialTab || 'onboarding', 'settings-tab-')
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
-const collectorSetupURL = ref(localStorage.getItem('maoyanCollectorSetupURL') || 'http://192.168.124.18:18090')
-const collectorHubURL = ref(localStorage.getItem('maoyanCollectorHubURL') || 'http://192.168.124.27:18080')
+const collectorHubURL = ref(localStorage.getItem('maoyanInviteEndpoint') || window.location.origin)
 const backupLoading = ref(false)
 const backupEvidence = ref<OperationEvidence>()
 const restoreEvidence = ref<OperationEvidence>()
@@ -119,34 +118,17 @@ function buildPairingLink() {
   if (!pairing.value) throw new Error('pairing code required')
   const hub = new URL(collectorHubURL.value.trim())
   if (hub.protocol !== 'http:' && hub.protocol !== 'https:') throw new Error('invalid protocol')
+  hub.search = ''
   hub.hash = new URLSearchParams({ 'pairing-code': pairing.value.code }).toString()
   return hub.toString()
 }
 async function copyPairingLink() {
   try {
     await navigator.clipboard.writeText(buildPairingLink())
-    localStorage.setItem('maoyanCollectorHubURL', collectorHubURL.value.trim())
-    emit('toast', '完整配对链接已复制，可直接粘贴到另一台设备')
+    localStorage.setItem('maoyanInviteEndpoint', collectorHubURL.value.trim())
+    emit('toast', '设备邀请已复制，可直接粘贴到目标设备')
   } catch {
-    emit('toast', '请先生成配对码并填写有效的猫眼接入地址')
-  }
-}
-function openCollectorSetup() {
-  if (!pairing.value) {
-    emit('toast', '请先生成一次性配对码')
-    return
-  }
-  try {
-    const target = new URL(collectorSetupURL.value.trim())
-    const hub = new URL(collectorHubURL.value.trim())
-    if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('invalid protocol')
-    if (hub.protocol !== 'http:' && hub.protocol !== 'https:') throw new Error('invalid protocol')
-    localStorage.setItem('maoyanCollectorSetupURL', target.toString())
-    localStorage.setItem('maoyanCollectorHubURL', hub.toString())
-    target.hash = new URLSearchParams({ invite: buildPairingLink() }).toString()
-    window.open(target.toString(), '_blank', 'noopener,noreferrer')
-  } catch {
-    emit('toast', '请输入有效的 Collector 配置页和猫眼接入地址')
+    emit('toast', '请先生成邀请并填写目标设备可访问的有效地址')
   }
 }
 async function saveDeviceMetadata(device: Device) {
@@ -338,7 +320,7 @@ async function deleteUnusedImage(image: UnusedImage) {
     </div>
     <div v-if="isOnboardingRoute" class="onboarding-progress" aria-label="接入步骤">
       <div class="done"><b>1</b><span>选择方式</span></div>
-      <div class="done"><b>2</b><span>生成配对码</span></div>
+      <div class="done"><b>2</b><span>生成邀请</span></div>
       <div class="active"><b>3</b><span>验证连接</span></div>
       <div><b>4</b><span>能力探测</span></div>
       <div><b>5</b><span>完成</span></div>
@@ -364,35 +346,38 @@ async function deleteUnusedImage(image: UnusedImage) {
     <template v-if="data && tab === 'onboarding'">
       <div class="onboarding-layout">
         <section class="card">
-          <div class="section-title"><div><h2>验证设备连接</h2><span class="muted">在目标 LazyCat 设备安装猫眼后输入配对码；连接成功后自动进行安全握手。</span></div></div>
+          <div class="section-title"><div><h2>邀请新设备</h2><span class="muted">生成一次性设备邀请，在任意已安装猫眼 Collector 的设备上粘贴即可加入。</span></div></div>
           <ol class="onboarding-steps">
-            <li><span>1</span><div><b>配对请求</b><p>远端 Collector 使用 mTLS 上报；当前猫眼 LPK 已内置本机 Collector。</p></div><StatusPill :status="data.settings.embeddedCollector ? 'available' : 'unknown'" /></li>
-            <li><span>2</span><div><b>一次性配对码</b><p>配对码由真实 API 生成，只能使用一次并具有到期时间。</p></div><button class="primary-button" :disabled="pairingLoading" @click="createPairingCode">{{ pairingLoading ? '生成中…' : '生成配对码' }}</button></li>
-            <li><span>3</span><div><b>首次数据上报</b><p>完成身份验证后等待第一批真实系统指标。</p></div><StatusPill status="unknown" /></li>
+            <li><span>1</span><div><b>生成邀请</b><p>邀请只能使用一次，并在到期后自动失效。</p></div><button class="primary-button" :disabled="pairingLoading" @click="createPairingCode">{{ pairingLoading ? '生成中…' : '生成设备邀请' }}</button></li>
+            <li><span>2</span><div><b>发送到目标设备</b><p>复制完整邀请，不需要分别传递地址、端口和配对码。</p></div><StatusPill :status="pairing ? 'available' : 'unknown'" /></li>
+            <li><span>3</span><div><b>安全接入</b><p>目标设备验证邀请后签发独立身份，并开始上报真实指标。</p></div><StatusPill :status="data.settings.embeddedCollector ? 'available' : 'unknown'" /></li>
           </ol>
           <div v-if="pairing" class="pairing-code-box">
-            <span>一次性配对码</span><strong>{{ pairing.code }}</strong><small>有效期至 {{ dateTime(pairing.expiresAt) }}</small>
+            <span>一次性设备邀请已就绪</span>
+            <strong>{{ pairing.code }}</strong>
+            <small>有效期至 {{ dateTime(pairing.expiresAt) }}</small>
             <div class="button-row">
+              <button class="primary-button" @click="copyPairingLink">复制设备邀请</button>
               <button class="secondary-button tiny" @click="copyPairingCode">仅复制配对码</button>
-              <button class="primary-button tiny" @click="copyPairingLink">复制完整配对链接</button>
             </div>
           </div>
-          <div class="collector-setup-launcher">
-            <div>
-              <b>前往 canway 完成配对</b>
-              <p>将猫眼地址和一次性配对码安全预填到 canway；远端页面只需确认并提交。</p>
-            </div>
-            <label>
-              <span>canway 配置页</span>
-              <input v-model="collectorSetupURL" type="url" placeholder="http://192.168.124.18:18090">
-            </label>
-            <label>
-              <span>nasw 猫眼接入地址</span>
-              <input v-model="collectorHubURL" type="url" placeholder="http://192.168.124.27:18080">
-            </label>
-            <button class="primary-button" :disabled="!pairing" @click="openCollectorSetup">打开并预填配对信息</button>
-            <small>“复制完整配对链接”会把地址与配对码合并为一行；配对码放在 URL 的 <code>#</code> 片段中，不会发送到服务器访问日志。</small>
+          <div class="pairing-target-guide">
+            <b>在目标设备上</b>
+            <ol>
+              <li>安装猫眼 Collector，并打开设备接入入口</li>
+              <li>粘贴“设备邀请”</li>
+              <li>确认加入，等待设备出现在设备列表</li>
+            </ol>
           </div>
+          <details class="pairing-invite-panel">
+            <summary>高级连接设置</summary>
+            <p>通常无需修改。仅当目标设备无法访问当前猫眼地址时，改为局域网可达地址或你手动配置的转发地址。</p>
+            <label>
+              <span>目标设备可访问的猫眼地址</span>
+              <input v-model="collectorHubURL" type="url" placeholder="https://maoyan.example.com">
+            </label>
+            <small>设备邀请已包含此地址和一次性配对码。配对码位于 URL 的 <code>#</code> 片段，不会随普通 HTTP 请求写入访问日志。</small>
+          </details>
         </section>
         <aside class="card deployment-card">
           <div class="section-title compact"><div><h2>当前部署</h2><span class="muted">Production profile</span></div></div>

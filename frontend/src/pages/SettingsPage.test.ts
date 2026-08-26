@@ -83,6 +83,32 @@ describe('SettingsPage tabs', () => {
     wrapper.unmount()
   })
 
+  it('creates an environment-neutral device invitation from the current origin', async () => {
+    const base = apiMock.getMockImplementation()!
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/pairing-codes' && options?.method === 'POST') {
+        return { code: 'PAIR-1234', expiresAt: now }
+      }
+      return base(path, options)
+    })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    const wrapper = mount(SettingsPage, { props: { initialTab: 'onboarding' } })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('canway')
+    expect(wrapper.text()).not.toContain('nasw')
+    expect(wrapper.text()).not.toContain('192.168.')
+    await wrapper.get('.onboarding-steps .primary-button').trigger('click')
+    await flushPromises()
+    await wrapper.get('.pairing-code-box .primary-button').trigger('click')
+
+    expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/localhost:\d+\/#pairing-code=PAIR-1234$/))
+    expect(wrapper.text()).toContain('目标设备可访问的猫眼地址')
+    wrapper.unmount()
+  })
+
   it('shows persisted evidence after a backup is created and read back', async () => {
     const backup = {
       name: 'manual-20260823.db', type: 'manual', appVersion: '1.8.0', createdAt: now,
