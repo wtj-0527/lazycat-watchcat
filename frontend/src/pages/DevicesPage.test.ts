@@ -185,6 +185,8 @@ describe('DevicesPage detail tabs', () => {
     expect(wrapper.get('.device-app-insights').classes()).not.toContain('card')
     expect(wrapper.find('.device-app-insights > .section-title').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('应用与容器指标')
+    expect(wrapper.text()).not.toContain('资源热点')
+    expect(wrapper.text()).not.toContain('四项指标分别排序')
     expect(wrapper.find('.resource-ranking-board').exists()).toBe(true)
     expect(wrapper.findAll('.resource-ranking-column')).toHaveLength(4)
     expect(wrapper.findAll('.resource-ranking-list')).toHaveLength(4)

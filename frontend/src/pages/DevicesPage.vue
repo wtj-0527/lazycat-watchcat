@@ -706,9 +706,6 @@ const capabilityCount = computed(() => selected.value
 
         <section v-else-if="selectedTab === 'apps'" class="device-app-insights">
           <section v-if="containerResources.length" class="application-ranking-section">
-            <div class="section-title compact">
-              <div><h3>资源热点</h3><span class="muted">四项指标分别排序；每张卡片均可上下滚动查看全部实例。</span></div>
-            </div>
             <ResourceRankingBoard :items="applicationRankingItems" />
           </section>
           <div v-else class="inline-empty">当前没有容器资源指标。</div>
