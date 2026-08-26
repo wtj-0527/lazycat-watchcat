@@ -147,7 +147,7 @@ describe('DevicesPage detail tabs', () => {
     wrapper.unmount()
   })
 
-  it('uses one switchable paginated bar chart without a duplicate resource matrix', async () => {
+  it('uses four independently scrollable resource cards without a duplicate matrix', async () => {
     const collectedAt = '2026-08-26T10:00:00Z'
     const labels = { app: 'cloud.lazycat.app.photos', container: 'abc123', name: 'photos-main', state: 'running' }
     const detailed = {
@@ -176,11 +176,13 @@ describe('DevicesPage detail tabs', () => {
     await flushPromises()
     await wrapper.get('#device-tab-apps').trigger('click')
 
-    expect(wrapper.find('.resource-bar-explorer').exists()).toBe(true)
-    expect(wrapper.findAll('.resource-metric-tabs [role="tab"]')).toHaveLength(4)
+    expect(wrapper.find('.resource-ranking-board').exists()).toBe(true)
+    expect(wrapper.findAll('.resource-ranking-column')).toHaveLength(4)
+    expect(wrapper.findAll('.resource-ranking-list')).toHaveLength(4)
+    expect(wrapper.findAll('.resource-ranking-list')[0].attributes('aria-label')).toContain('可上下滚动')
     expect(wrapper.get('.resource-summary-strip').text()).toContain('全部运行中')
-    expect(wrapper.get('.resource-horizontal-chart').text()).toContain('懒猫相册')
-    expect(wrapper.get('.resource-horizontal-chart').text()).toContain('photos-main')
+    expect(wrapper.get('.resource-ranking-grid').text()).toContain('懒猫相册')
+    expect(wrapper.get('.resource-ranking-grid').text()).toContain('photos-main')
     expect(wrapper.find('.application-resource-matrix').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('全部实例资源矩阵')
     expect(wrapper.find('.device-metric-chart-grid').exists()).toBe(false)

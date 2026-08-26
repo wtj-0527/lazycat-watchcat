@@ -8,7 +8,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
-import ResourceBarChart, { type ResourceBarItem } from '@/components/ResourceBarChart.vue'
+import ResourceRankingBoard, { type ResourceRankingItem } from '@/components/ResourceRankingBoard.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -310,7 +310,7 @@ const containerResources = computed<ContainerResource[]>(() => {
     }
   })
 })
-const applicationBarItems = computed<ResourceBarItem[]>(() => containerResources.value.map((item) => ({
+const applicationRankingItems = computed<ResourceRankingItem[]>(() => containerResources.value.map((item) => ({
   id: item.id,
   label: item.appTitle,
   detail: `${item.containerName} · ${item.app}`,
@@ -473,9 +473,9 @@ const capabilityCount = computed(() => selected.value
           <div class="section-title"><div><h2>应用与容器指标</h2></div><span class="pill unknown">{{ containerResources.length }} 个实例</span></div>
           <section v-if="containerResources.length" class="application-ranking-panel">
             <div class="section-title compact">
-              <div><h3>资源热点</h3><span class="muted">切换指标查看全部实例，默认按当前值从高到低排列。</span></div>
+              <div><h3>资源热点</h3><span class="muted">四项指标分别排序；每张卡片均可上下滚动查看全部实例。</span></div>
             </div>
-            <ResourceBarChart :items="applicationBarItems" />
+            <ResourceRankingBoard :items="applicationRankingItems" />
           </section>
           <div v-else class="inline-empty">当前没有容器资源指标。</div>
         </section>
