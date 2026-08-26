@@ -52,12 +52,12 @@ function capabilityDetail(device: Device): string {
   <PageState :loading="loading" :error="error" @retry="refresh">
     <div class="overview-summary-grid">
       <section class="card overview-health-distribution-card">
-        <div class="section-title"><div><h2>设备健康构成</h2></div></div>
+        <div class="section-title"><div><h2>设备健康构成</h2></div><span class="overview-card-meta">{{ orderedDevices.length }} 台</span></div>
         <DonutChart :items="healthDistribution" center-label="设备" />
       </section>
 
       <section class="card overview-storage-card">
-        <div class="section-title"><div><h2>存储卷使用率</h2></div></div>
+        <div class="section-title"><div><h2>存储卷使用率</h2></div><span class="overview-card-meta">{{ storageRows.length }} 个卷</span></div>
         <BarChart :items="capacityBars" unit="%" />
       </section>
 
