@@ -63,6 +63,8 @@ const themes: Array<{ mode: ThemeMode; label: string; symbol: string }> = [
   { mode: 'dark', label: '夜晚', symbol: '☾' },
   { mode: 'device', label: '设备', symbol: '◐' },
 ]
+const currentTheme = computed(() => themes.find((item) => item.mode === themeMode.value) || themes[2])
+const nextTheme = computed(() => themes[(themes.findIndex((item) => item.mode === themeMode.value) + 1) % themes.length])
 
 function pageFromHash(): Page {
   const candidate = location.hash.slice(1) as Page
@@ -106,6 +108,9 @@ function selectTheme(mode: ThemeMode) {
   themeMode.value = mode
   localStorage.setItem('watchcatTheme', mode)
   applyTheme(mode, deviceDark.value)
+}
+function cycleTheme() {
+  selectTheme(nextTheme.value.mode)
 }
 function syncDeviceTheme(event?: MediaQueryListEvent) {
   deviceDark.value = event?.matches ?? deviceThemeQuery?.matches ?? false
@@ -173,17 +178,13 @@ onBeforeUnmount(() => {
           <AppIcon name="search" :size="16" />
           <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
         </form>
-        <div class="theme-switcher" role="group" aria-label="界面主题">
-          <button
-            v-for="item in themes"
-            :key="item.mode"
-            type="button"
-            :class="{ active: themeMode === item.mode }"
-            :aria-pressed="themeMode === item.mode"
-            :title="`${item.label}主题`"
-            @click="selectTheme(item.mode)"
-          ><i>{{ item.symbol }}</i><span>{{ item.label }}</span></button>
-        </div>
+        <button
+          class="theme-toggle"
+          type="button"
+          :aria-label="`当前为${currentTheme.label}主题，点击切换为${nextTheme.label}主题`"
+          :title="`当前：${currentTheme.label}；点击切换为：${nextTheme.label}`"
+          @click="cycleTheme"
+        ><i>{{ currentTheme.symbol }}</i><span>{{ currentTheme.label }}</span></button>
         <button
           class="icon-button notification-button"
           :class="{ active: activeAlertCount > 0, critical: hasCriticalAlert }"
