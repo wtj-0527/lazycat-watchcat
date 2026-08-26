@@ -147,6 +147,43 @@ describe('DevicesPage detail tabs', () => {
     wrapper.unmount()
   })
 
+  it('uses a bubble distribution, status donut and resource matrix for container metrics', async () => {
+    const collectedAt = '2026-08-26T10:00:00Z'
+    const labels = { app: 'cloud.lazycat.app.photos', container: 'abc123', name: 'photos-main', state: 'running' }
+    const detailed = {
+      ...device,
+      latest: {
+        'container.running': [{ name: 'container.running', value: 1, unit: 'bool', labels, collectedAt }],
+        'container.cpu.usage': [{ name: 'container.cpu.usage', value: 28, unit: '%', labels, collectedAt }],
+        'container.memory.usage': [{ name: 'container.memory.usage', value: 1024 ** 3, unit: 'bytes', labels, collectedAt }],
+        'container.memory.limit': [{ name: 'container.memory.limit', value: 2 * 1024 ** 3, unit: 'bytes', labels, collectedAt }],
+        'container.network.receive.bytes_total': [{ name: 'container.network.receive.bytes_total', value: 2048, unit: 'bytes', labels, collectedAt }],
+        'container.block.write.bytes_total': [{ name: 'container.block.write.bytes_total', value: 4096, unit: 'bytes', labels, collectedAt }],
+      },
+    }
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/overview') return overview
+      if (path === '/api/v1/devices/d1') return detailed
+      if (path === '/api/v1/applications') return { items: [{ id: 'cloud.lazycat.app.photos', title: '懒猫相册' }] }
+      if (path.includes('/events') || path.includes('/metrics')) return { items: [] }
+      if (path === '/api/v1/operations') return { capabilities: [] }
+      return detailed
+    })
+
+    const wrapper = mount(DevicesPage)
+    await flushPromises()
+    await wrapper.get('button.row-link').trigger('click')
+    await flushPromises()
+    await wrapper.get('#device-tab-apps').trigger('click')
+
+    expect(wrapper.find('.resource-bubble-chart').exists()).toBe(true)
+    expect(wrapper.find('.application-status-panel .donut-chart').exists()).toBe(true)
+    expect(wrapper.get('.application-resource-matrix').text()).toContain('懒猫相册')
+    expect(wrapper.get('.application-resource-matrix').text()).toContain('photos-main')
+    expect(wrapper.find('.device-metric-chart-grid').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('deletes a remote device after confirmation and hides deletion for the local device', async () => {
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/overview') return overview

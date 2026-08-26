@@ -3,11 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling, useRovingTabs } from '@/composables'
 import type { Capability, Device, Metric, Overview } from '@/types'
-import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
+import { ago, bytes, connectivityState, dateTime, deviceState, formatMetricValue, formatNumber, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
+import DonutChart from '@/components/DonutChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
+import ResourceBubbleChart, { type ResourceBubbleItem } from '@/components/ResourceBubbleChart.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -42,6 +44,9 @@ const trendLoading = ref(false)
 const trendError = ref('')
 const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail: Record<string, unknown>; createdAt: string }>>([])
 const deviceCapabilities = ref<Capability[]>([])
+const applicationTitles = ref<Record<string, string>>({})
+const appResourceSort = ref<'cpu' | 'memory' | 'network' | 'io'>('cpu')
+const appResourceDescending = ref(true)
 interface SavedView { id: string; name: string; query: { query?: string; status?: string; connectivity?: string; capability?: string; group?: string } }
 interface Payload extends Overview { savedViews: SavedView[] }
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
@@ -73,12 +78,14 @@ async function showDevice(id: string) {
   selectedTab.value = 'overview'
   try {
     selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(id)}`)
-    const [events, operations] = await Promise.all([
+    const [events, operations, applications] = await Promise.all([
       api<{ items: typeof deviceEvents.value }>(`/api/v1/devices/${encodeURIComponent(id)}/events`),
       api<{ capabilities: Array<Capability & { deviceId?: string }> }>('/api/v1/operations'),
+      api<{ items: Array<{ id: string; title: string }> }>('/api/v1/applications').catch(() => ({ items: [] })),
     ])
     deviceEvents.value = events.items || []
     deviceCapabilities.value = (operations.capabilities || []).filter((item) => !item.deviceId || item.deviceId === id)
+    applicationTitles.value = Object.fromEntries((applications.items || []).map((item) => [item.id, item.title || item.id]))
     await loadTrend(id)
   } catch (reason) {
     detailError.value = reason instanceof Error ? reason.message : String(reason)
@@ -253,6 +260,105 @@ function chartItems(items: Metric[], transform: (value: number) => number = (val
   })).sort((a, b) => b.value - a.value).slice(0, 16)
 }
 interface MetricChartGroup { title: string; unit: string; items: BarItem[] }
+interface ContainerResource {
+  id: string
+  app: string
+  appTitle: string
+  container: string
+  containerName: string
+  cpu: number
+  memory: number
+  memoryPercent: number
+  network: number
+  io: number
+  running: boolean
+  collectedAt: string
+}
+const containerResources = computed<ContainerResource[]>(() => {
+  if (!selected.value) return []
+  const resources = new Map<string, { labels: Record<string, string>; points: Map<string, Metric> }>()
+  for (const point of categoryMetrics(selected.value, 'apps')) {
+    const labels = point.labels || {}
+    const app = labels.app || '未知应用'
+    const container = labels.container || labels.name || labels.service
+    if (!container) continue
+    const key = `${app}\u0000${container}`
+    const resource = resources.get(key) || { labels, points: new Map<string, Metric>() }
+    const current = resource.points.get(point.name)
+    if (!current || new Date(point.collectedAt).getTime() > new Date(current.collectedAt).getTime()) {
+      resource.points.set(point.name, point)
+      resource.labels = labels
+    }
+    resources.set(key, resource)
+  }
+  return [...resources.entries()].map(([id, resource]) => {
+    const value = (name: string) => resource.points.get(name)?.value || 0
+    const app = resource.labels.app || '未知应用'
+    const memory = value('container.memory.usage')
+    const limit = value('container.memory.limit')
+    const collectedAt = [...resource.points.values()].sort((a, b) => new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime())[0]?.collectedAt || ''
+    return {
+      id,
+      app,
+      appTitle: applicationTitles.value[app] || app,
+      container: resource.labels.container || '',
+      containerName: resource.labels.name || resource.labels.service || resource.labels.container || '未知容器',
+      cpu: value('container.cpu.usage'),
+      memory,
+      memoryPercent: value('container.memory.usage_percent') || (limit > 0 ? memory / limit * 100 : 0),
+      network: value('container.network.receive.bytes_total') + value('container.network.transmit.bytes_total'),
+      io: value('container.block.read.bytes_total') + value('container.block.write.bytes_total'),
+      running: value('container.running') >= 1,
+      collectedAt,
+    }
+  })
+})
+function appResourceValue(item: ContainerResource, metric: typeof appResourceSort.value) {
+  return item[metric]
+}
+const sortedContainerResources = computed(() => [...containerResources.value].sort((a, b) => {
+  const delta = appResourceValue(a, appResourceSort.value) - appResourceValue(b, appResourceSort.value)
+  return (appResourceDescending.value ? -delta : delta) || a.appTitle.localeCompare(b.appTitle)
+}))
+const appResourcePagination = usePagination(sortedContainerResources, 20)
+watch([appResourceSort, appResourceDescending], appResourcePagination.resetPage)
+const appResourceMax = computed(() => ({
+  cpu: Math.max(100, ...containerResources.value.map((item) => item.cpu)),
+  memory: Math.max(1, ...containerResources.value.map((item) => item.memory)),
+  network: Math.max(1, ...containerResources.value.map((item) => item.network)),
+  io: Math.max(1, ...containerResources.value.map((item) => item.io)),
+}))
+function appResourceIntensity(item: ContainerResource, metric: typeof appResourceSort.value) {
+  const value = appResourceValue(item, metric)
+  if (!value) return 0
+  if (metric === 'cpu') return Math.min(1, value / appResourceMax.value.cpu)
+  if (metric === 'memory' && item.memoryPercent > 0) return Math.min(1, item.memoryPercent / 100)
+  return Math.min(1, Math.log1p(value) / Math.log1p(appResourceMax.value[metric]))
+}
+function appResourceCellStyle(item: ContainerResource, metric: typeof appResourceSort.value) {
+  const colors = { cpu: '37,99,235', memory: '124,58,237', network: '21,128,61', io: '192,86,0' }
+  const intensity = appResourceIntensity(item, metric)
+  return { background: `rgba(${colors[metric]},${0.06 + intensity * 0.82})`, color: intensity > .58 ? '#fff' : '#172033' }
+}
+function appResourceDisplay(item: ContainerResource, metric: typeof appResourceSort.value) {
+  if (metric === 'cpu') return `${formatNumber(item.cpu)}%`
+  if (metric === 'memory') return bytes(item.memory)
+  return bytes(item[metric])
+}
+const applicationStatusDistribution = computed(() => [
+  { label: '运行中', value: containerResources.value.filter((item) => item.running).length, color: '#118847' },
+  { label: '已停止', value: containerResources.value.filter((item) => !item.running).length, color: '#94a3b8' },
+])
+const applicationBubbleItems = computed<ResourceBubbleItem[]>(() => containerResources.value.map((item) => ({
+  id: item.id,
+  label: item.appTitle,
+  detail: `${item.containerName} · ${item.app}`,
+  cpu: item.cpu,
+  memory: item.memory,
+  network: item.network,
+  io: item.io,
+  running: item.running,
+})))
 const metricChartGroups = computed<MetricChartGroup[]>(() => {
   if (!selected.value) return []
   const items = categoryMetrics(selected.value, selectedTab.value)
@@ -271,11 +377,6 @@ const metricChartGroups = computed<MetricChartGroup[]>(() => {
     add('磁盘温度', ' ℃', items.filter((point) => point.name === 'disk.temperature'))
     add('容量与可用空间', ' GiB', items.filter((point) => point.unit === 'bytes' && (point.name.includes('size') || point.name.includes('capacity') || point.name.includes('available') || point.name.includes('free'))), (value) => value / 1024 ** 3)
     add('SMART 与 Btrfs 错误', '', items.filter((point) => point.unit === 'count' || point.unit === 'bitmask'))
-  } else if (selectedTab.value === 'apps') {
-    add('容器 CPU', '%', items.filter((point) => point.unit === '%' && point.name.includes('cpu')))
-    add('容器内存', ' MiB', items.filter((point) => point.unit === 'bytes' && point.name.includes('memory')), (value) => value / 1024 ** 2)
-    add('容器状态', '', items.filter((point) => point.name === 'container.running' || point.unit === 'bool' || point.unit === 'count'))
-    add('容器 I/O 与流量', ' MiB', items.filter((point) => point.unit === 'bytes' && !point.name.includes('memory')), (value) => value / 1024 ** 2)
   } else if (selectedTab.value === 'network') {
     add('网络流量', ' MiB', items.filter((point) => point.unit === 'bytes'), (value) => value / 1024 ** 2)
     add('丢包与错误', '', items.filter((point) => point.unit === 'count'))
@@ -405,6 +506,50 @@ const capabilityCount = computed(() => selected.value
             <section class="metric-chart-panel"><h3>最近事件趋势</h3><BarChart :items="eventTimelineItems" /></section>
           </div>
           <div v-else class="inline-empty">暂无设备事件。</div>
+        </section>
+
+        <section v-else-if="selectedTab === 'apps'" class="card device-app-insights">
+          <div class="section-title"><div><h2>应用与容器指标</h2></div><span class="pill unknown">{{ containerResources.length }} 个实例</span></div>
+          <div v-if="containerResources.length" class="device-app-visual-grid">
+            <section class="application-bubble-panel">
+              <div class="section-title compact"><div><h3>CPU × 内存资源分布</h3><span class="muted">位置表示 CPU 与内存，气泡大小表示累计网络与磁盘 I/O</span></div></div>
+              <ResourceBubbleChart :items="applicationBubbleItems" />
+            </section>
+            <section class="application-status-panel">
+              <div class="section-title compact"><div><h3>运行状态</h3></div></div>
+              <DonutChart :items="applicationStatusDistribution" center-label="实例" />
+            </section>
+          </div>
+
+          <section v-if="containerResources.length" class="application-resource-matrix">
+            <div class="section-title application-matrix-title">
+              <div><h3>全部实例资源矩阵</h3><span class="muted">颜色越深表示当前值越高；网络与 I/O 为容器累计计数。</span></div>
+              <div class="application-matrix-controls">
+                <select v-model="appResourceSort" aria-label="应用资源矩阵排序指标">
+                  <option value="cpu">按 CPU 排序</option>
+                  <option value="memory">按内存排序</option>
+                  <option value="network">按网络累计排序</option>
+                  <option value="io">按磁盘 I/O 排序</option>
+                </select>
+                <button class="secondary-button" @click="appResourceDescending = !appResourceDescending">{{ appResourceDescending ? '从高到低 ↓' : '从低到高 ↑' }}</button>
+              </div>
+            </div>
+            <div class="resource-matrix-scroll">
+              <div class="resource-matrix resource-matrix-head" role="row">
+                <span role="columnheader">应用 / 容器</span><span role="columnheader">CPU</span><span role="columnheader">内存</span><span role="columnheader">网络累计</span><span role="columnheader">磁盘 I/O</span><span role="columnheader">状态</span>
+              </div>
+              <div v-for="item in appResourcePagination.pagedItems.value" :key="item.id" class="resource-matrix resource-matrix-row" role="row">
+                <span class="resource-matrix-identity" role="cell"><b>{{ item.appTitle }}</b><small>{{ item.app }} · {{ item.containerName }}</small></span>
+                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'cpu')" role="cell">{{ appResourceDisplay(item, 'cpu') }}</span>
+                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'memory')" role="cell">{{ appResourceDisplay(item, 'memory') }}</span>
+                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'network')" role="cell">{{ appResourceDisplay(item, 'network') }}</span>
+                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'io')" role="cell">{{ appResourceDisplay(item, 'io') }}</span>
+                <span role="cell"><StatusPill :status="item.running ? 'healthy' : 'unknown'" /></span>
+              </div>
+            </div>
+            <AppPagination v-model:page="appResourcePagination.page.value" v-model:page-size="appResourcePagination.pageSize.value" :total="appResourcePagination.total.value" :page-count="appResourcePagination.pageCount.value" :range-start="appResourcePagination.rangeStart.value" :range-end="appResourcePagination.rangeEnd.value" label="应用资源矩阵分页" />
+          </section>
+          <div v-else class="inline-empty">当前没有容器资源指标。</div>
         </section>
 
         <section v-else class="card">
