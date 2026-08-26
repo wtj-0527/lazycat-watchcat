@@ -22,4 +22,22 @@ describe('BarChart', () => {
     await row.trigger('focus')
     expect(wrapper.get('[role="tooltip"]').text()).toContain('nasw /data')
   })
+
+  it('shows only the hovered row when multiple resources have the same label', async () => {
+    const wrapper = mount(BarChart, {
+      props: {
+        items: [
+          { label: 'eth0', value: 0, hint: 'receive.errors' },
+          { label: 'eth0', value: 1, hint: 'transmit.errors' },
+          { label: 'eth0', value: 2, hint: 'receive.dropped' },
+        ],
+      },
+    })
+    const rows = wrapper.findAll('.bar-chart-row')
+    await rows[1].trigger('mouseenter')
+
+    expect(wrapper.findAll('[role="tooltip"]')).toHaveLength(1)
+    expect(wrapper.get('[role="tooltip"]').text()).toContain('transmit.errors')
+    expect(wrapper.get('[role="tooltip"]').text()).not.toContain('receive.errors')
+  })
 })
