@@ -979,7 +979,9 @@ body { font-size: 12px; }
 .all-app-metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .all-app-metric-panel { min-width: 0; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 11px; background: #fbfdff; }
 .all-app-metric-panel .section-title { margin-bottom: 12px; }
-.all-app-metric-panel .bar-chart { max-height: 520px; padding-right: 5px; overflow-x: hidden; overflow-y: auto; }
+.all-app-metric-panel .line-chart { min-height: 300px; }
+.all-app-metric-panel .chart-legend { top: -7px; max-width: calc(100% - 52px); max-height: 44px; overflow: auto; gap: 6px 12px; }
+.all-app-metric-panel .chart-tooltip { max-height: 230px; overflow-y: auto; }
 .metric-panel-loading { display: grid; min-height: 160px; place-items: center; color: var(--muted); }
 .comparison-chart { margin-bottom: 18px; padding: 14px 12px 0; border: 1px solid var(--border-subtle); border-radius: 10px; background: #fbfdff; }
 .app-comparison-table { min-width: 680px; }

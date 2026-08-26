@@ -6,7 +6,6 @@ import type { ApplicationItem } from '@/types'
 import { bytes, formatNumber, percent } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
-import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -333,21 +332,27 @@ function comparisonItems(metric: ComparisonMetric) {
     })
     .sort((a, b) => (sortDescending.value ? b.value - a.value : a.value - b.value) || a.title.localeCompare(b.title))
 }
-const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: string; unit: string; color: string; loaded: boolean; items: BarItem[] }>>(() => {
-  const definitions: Array<{ metric: ComparisonMetric; title: string; unit: string; color: string; scale: number }> = [
-    { metric: 'cpu', title: '所有应用 CPU', unit: '%', color: '#2563eb', scale: 1 },
-    { metric: 'memory', title: '所有应用内存', unit: ' MiB', color: '#7c3aed', scale: 1024 ** 2 },
-    { metric: 'network', title: '所有应用网络流量', unit: ' MiB', color: '#15803d', scale: 1024 ** 2 },
-    { metric: 'disk', title: '所有应用磁盘 I/O', unit: ' MiB', color: '#c05600', scale: 1024 ** 2 },
+const comparisonPalette = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#4f46e5', '#65a30d', '#db2777', '#475569']
+function comparisonColor(item: ComparisonItem) {
+  const key = `${item.appId}\0${item.deviceId || ''}\0${item.deployId || ''}\0${item.userId || ''}`
+  let hash = 0
+  for (const character of key) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0
+  return comparisonPalette[Math.abs(hash) % comparisonPalette.length]
+}
+const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: string; unit: string; loaded: boolean; series: ChartSeries[] }>>(() => {
+  const definitions: Array<{ metric: ComparisonMetric; title: string; unit: string; scale: number }> = [
+    { metric: 'cpu', title: '所有应用 CPU', unit: '%', scale: 1 },
+    { metric: 'memory', title: '所有应用内存', unit: ' MiB', scale: 1024 ** 2 },
+    { metric: 'network', title: '所有应用网络流量', unit: ' MiB', scale: 1024 ** 2 },
+    { metric: 'disk', title: '所有应用磁盘 I/O', unit: ' MiB', scale: 1024 ** 2 },
   ]
   return definitions.map((definition) => ({
     ...definition,
     loaded: Boolean(comparisons.value[definition.metric]),
-    items: comparisonItems(definition.metric).map((item) => ({
-      label: item.title,
-      value: Number((item.value / definition.scale).toFixed(item.value / definition.scale >= 10 ? 1 : 2)),
-      color: definition.color,
-      hint: `${item.appId} · ${item.deviceName} · ${item.points.length ? (definition.metric === 'cpu' ? `${formatNumber(item.value)}%` : bytes(item.value)) : '当前时间范围无历史数据'}`,
+    series: comparisonItems(definition.metric).map((item) => ({
+      name: item.title,
+      color: comparisonColor(item),
+      points: chartPoints(item.points, definition.scale),
     })),
   }))
 })
@@ -445,12 +450,12 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
       <template v-else>
         <div class="all-app-metric-grid">
           <section v-for="group in comparisonGroups" :key="group.metric" class="all-app-metric-panel">
-            <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.items.length }} 个应用实例</span></div>
+            <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.series.length }} 个应用实例</span></div>
             <div v-if="!group.loaded" class="metric-panel-loading">正在计算…</div>
-            <BarChart v-else :items="group.items" :unit="group.unit" />
+            <LineChart v-else :series="group.series" :min="0" :unit="group.unit" :height="300" />
           </section>
         </div>
-        <div v-if="!comparisonLoading && comparisonGroups.every((group) => !group.items.length)" class="inline-empty">当前时间范围内没有可对比的应用指标。</div>
+        <div v-if="!comparisonLoading && comparisonGroups.every((group) => !group.series.some((series) => series.points.length))" class="inline-empty">当前时间范围内没有可对比的应用指标。</div>
       </template>
     </section>
   </PageState>

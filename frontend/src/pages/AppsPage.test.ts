@@ -191,9 +191,9 @@ describe('AppsPage', () => {
         metric, from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z', bucketSeconds: 300,
         scope: 'instance',
         items: [
-          { appId: 'small', deviceId: 'device-1', value: 1024, unit: 'bytes', points: [] },
-          { appId: 'small', deviceId: 'device-2', value: 2048, unit: 'bytes', points: [] },
-          { appId: 'large', deviceId: 'device-1', value: 4096, unit: 'bytes', points: [] },
+          { appId: 'small', deviceId: 'device-1', value: 1024, unit: 'bytes', points: [{ value: 1024, collectedAt: '2026-08-23T08:00:00Z' }, { value: 1536, collectedAt: '2026-08-23T09:00:00Z' }] },
+          { appId: 'small', deviceId: 'device-2', value: 2048, unit: 'bytes', points: [{ value: 2048, collectedAt: '2026-08-23T08:00:00Z' }, { value: 3072, collectedAt: '2026-08-23T09:00:00Z' }] },
+          { appId: 'large', deviceId: 'device-1', value: 4096, unit: 'bytes', points: [{ value: 4096, collectedAt: '2026-08-23T08:00:00Z' }, { value: 5120, collectedAt: '2026-08-23T09:00:00Z' }] },
         ],
         updatedAt: new Date().toISOString(),
       }
@@ -240,7 +240,8 @@ describe('AppsPage', () => {
     expect(wrapper.text()).toContain('所有应用内存')
     expect(wrapper.text()).toContain('所有应用网络流量')
     expect(wrapper.text()).toContain('所有应用磁盘 I/O')
-    expect(wrapper.findAll('.all-app-metric-panel .bar-chart-row')).toHaveLength(4)
+    expect(wrapper.findAll('.all-app-metric-panel .line-chart')).toHaveLength(4)
+    expect(wrapper.findAll('.all-app-metric-panel .chart-line')).toHaveLength(4)
     expect(wrapper.text()).toContain('1 个应用实例')
     expect(wrapper.text()).toContain('小内存应用 / 用户一 · 设备二')
     wrapper.unmount()
