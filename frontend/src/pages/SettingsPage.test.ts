@@ -114,6 +114,34 @@ describe('SettingsPage tabs', () => {
     wrapper.unmount()
   })
 
+  it('shows remotely connected devices on the inviting WatchCat', async () => {
+    const base = apiMock.getMockImplementation()!
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/devices') return {
+        items: [
+          {
+            id: 'local', name: 'nasw', hostname: 'nasw', collectorVersion: '1.0.1',
+            capabilities: ['collector.embedded'], status: 'online', lastSeenAt: now,
+          },
+          {
+            id: 'remote', name: 'canway', hostname: 'canway', collectorVersion: '1.0.1',
+            capabilities: ['mtls.v1'], status: 'online', lastSeenAt: now,
+          },
+        ],
+      }
+      return base(path, options)
+    })
+
+    const wrapper = mount(SettingsPage, { props: { initialTab: 'onboarding' } })
+    await flushPromises()
+
+    expect(wrapper.get('.connected-devices-card').text()).toContain('已接入设备')
+    expect(wrapper.get('.connected-devices-card').text()).toContain('1 台')
+    expect(wrapper.get('.connected-devices-card').text()).toContain('canway')
+    expect(wrapper.get('.connected-devices-card').text()).not.toContain('nasw')
+    wrapper.unmount()
+  })
+
   it('pastes an invitation and joins an existing WatchCat from the onboarding page', async () => {
     const base = apiMock.getMockImplementation()!
     let paired = false

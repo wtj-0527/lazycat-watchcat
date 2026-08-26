@@ -279,6 +279,20 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .invite-code-row .primary-button { min-height: 42px; }
 .invite-ready-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 13px; color: var(--muted); font-size: 11px; }
 .invite-ready-footer > div { display: flex; gap: 15px; }
+.connected-devices-card { position: relative; padding: 22px 24px; border: 1px solid var(--border); border-radius: 16px; background: #fff; box-shadow: 0 8px 24px rgba(15, 23, 42, .04); }
+.connected-devices-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-right: 118px; }
+.connected-devices-heading h2 { margin: 4px 0 5px; font-size: 18px; }
+.connected-devices-heading p { margin: 0; color: var(--muted); font-size: 11px; }
+.connected-devices-heading > strong { min-width: 56px; padding: 7px 11px; border-radius: 999px; background: #ecfdf3; color: #15803d; font-size: 12px; text-align: center; }
+.connected-device-list { display: grid; gap: 9px; margin-top: 17px; }
+.connected-device-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #e7edf5; border-radius: 12px; background: #f8fafc; }
+.connected-device-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #dcfce7; color: #15803d; font-weight: 800; }
+.connected-device-row b, .connected-device-row small { display: block; }
+.connected-device-row small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.connected-device-status { display: grid; justify-items: end; gap: 2px; }
+.connected-devices-empty { display: grid; gap: 4px; margin-top: 16px; padding: 15px; border: 1px dashed #cbd5e1; border-radius: 12px; color: var(--secondary); }
+.connected-devices-empty small { color: var(--muted); }
+.connected-devices-link { position: absolute; top: 22px; right: 24px; text-decoration: none; }
 .text-button { min-height: auto; padding: 3px 0; background: transparent; color: var(--primary); font-size: 11px; font-weight: 650; }
 .text-button:hover { text-decoration: underline; }
 .connection-settings-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, .65fr); align-items: end; gap: 16px; margin-top: 18px; padding: 18px; border-radius: 12px; background: #f1f5f9; }
@@ -329,6 +343,10 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
   .invite-code-row .primary-button { width: 100%; }
   .invite-ready-footer { align-items: flex-start; flex-direction: column; }
   .invite-ready-footer > div { flex-wrap: wrap; }
+  .connected-devices-heading { padding-right: 0; }
+  .connected-devices-link { position: static; width: fit-content; margin-top: 14px; }
+  .connected-device-row { grid-template-columns: 32px 1fr; }
+  .connected-device-status { grid-column: 2; justify-items: start; }
   .join-existing-card { padding: 24px; }
   .join-existing-heading { align-items: flex-start; }
   .join-actions { align-items: stretch; flex-direction: column; }

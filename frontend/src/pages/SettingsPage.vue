@@ -94,6 +94,9 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
   }
 })
 const localCapability = computed(() => data.value?.operations.capabilities.filter((item) => !item.capability.startsWith('remote.')) || [])
+const connectedDevices = computed(() => (data.value?.devices || []).filter((device) => (
+  !device.local && !device.capabilities?.includes('collector.embedded')
+)))
 const imagePageSize = 8
 const danglingImages = computed(() => data.value?.unusedImages.items.filter((item) => item.category === 'dangling') || [])
 const cachedImages = computed(() => data.value?.unusedImages.items.filter((item) => item.category === 'cached') || [])
@@ -426,6 +429,35 @@ async function deleteUnusedImage(image: UnusedImage) {
             </label>
             <p>仅当目标设备无法访问当前地址时修改。可以填写局域网可达地址，或你手动配置的转发地址。</p>
           </div>
+        </section>
+
+        <section v-if="connectMode === 'invite'" class="connected-devices-card" aria-live="polite">
+          <div class="connected-devices-heading">
+            <div>
+              <span class="connect-eyebrow">接入结果</span>
+              <h2>已接入设备</h2>
+              <p>目标设备完成首次上报后会自动出现在这里。</p>
+            </div>
+            <strong>{{ connectedDevices.length }} 台</strong>
+          </div>
+          <div v-if="connectedDevices.length" class="connected-device-list">
+            <div v-for="device in connectedDevices" :key="device.id" class="connected-device-row">
+              <span class="connected-device-icon" aria-hidden="true">✓</span>
+              <div>
+                <b>{{ device.name }}</b>
+                <small>{{ device.hostname }} · Collector {{ device.collectorVersion || '未知版本' }}</small>
+              </div>
+              <div class="connected-device-status">
+                <StatusPill :status="device.status || 'unknown'" />
+                <small>最近上报 {{ ago(device.lastSeenAt) }}</small>
+              </div>
+            </div>
+          </div>
+          <div v-else class="connected-devices-empty">
+            <span>尚未接入其他设备</span>
+            <small>生成邀请并在目标设备完成加入后，本页会自动刷新。</small>
+          </div>
+          <a class="secondary-button connected-devices-link" href="#devices">查看全部设备</a>
         </section>
 
         <section v-if="connectMode === 'join'" class="join-existing-card">
