@@ -48,6 +48,9 @@ const deviceCount = computed(() => fleet.value?.stats.devices ?? 0)
 const onlineCount = computed(() => fleet.value?.stats.online ?? 0)
 const staleCount = computed(() => fleet.value?.devices.filter((device) => device.stale).length ?? 0)
 const freshness = computed(() => ago(fleet.value?.updatedAt))
+const activeAlerts = computed(() => fleet.value?.alerts.filter((alert) => alert.status !== 'resolved') || [])
+const activeAlertCount = computed(() => activeAlerts.value.length)
+const hasCriticalAlert = computed(() => activeAlerts.value.some((alert) => alert.severity === 'critical'))
 
 function pageFromHash(): Page {
   const candidate = location.hash.slice(1) as Page
@@ -143,7 +146,16 @@ onBeforeUnmount(() => {
           <AppIcon name="search" :size="16" />
           <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
         </form>
-        <button class="icon-button" type="button" aria-label="通知" @click="navigate('alerts')"><AppIcon name="alerts" :size="17" /></button>
+        <button
+          class="icon-button notification-button"
+          :class="{ active: activeAlertCount > 0, critical: hasCriticalAlert }"
+          type="button"
+          :aria-label="activeAlertCount ? `${activeAlertCount} 个待处理告警` : '暂无待处理告警'"
+          @click="navigate('alerts')"
+        >
+          <AppIcon name="bell" :size="18" />
+          <span v-if="activeAlertCount" class="notification-badge">{{ activeAlertCount > 99 ? '99+' : activeAlertCount }}</span>
+        </button>
         <button class="user-avatar" type="button" aria-label="当前用户设置" @click="navigate('settings')">王</button>
       </div>
     </header>

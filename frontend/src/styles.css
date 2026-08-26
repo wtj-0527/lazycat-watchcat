@@ -878,6 +878,28 @@ body {
 .global-search:focus-within { width: min(360px, 32vw); border-color: #bfdbfe; background: #fff; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
 .icon-button, .user-avatar { transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .icon-button:hover, .user-avatar:hover { border-color: #bfdbfe; box-shadow: 0 6px 18px rgba(15, 23, 42, .09); transform: translateY(-1px); }
+.notification-button { position: relative; }
+.notification-button.active { border-color: #fde68a; background: #fffbeb; color: #b45309; }
+.notification-button.critical { border-color: #fecaca; background: #fff7f7; color: #b91c1c; }
+.notification-badge {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 2px solid #fff;
+  border-radius: 10px;
+  background: #d97706;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 4px 10px rgba(180, 83, 9, .24);
+}
+.notification-button.critical .notification-badge { background: #dc2626; box-shadow: 0 4px 10px rgba(185, 28, 28, .25); }
 
 #content { --page-accent: #2563eb; padding-top: 30px; padding-bottom: 56px; }
 #content.page-devices { --page-accent: #0f766e; }
