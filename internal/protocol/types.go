@@ -65,6 +65,8 @@ type RuntimeUser struct {
 	Nickname             string              `json:"nickname"`
 	Role                 string              `json:"role"`
 	AppInstallPermission bool                `json:"appInstallPermission"`
+	AppAccessNoLimit     bool                `json:"appAccessNoLimit"`
+	AllowedAppIDs        []string            `json:"allowedAppIds,omitempty"`
 	Online               bool                `json:"online"`
 	ActiveDevices        int                 `json:"activeDevices"`
 	TotalDevices         int                 `json:"totalDevices"`

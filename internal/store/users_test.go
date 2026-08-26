@@ -19,9 +19,16 @@ func TestObserveRuntimeUsersCreatesAndClosesLoginSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	login := time.Now().UTC().Add(-time.Hour)
-	user := RuntimeUser{UserID: "user-1", Nickname: "User", Online: true, ActiveDevices: 1, TotalDevices: 1, Devices: []RuntimeUserDevice{{ID: "client-1", Online: true, LoginTime: login}}}
+	user := RuntimeUser{UserID: "user-1", Nickname: "User", AppAccessNoLimit: false, AllowedAppIDs: []string{"app.one", "app.two"}, Online: true, ActiveDevices: 1, TotalDevices: 1, Devices: []RuntimeUserDevice{{ID: "client-1", Online: true, LoginTime: login}}}
 	if err = st.ObserveRuntimeUsers(ctx, deviceID, []RuntimeUser{user}); err != nil {
 		t.Fatal(err)
+	}
+	users, err := st.ListRuntimeUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].AppAccessNoLimit || len(users[0].AllowedAppIDs) != 2 || users[0].AllowedAppIDs[1] != "app.two" {
+		t.Fatalf("users=%+v", users)
 	}
 	sessions, err := st.ListUserLoginSessions(ctx, time.Now().Add(-24*time.Hour))
 	if err != nil {

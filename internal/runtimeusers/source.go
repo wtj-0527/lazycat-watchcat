@@ -9,6 +9,7 @@ import (
 
 	gohelper "gitee.com/linakesi/lzc-sdk/lang/go"
 	"gitee.com/linakesi/lzc-sdk/lang/go/common"
+	"gitee.com/linakesi/lzc-sdk/lang/go/sys"
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -25,10 +26,15 @@ type userManager interface {
 type deviceManager interface {
 	ListEndDevices(context.Context, *common.ListEndDeviceRequest, ...grpc.CallOption) (*common.ListEndDeviceReply, error)
 }
+type accessController interface {
+	QueryAppAccessPolicy(context.Context, *sys.AppAccessPolicyRequest, ...grpc.CallOption) (*sys.AppAccessPolicy, error)
+	SetAppAccessPolicy(context.Context, *sys.AppAccessPolicyRequest, ...grpc.CallOption) (*emptypb.Empty, error)
+}
 
 type Source struct {
 	users   userManager
 	devices deviceManager
+	access  accessController
 	close   func() error
 	uidPath string
 	mu      sync.Mutex
@@ -40,7 +46,7 @@ func NewPersistent(ctx context.Context, uidPath string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Source{users: g.Users, devices: g.Devices, close: g.Close, uidPath: uidPath}
+	s := &Source{users: g.Users, devices: g.Devices, access: g.AccessControler, close: g.Close, uidPath: uidPath}
 	if data, e := os.ReadFile(uidPath); e == nil {
 		s.lastUID = strings.TrimSpace(string(data))
 	}
@@ -79,6 +85,12 @@ func (s *Source) Query(ctx context.Context, actor string) ([]store.RuntimeUser, 
 			return nil, err
 		}
 		u := store.RuntimeUser{UserID: uid, Nickname: strings.TrimSpace(info.GetNickname()), Role: "normal", AppInstallPermission: info.GetHasAppInstallPermission()}
+		policy, err := s.access.QueryAppAccessPolicy(qctx, &sys.AppAccessPolicyRequest{Uid: uid})
+		if err != nil {
+			return nil, err
+		}
+		u.AppAccessNoLimit = policy.GetNoLimit()
+		u.AllowedAppIDs = append([]string(nil), policy.GetAllowAccessAppids()...)
 		if info.GetRole() == common.Role_ROLE_ADMIN {
 			u.Role = "admin"
 		}
@@ -153,5 +165,20 @@ func (s *Source) Delete(ctx context.Context, actor, uid string, clear bool) erro
 		return e
 	}
 	_, e = s.users.DeleteUser(q, &common.DeleteUserRequest{Uid: uid, ClearUserData: clear})
+	return e
+}
+
+func (s *Source) SetAppAccess(ctx context.Context, actor, uid string, noLimit bool, allowedAppIDs []string) error {
+	q, e := s.actor(ctx, actor)
+	if e != nil {
+		return e
+	}
+	_, e = s.access.SetAppAccessPolicy(q, &sys.AppAccessPolicyRequest{
+		Uid: uid,
+		Policy: &sys.AppAccessPolicy{
+			NoLimit:           &noLimit,
+			AllowAccessAppids: allowedAppIDs,
+		},
+	})
 	return e
 }

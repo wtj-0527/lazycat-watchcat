@@ -40,6 +40,8 @@ func (s *Server) usersView(w http.ResponseWriter, r *http.Request) {
 		Nickname             string    `json:"nickname"`
 		Role                 string    `json:"role"`
 		AppInstallPermission bool      `json:"appInstallPermission"`
+		AppAccessNoLimit     bool      `json:"appAccessNoLimit"`
+		AllowedAppIDs        []string  `json:"allowedAppIds"`
 		Online               bool      `json:"online"`
 		ActiveDevices        int       `json:"activeDevices"`
 		TotalDevices         int       `json:"totalDevices"`
@@ -59,7 +61,7 @@ func (s *Server) usersView(w http.ResponseWriter, r *http.Request) {
 	out := make([]item, 0, len(users))
 	now := time.Now().UTC()
 	for _, u := range users {
-		x := item{DeviceID: u.DeviceID, DeviceName: names[u.DeviceID], Local: u.DeviceID == s.localDeviceID, UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices, FirstObservedAt: u.FirstObservedAt, UpdatedAt: u.UpdatedAt, Devices: u.Devices}
+		x := item{DeviceID: u.DeviceID, DeviceName: names[u.DeviceID], Local: u.DeviceID == s.localDeviceID, UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, AppAccessNoLimit: u.AppAccessNoLimit, AllowedAppIDs: u.AllowedAppIDs, Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices, FirstObservedAt: u.FirstObservedAt, UpdatedAt: u.UpdatedAt, Devices: u.Devices}
 		var own []userSessionView
 		for _, session := range sessions {
 			if session.DeviceID != u.DeviceID || session.UserID != u.UserID {
@@ -220,6 +222,71 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.RecordAudit(r.Context(), "user.password_reset", "lazycat_user", uid, nil)
 	writeJSON(w, 200, map[string]any{"updated": true})
+}
+
+func (s *Server) updateUserAppAccess(w http.ResponseWriter, r *http.Request) {
+	uid := strings.TrimSpace(r.PathValue("id"))
+	actor := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
+	if s.runtimeUsers == nil || uid == "" {
+		problem(w, http.StatusServiceUnavailable, "user_manager_unavailable", "用户管理服务不可用")
+		return
+	}
+	var req struct {
+		NoLimit       bool     `json:"noLimit"`
+		AllowedAppIDs []string `json:"allowedAppIds"`
+	}
+	if decodeJSON(r, &req) != nil {
+		problem(w, 400, "invalid_app_access", "应用可见范围格式无效")
+		return
+	}
+	seen := map[string]bool{}
+	allowed := make([]string, 0, len(req.AllowedAppIDs))
+	for _, raw := range req.AllowedAppIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		if len(id) > 256 {
+			problem(w, 400, "invalid_app_id", "应用 ID 长度不能超过 256 个字符")
+			return
+		}
+		seen[id] = true
+		allowed = append(allowed, id)
+	}
+	if len(allowed) > 1000 {
+		problem(w, 400, "too_many_apps", "单个用户最多允许配置 1000 个应用")
+		return
+	}
+	sort.Strings(allowed)
+	if req.NoLimit {
+		allowed = nil
+	}
+	if err := s.runtimeUsers.SetAppAccess(r.Context(), actor, uid, req.NoLimit, allowed); err != nil {
+		problem(w, 502, "app_access_update_failed", "修改应用可见范围失败："+err.Error())
+		return
+	}
+	users, err := s.runtimeUsers.Query(r.Context(), actor)
+	if err != nil {
+		problem(w, 502, "app_access_verify_failed", "权限已提交，但服务端回读失败："+err.Error())
+		return
+	}
+	if err = s.store.ObserveRuntimeUsers(r.Context(), s.localDeviceID, users); err != nil {
+		problem(w, 500, "app_access_persist_failed", "权限已提交，但保存回读结果失败")
+		return
+	}
+	var updated *store.RuntimeUser
+	for i := range users {
+		if users[i].UserID == uid {
+			updated = &users[i]
+			break
+		}
+	}
+	if updated == nil {
+		problem(w, 404, "user_not_found", "服务端回读时未找到该用户")
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "user.app_access.updated", "lazycat_user", uid, map[string]any{"noLimit": updated.AppAccessNoLimit, "allowedAppIds": updated.AllowedAppIDs})
+	writeJSON(w, 200, map[string]any{"updated": true, "noLimit": updated.AppAccessNoLimit, "allowedAppIds": updated.AllowedAppIDs})
 }
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimSpace(r.PathValue("id"))

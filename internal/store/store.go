@@ -188,6 +188,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			nickname TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL DEFAULT 'normal',
 			app_install_permission INTEGER NOT NULL DEFAULT 0,
+			app_access_no_limit INTEGER NOT NULL DEFAULT 1,
+			allowed_app_ids_json TEXT NOT NULL DEFAULT '[]',
 			online INTEGER NOT NULL DEFAULT 0,
 			active_devices INTEGER NOT NULL DEFAULT 0,
 			total_devices INTEGER NOT NULL DEFAULT 0,
@@ -276,6 +278,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(9, datetime('now'))`)
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(10, datetime('now'))`)
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE user_runtime_state ADD COLUMN app_access_no_limit INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration user app access no limit: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE user_runtime_state ADD COLUMN allowed_app_ids_json TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration user allowed app ids: %w", err)
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(11, datetime('now'))`)
 	return nil
 }
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -22,6 +23,8 @@ type RuntimeUser struct {
 	Nickname             string              `json:"nickname"`
 	Role                 string              `json:"role"`
 	AppInstallPermission bool                `json:"appInstallPermission"`
+	AppAccessNoLimit     bool                `json:"appAccessNoLimit"`
+	AllowedAppIDs        []string            `json:"allowedAppIds"`
 	Online               bool                `json:"online"`
 	ActiveDevices        int                 `json:"activeDevices"`
 	TotalDevices         int                 `json:"totalDevices"`
@@ -60,10 +63,12 @@ func (s *Store) ObserveRuntimeUsers(ctx context.Context, deviceID string, users 
 		} else if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO user_runtime_state(device_id,user_id,nickname,role,app_install_permission,online,active_devices,total_devices,first_observed_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,user_id) DO UPDATE SET nickname=excluded.nickname,role=excluded.role,
-			app_install_permission=excluded.app_install_permission,online=excluded.online,active_devices=excluded.active_devices,total_devices=excluded.total_devices,updated_at=excluded.updated_at`,
-			deviceID, user.UserID, user.Nickname, user.Role, user.AppInstallPermission, user.Online, user.ActiveDevices, user.TotalDevices, first, nowRaw)
+		allowedJSON, _ := json.Marshal(user.AllowedAppIDs)
+		_, err = tx.ExecContext(ctx, `INSERT INTO user_runtime_state(device_id,user_id,nickname,role,app_install_permission,app_access_no_limit,allowed_app_ids_json,online,active_devices,total_devices,first_observed_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,user_id) DO UPDATE SET nickname=excluded.nickname,role=excluded.role,
+			app_install_permission=excluded.app_install_permission,app_access_no_limit=excluded.app_access_no_limit,allowed_app_ids_json=excluded.allowed_app_ids_json,
+			online=excluded.online,active_devices=excluded.active_devices,total_devices=excluded.total_devices,updated_at=excluded.updated_at`,
+			deviceID, user.UserID, user.Nickname, user.Role, user.AppInstallPermission, user.AppAccessNoLimit, string(allowedJSON), user.Online, user.ActiveDevices, user.TotalDevices, first, nowRaw)
 		if err != nil {
 			return err
 		}
@@ -140,7 +145,7 @@ func (s *Store) ObserveRuntimeUsers(ctx context.Context, deviceID string, users 
 }
 
 func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,user_id,nickname,role,app_install_permission,online,active_devices,total_devices,first_observed_at,updated_at FROM user_runtime_state ORDER BY device_id,nickname,user_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,user_id,nickname,role,app_install_permission,app_access_no_limit,allowed_app_ids_json,online,active_devices,total_devices,first_observed_at,updated_at FROM user_runtime_state ORDER BY device_id,nickname,user_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -148,12 +153,14 @@ func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
 	var out []RuntimeUser
 	for rows.Next() {
 		var u RuntimeUser
-		var install, online int
-		var first, updated string
-		if err = rows.Scan(&u.DeviceID, &u.UserID, &u.Nickname, &u.Role, &install, &online, &u.ActiveDevices, &u.TotalDevices, &first, &updated); err != nil {
+		var install, noLimit, online int
+		var allowed, first, updated string
+		if err = rows.Scan(&u.DeviceID, &u.UserID, &u.Nickname, &u.Role, &install, &noLimit, &allowed, &online, &u.ActiveDevices, &u.TotalDevices, &first, &updated); err != nil {
 			return nil, err
 		}
 		u.AppInstallPermission = install != 0
+		u.AppAccessNoLimit = noLimit != 0
+		_ = json.Unmarshal([]byte(allowed), &u.AllowedAppIDs)
 		u.Online = online != 0
 		u.FirstObservedAt = parseTime(first)
 		u.UpdatedAt = parseTime(updated)
