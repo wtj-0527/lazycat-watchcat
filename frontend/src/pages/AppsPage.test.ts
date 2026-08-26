@@ -271,7 +271,9 @@ describe('AppsPage', () => {
     const wrapper = mount(AppsPage)
     await flushPromises()
     await wrapper.get('[aria-label="应用实例"]').trigger('click')
-    const target = wrapper.findAll('.smart-select-options > button').find((item) => item.text().includes('paused'))
+    const options = wrapper.findAll('.smart-select-options > button')
+    expect(options.at(-1)?.text()).toContain('paused')
+    const target = options.find((item) => item.text().includes('paused'))
     await target!.trigger('click')
     await flushPromises()
 
@@ -279,6 +281,7 @@ describe('AppsPage', () => {
     expect(wrapper.find('.app-resource-kpis').text()).toContain('0 B')
     expect(wrapper.text()).toContain('该实例当前未运行')
     expect(wrapper.text()).toContain('已暂停')
+    expect(wrapper.find('.app-instance-table').exists()).toBe(false)
     wrapper.unmount()
   })
 })

@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling } from '@/composables'
 import type { ApplicationItem } from '@/types'
-import { ago, bytes, formatNumber, percent } from '@/utils'
+import { bytes, formatNumber, percent } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
@@ -138,9 +138,14 @@ const activeResources = computed(() => {
   return selectedApp.value ? scopedApplicationResources(selectedApp.value) : emptyResources()
 })
 const visibleSelectedDevices = computed(() => selectedApp.value ? visibleDevices(selectedApp.value) : [])
+const sortedVisibleSelectedDevices = computed(() => [...visibleSelectedDevices.value].sort((left, right) => {
+  const statusOrder = (status: string) => status === 'paused' ? 1 : 0
+  return statusOrder(left.status) - statusOrder(right.status)
+    || (left.deviceName || left.deviceId).localeCompare(right.deviceName || right.deviceId)
+    || (left.userName || left.userId || left.deployId).localeCompare(right.userName || right.userId || right.deployId)
+}))
 const appPagination = usePagination(filtered, 20)
-const instancePagination = usePagination(visibleSelectedDevices, 10)
-const selectedInstanceOptions = computed<SmartOption[]>(() => visibleSelectedDevices.value.map((instance) => ({
+const selectedInstanceOptions = computed<SmartOption[]>(() => sortedVisibleSelectedDevices.value.map((instance) => ({
   value: instanceKey(instance.deviceId, instance.deployId),
   label: instance.userName || instance.userId || instance.deployId,
   group: instance.deviceName || instance.deviceId,
@@ -171,14 +176,10 @@ watch([query, statusFilter, userFilter, deviceFilter, sortMetric, sortDescending
 watch(appPagination.page, () => {
   if (appPagination.pagedItems.value.length) selectedAppId.value = appPagination.pagedItems.value[0].id
 })
-watch(instancePagination.page, () => {
-  selectedInstanceKey.value = 'all'
-})
 watch(filtered, (items) => {
   if (items.length && !items.some((item) => item.id === selectedAppId.value)) selectedAppId.value = items[0].id
 })
 watch(selectedAppId, () => {
-  instancePagination.resetPage()
   if (selectedInstanceKey.value === 'all') loadHistory()
   else selectedInstanceKey.value = 'all'
 })
@@ -433,18 +434,6 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           </div>
         </section>
 
-        <section class="card">
-          <div class="section-title compact"><div><h2>应用实例</h2></div></div>
-          <div class="table-scroll">
-            <table class="fleet-table app-instance-table">
-              <thead><tr><th>设备</th><th>用户</th><th>状态</th><th>版本</th><th>部署 ID</th><th>更新时间</th></tr></thead>
-              <tbody><tr v-for="instance in instancePagination.pagedItems.value" :key="instanceKey(instance.deviceId, instance.deployId)" :class="{ selected: selectedInstanceKey === instanceKey(instance.deviceId, instance.deployId) }" tabindex="0" @click="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)" @keydown.enter="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)">
-                <td><button class="row-link" @click.stop="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)">{{ instance.deviceName || instance.deviceId }}</button></td><td>{{ instance.userName || instance.userId || '未知' }}</td><td><StatusPill :status="runtimeStatusTone(instance.status)" :label="runtimeStatusLabel(instance.status)" /></td><td>{{ instance.version || '未知' }}</td><td><code>{{ instance.deployId }}</code></td><td>{{ ago(instance.collectedAt) }}</td>
-              </tr></tbody>
-            </table>
-          </div>
-          <AppPagination v-model:page="instancePagination.page.value" v-model:page-size="instancePagination.pageSize.value" :total="instancePagination.total.value" :page-count="instancePagination.pageCount.value" :range-start="instancePagination.rangeStart.value" :range-end="instancePagination.rangeEnd.value" label="运行实例分页" />
-        </section>
       </main>
     </div>
 
