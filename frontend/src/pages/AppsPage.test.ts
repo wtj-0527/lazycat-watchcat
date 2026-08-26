@@ -141,7 +141,7 @@ describe('AppsPage', () => {
 
     const wrapper = mount(AppsPage)
     await flushPromises()
-    await wrapper.get('[aria-label="运行实例"]').trigger('click')
+    await wrapper.get('[aria-label="应用实例"]').trigger('click')
     expect(wrapper.findAll('.smart-select-options > button')).toHaveLength(3)
     const target = wrapper.findAll('.smart-select-options > button').find((item) => item.text().includes('deploy-2'))
     expect(target).toBeTruthy()
@@ -221,6 +221,12 @@ describe('AppsPage', () => {
     await flushPromises()
     await wrapper.get('[aria-label="排序指标"]').setValue('memory')
     expect(wrapper.findAll('.app-resource-item')[0].text()).toContain('大内存应用')
+    expect(wrapper.find('[aria-label="用户实例"]').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="应用设备"]').text()).toContain('全部设备')
+
+    await wrapper.get('[aria-label="应用设备"]').setValue('device-2')
+    expect(wrapper.findAll('.app-resource-item')).toHaveLength(1)
+    expect(wrapper.find('.app-resource-item').text()).toContain('小内存应用')
 
     await wrapper.findAll('.view-toggle button')[1].trigger('click')
     await flushPromises()
@@ -234,9 +240,44 @@ describe('AppsPage', () => {
     expect(wrapper.text()).toContain('所有应用内存')
     expect(wrapper.text()).toContain('所有应用网络流量')
     expect(wrapper.text()).toContain('所有应用磁盘 I/O')
-    expect(wrapper.findAll('.all-app-metric-panel .bar-chart-row')).toHaveLength(12)
-    expect(wrapper.text()).toContain('3 个实例')
+    expect(wrapper.findAll('.all-app-metric-panel .bar-chart-row')).toHaveLength(4)
+    expect(wrapper.text()).toContain('1 个应用设备组合')
     expect(wrapper.text()).toContain('小内存应用 / 设备二')
+    wrapper.unmount()
+  })
+
+  it('does not attribute device-level resources to a stopped user instance', async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path.includes('/metrics')) return {
+        appId: 'shared', from: '2026-08-23T08:00:00Z', to: '2026-08-24T08:00:00Z',
+        bucketSeconds: 300, updatedAt: new Date().toISOString(),
+        summary: { networkReceiveRateBytes: 0, networkTransmitRateBytes: 0, networkTotalBytes: 0, blockReadRateBytes: 0, blockWriteRateBytes: 0, blockTotalBytes: 0 },
+        series: { cpuPercent: [], memoryUsage: [], networkReceiveRate: [], networkTransmitRate: [], blockReadRate: [], blockWriteRate: [] },
+      }
+      return {
+        items: [application({
+          id: 'shared', title: '共享应用', healthy: 1, paused: 1, instances: 2,
+          resources: { ...resources, containers: 2, cpuPercent: 30, memoryUsage: 300 },
+          devices: [
+            device({ deployId: 'running', userId: 'running-user', userName: '运行用户', resources: { ...resources, containers: 2, cpuPercent: 30, memoryUsage: 300 } }),
+            device({ deployId: 'paused', userId: 'paused-user', userName: '未运行用户', status: 'paused', healthy: false, resources: { ...resources, containers: 2, cpuPercent: 30, memoryUsage: 300 } }),
+          ],
+        })],
+        users: [{ id: 'running-user', name: '运行用户' }, { id: 'paused-user', name: '未运行用户' }],
+        source: 'lazycat', stale: false, updatedAt: new Date().toISOString(),
+      }
+    })
+
+    const wrapper = mount(AppsPage)
+    await flushPromises()
+    await wrapper.get('[aria-label="应用实例"]').trigger('click')
+    const target = wrapper.findAll('.smart-select-options > button').find((item) => item.text().includes('paused'))
+    await target!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.app-resource-kpis').text()).toContain('0.0%')
+    expect(wrapper.find('.app-resource-kpis').text()).toContain('0 B')
+    expect(wrapper.text()).toContain('该实例当前未运行')
     wrapper.unmount()
   })
 })

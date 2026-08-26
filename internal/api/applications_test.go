@@ -189,10 +189,17 @@ func TestApplicationViewsExposeAndCompareRuntimeInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index, deviceID := range []string{deviceOne, deviceTwo} {
-		if err := st.ReplaceRuntimeApplications(ctx, deviceID, []store.RuntimeApplication{{
+		runtimeItems := []store.RuntimeApplication{{
 			DeviceID: deviceID, DeployID: "deploy-" + string(rune('1'+index)), AppID: "app.multi",
 			Title: "多实例应用", Version: "1.0.0", InstallStatus: "installed", InstanceStatus: "running",
-		}}); err != nil {
+		}}
+		if index == 0 {
+			runtimeItems = append(runtimeItems, store.RuntimeApplication{
+				DeviceID: deviceID, DeployID: "deploy-paused", AppID: "app.multi",
+				Title: "多实例应用", Version: "1.0.0", InstallStatus: "installed", InstanceStatus: "paused",
+			})
+		}
+		if err := st.ReplaceRuntimeApplications(ctx, deviceID, runtimeItems); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.IngestMetrics(ctx, protocol.MetricBatch{DeviceID: deviceID, Points: []protocol.MetricPoint{
@@ -218,6 +225,7 @@ func TestApplicationViewsExposeAndCompareRuntimeInstances(t *testing.T) {
 			} `json:"resources"`
 			Devices []struct {
 				DeviceID  string `json:"deviceId"`
+				Status    string `json:"status"`
 				Resources struct {
 					CPUPercent float64 `json:"cpuPercent"`
 				} `json:"resources"`
@@ -227,8 +235,13 @@ func TestApplicationViewsExposeAndCompareRuntimeInstances(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&applications); err != nil {
 		t.Fatal(err)
 	}
-	if len(applications.Items) != 1 || len(applications.Items[0].Devices) != 2 || applications.Items[0].Resources.CPUPercent != 30 {
+	if len(applications.Items) != 1 || len(applications.Items[0].Devices) != 3 || applications.Items[0].Resources.CPUPercent != 30 {
 		t.Fatalf("applications=%+v", applications)
+	}
+	for _, instance := range applications.Items[0].Devices {
+		if instance.Status == "paused" && instance.Resources.CPUPercent != 0 {
+			t.Fatalf("paused instance must not inherit device resources: %+v", instance)
+		}
 	}
 
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/applications/app.multi/metrics?hours=1&deviceId="+deviceTwo, nil)

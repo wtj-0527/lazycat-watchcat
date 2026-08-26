@@ -53,7 +53,7 @@ interface ComparisonPayload {
 const query = ref(sessionStorage.getItem('watchcatSearch') || '')
 const statusFilter = ref('all')
 const userFilter = ref('all')
-const instanceFilter = ref('all')
+const deviceFilter = ref('all')
 const viewMode = ref<'detail' | 'compare'>('detail')
 const sortMetric = ref<'cpu' | 'memory' | 'network' | 'disk'>('cpu')
 const sortDescending = ref(true)
@@ -81,11 +81,39 @@ const errors = computed(() => data.value?.items.reduce((sum, item) => sum + item
 const appStatus = (item: ApplicationItem) => item.unhealthy > 0 ? 'critical' : item.paused > 0 ? 'warning' : item.healthy > 0 ? 'healthy' : 'unknown'
 const instanceKey = (deviceId: string, deployId: string) => `${deviceId}\u0000${deployId}`
 const allInstances = computed(() => (data.value?.items || []).flatMap((application) => application.devices.map((device) => ({ application, device, key: instanceKey(device.deviceId, device.deployId) }))))
-const availableUsers = computed(() => (data.value?.users || []).filter((user) => instanceFilter.value === 'all' || allInstances.value.some((item) => item.key === instanceFilter.value && item.device.userId === user.id)))
-const availableInstances = computed(() => allInstances.value.filter((item) => userFilter.value === 'all' || item.device.userId === userFilter.value))
+const availableDevices = computed(() => {
+  const devices = new Map<string, string>()
+  for (const item of allInstances.value) devices.set(item.device.deviceId, item.device.deviceName || item.device.deviceId)
+  return [...devices].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+})
+const availableUsers = computed(() => (data.value?.users || []).filter((user) =>
+  deviceFilter.value === 'all' || allInstances.value.some((item) => item.device.deviceId === deviceFilter.value && item.device.userId === user.id)))
 const visibleDevices = (item: ApplicationItem) => item.devices.filter((device) =>
   (userFilter.value === 'all' || device.userId === userFilter.value)
-  && (instanceFilter.value === 'all' || instanceKey(device.deviceId, device.deployId) === instanceFilter.value))
+  && (deviceFilter.value === 'all' || device.deviceId === deviceFilter.value))
+const emptyResources = (): ApplicationItem['resources'] => ({
+  containers: 0, cpuPercent: 0, memoryUsage: 0, memoryLimit: 0,
+  networkReceive: 0, networkTransmit: 0, blockRead: 0, blockWrite: 0,
+})
+function mergeResources(left: ApplicationItem['resources'], right: ApplicationItem['resources']) {
+  left.containers += right.containers
+  left.cpuPercent += right.cpuPercent
+  left.memoryUsage += right.memoryUsage
+  left.memoryLimit += right.memoryLimit
+  left.networkReceive += right.networkReceive
+  left.networkTransmit += right.networkTransmit
+  left.blockRead += right.blockRead
+  left.blockWrite += right.blockWrite
+  if (right.updatedAt && (!left.updatedAt || right.updatedAt > left.updatedAt)) left.updatedAt = right.updatedAt
+  return left
+}
+function scopedApplicationResources(item: ApplicationItem) {
+  const runningByDevice = new Map<string, ApplicationItem['devices'][number]>()
+  for (const device of visibleDevices(item)) {
+    if (device.status === 'running' && !runningByDevice.has(device.deviceId)) runningByDevice.set(device.deviceId, device)
+  }
+  return [...runningByDevice.values()].reduce((total, device) => mergeResources(total, device.resources), emptyResources())
+}
 const filtered = computed(() => (data.value?.items || []).filter((item) => {
   const matchesQuery = `${item.title} ${item.id}`.toLowerCase().includes(query.value.trim().toLowerCase())
   const status = appStatus(item)
@@ -93,7 +121,7 @@ const filtered = computed(() => (data.value?.items || []).filter((item) => {
     || (statusFilter.value === 'healthy' && status === 'healthy')
     || (statusFilter.value === 'degraded' && status === 'warning')
     || (statusFilter.value === 'critical' && status === 'critical')
-  const matchesScope = (userFilter.value === 'all' && instanceFilter.value === 'all') || visibleDevices(item).length > 0
+  const matchesScope = (userFilter.value === 'all' && deviceFilter.value === 'all') || visibleDevices(item).length > 0
   return matchesQuery && matchesStatus && matchesScope
 }).sort((a, b) => {
   const delta = applicationSortValue(a) - applicationSortValue(b)
@@ -101,7 +129,10 @@ const filtered = computed(() => (data.value?.items || []).filter((item) => {
 }))
 const selectedApp = computed(() => data.value?.items.find((item) => item.id === selectedAppId.value))
 const selectedInstance = computed(() => selectedApp.value?.devices.find((item) => instanceKey(item.deviceId, item.deployId) === selectedInstanceKey.value))
-const activeResources = computed(() => selectedInstance.value?.resources || selectedApp.value?.resources)
+const activeResources = computed(() => {
+  if (selectedInstance.value) return selectedInstance.value.status === 'running' ? selectedInstance.value.resources : emptyResources()
+  return selectedApp.value ? scopedApplicationResources(selectedApp.value) : emptyResources()
+})
 const visibleSelectedDevices = computed(() => selectedApp.value ? visibleDevices(selectedApp.value) : [])
 const appPagination = usePagination(filtered, 20)
 const instancePagination = usePagination(visibleSelectedDevices, 10)
@@ -120,13 +151,16 @@ watch(() => data.value?.items, (items) => {
     selectedAppId.value = preferred.id
   }
 }, { immediate: true })
-watch(userFilter, () => {
-  if (instanceFilter.value !== 'all' && !availableInstances.value.some((item) => item.key === instanceFilter.value)) instanceFilter.value = 'all'
-})
-watch(instanceFilter, () => {
+watch(deviceFilter, () => {
   if (userFilter.value !== 'all' && !availableUsers.value.some((item) => item.id === userFilter.value)) userFilter.value = 'all'
+  if (selectedInstanceKey.value !== 'all' && !visibleSelectedDevices.value.some((item) => instanceKey(item.deviceId, item.deployId) === selectedInstanceKey.value)) selectedInstanceKey.value = 'all'
+  loadCurrentView()
 })
-watch([query, statusFilter, userFilter, instanceFilter, sortMetric, sortDescending], () => {
+watch(userFilter, () => {
+  if (selectedInstanceKey.value !== 'all' && !visibleSelectedDevices.value.some((item) => instanceKey(item.deviceId, item.deployId) === selectedInstanceKey.value)) selectedInstanceKey.value = 'all'
+  loadCurrentView()
+})
+watch([query, statusFilter, userFilter, deviceFilter, sortMetric, sortDescending], () => {
   appPagination.resetPage()
   if (filtered.value.length) selectedAppId.value = filtered.value[0].id
 })
@@ -151,13 +185,26 @@ watch(historyHours, () => {
 async function loadHistory() {
   if (!selectedAppId.value) return
   const request = ++historyRequest
+  if (selectedInstance.value && selectedInstance.value.status !== 'running') {
+    history.value = undefined
+    historyLoading.value = false
+    historyError.value = '该实例当前未运行，已隐藏设备级历史，避免误认为数据由该用户实例产生。'
+    return
+  }
+  if (userFilter.value !== 'all' && !selectedInstance.value) {
+    history.value = undefined
+    historyLoading.value = false
+    historyError.value = '容器指标不含用户标签。用户筛选仅用于部署清单，请选择一个运行中的应用实例查看其所在设备的应用数据。'
+    return
+  }
   historyLoading.value = true
   historyError.value = ''
   try {
     const range = historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
       ? `from=${encodeURIComponent(appliedCustomFrom.value)}&to=${encodeURIComponent(appliedCustomTo.value)}`
       : `hours=${historyHours.value}`
-    const device = selectedInstance.value?.deviceId ? `&deviceId=${encodeURIComponent(selectedInstance.value.deviceId)}` : ''
+    const scopedDeviceID = selectedInstance.value?.deviceId || (deviceFilter.value !== 'all' ? deviceFilter.value : '')
+    const device = scopedDeviceID ? `&deviceId=${encodeURIComponent(scopedDeviceID)}` : ''
     const result = await api<HistoryPayload>(`/api/v1/applications/${encodeURIComponent(selectedAppId.value)}/metrics?${range}${device}`)
     if (request === historyRequest) history.value = result
   } catch (reason) {
@@ -200,11 +247,12 @@ function setViewMode(mode: 'detail' | 'compare') {
   loadCurrentView()
 }
 function applicationSortValue(item: ApplicationItem) {
+  const resources = scopedApplicationResources(item)
   switch (sortMetric.value) {
-    case 'memory': return item.resources.memoryUsage
-    case 'network': return item.resources.networkReceive + item.resources.networkTransmit
-    case 'disk': return item.resources.blockRead + item.resources.blockWrite
-    default: return item.resources.cpuPercent
+    case 'memory': return resources.memoryUsage
+    case 'network': return resources.networkReceive + resources.networkTransmit
+    case 'disk': return resources.blockRead + resources.blockWrite
+    default: return resources.cpuPercent
   }
 }
 function toLocalDateTime(value: Date) {
@@ -263,14 +311,21 @@ const customHistoryRangeLabel = computed(() => historyMode.value === 'custom' &&
 function comparisonItems(metric: ComparisonMetric) {
   const payload = comparisons.value[metric]
   if (!payload) return []
-  const values = new Map(payload.items.map((item) => [`${item.deviceId || ''}\u0000${item.appId}`, item]))
-  return filtered.value
-    .flatMap((application) => visibleDevices(application).map((device) => ({
-      ...(values.get(`${device.deviceId}\u0000${application.id}`) || { appId: application.id, deviceId: device.deviceId, value: 0, unit: '', points: [] }),
-      title: `${application.title || application.id} / ${device.deviceName || device.deviceId}`,
-      deployId: device.deployId,
-      deviceName: device.deviceName || device.deviceId,
-    })))
+  const applications = new Map(filtered.value.map((application) => [application.id, application]))
+  return payload.items
+    .filter((item) => {
+      const application = applications.get(item.appId)
+      return application && visibleDevices(application).some((device) => device.deviceId === item.deviceId)
+    })
+    .map((item) => {
+      const application = applications.get(item.appId)!
+      const device = application.devices.find((candidate) => candidate.deviceId === item.deviceId)
+      return {
+        ...item,
+        title: `${application.title || application.id} / ${device?.deviceName || item.deviceId}`,
+        deviceName: device?.deviceName || item.deviceId || '未知设备',
+      }
+    })
     .sort((a, b) => (sortDescending.value ? b.value - a.value : a.value - b.value) || a.title.localeCompare(b.title))
 }
 const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: string; unit: string; color: string; loaded: boolean; items: BarItem[] }>>(() => {
@@ -287,7 +342,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
       label: item.title,
       value: Number((item.value / definition.scale).toFixed(item.value / definition.scale >= 10 ? 1 : 2)),
       color: definition.color,
-      hint: `${item.appId} · ${item.deployId} · ${item.deviceName} · ${item.points.length ? (definition.metric === 'cpu' ? `${formatNumber(item.value)}%` : bytes(item.value)) : '当前时间范围无历史数据'}`,
+      hint: `${item.appId} · ${item.deviceName} · ${item.points.length ? (definition.metric === 'cpu' ? `${formatNumber(item.value)}%` : bytes(item.value)) : '当前时间范围无历史数据'}`,
     })),
   }))
 })
@@ -304,7 +359,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
         <label class="search-field"><AppIcon name="search" :size="16" /><input v-model="query" placeholder="搜索应用名称"></label>
         <select v-model="statusFilter" aria-label="应用状态"><option value="all">全部状态</option><option value="healthy">运行正常</option><option value="degraded">已暂停</option><option value="critical">异常</option></select>
         <select v-model="userFilter" aria-label="实例用户"><option value="all">全部用户</option><option v-for="user in availableUsers" :key="user.id" :value="user.id">{{ user.name || user.id }}</option></select>
-        <select v-model="instanceFilter" aria-label="用户实例"><option value="all">全部实例</option><option v-for="item in availableInstances" :key="item.key" :value="item.key">{{ item.application.title || item.application.id }} · {{ item.device.deviceName || item.device.deviceId }} · {{ item.device.deployId }}</option></select>
+        <select v-model="deviceFilter" aria-label="应用设备"><option value="all">全部设备</option><option v-for="device in availableDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select>
         <select v-model="sortMetric" aria-label="排序指标"><option value="cpu">按 CPU 排序</option><option value="memory">按内存排序</option><option value="network">按网络流量排序</option><option value="disk">按磁盘 IO 排序</option></select>
         <button class="secondary-button sort-direction" :aria-label="sortDescending ? '当前降序，点击切换升序' : '当前升序，点击切换降序'" @click="sortDescending = !sortDescending">{{ sortDescending ? '从高到低 ↓' : '从低到高 ↑' }}</button>
         <span class="pill critical">异常 {{ errors }}</span><span class="pill warning">已暂停 {{ paused }}</span>
@@ -333,7 +388,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           <button v-for="item in appPagination.pagedItems.value" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" @click="selectedAppId = item.id">
             <i :class="appStatus(item)" />
             <span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></span>
-            <span class="app-resource-now"><b>{{ formatNumber(item.resources.cpuPercent) }}%</b><small>{{ bytes(item.resources.memoryUsage) }}</small></span>
+            <span class="app-resource-now"><b>{{ formatNumber(scopedApplicationResources(item).cpuPercent) }}%</b><small>{{ bytes(scopedApplicationResources(item).memoryUsage) }}</small></span>
           </button>
         </div>
         <div v-else class="inline-empty">没有符合当前筛选条件的应用。</div>
@@ -345,8 +400,8 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           <div class="section-title app-resource-heading">
             <div><h2>{{ selectedApp.title || selectedApp.id }}</h2><span class="muted">{{ selectedApp.id }} · {{ Object.keys(selectedApp.versions).join(' / ') || '版本未知' }}</span></div>
             <div class="app-instance-switcher">
-              <label for="application-instance">运行实例</label>
-              <SmartSelect v-model="selectedInstanceKey" :options="selectedInstanceOptions" :all-label="`全部实例（${visibleSelectedDevices.length}）`" control-label="运行实例" searchable />
+              <label for="application-instance">应用实例</label>
+              <SmartSelect v-model="selectedInstanceKey" :options="selectedInstanceOptions" :all-label="`全部实例（${visibleSelectedDevices.length}）`" control-label="应用实例" searchable />
               <StatusPill :status="selectedInstance ? (selectedInstance.status === 'running' ? 'healthy' : selectedInstance.status === 'error' ? 'critical' : 'warning') : appStatus(selectedApp)" />
             </div>
           </div>
@@ -356,6 +411,9 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
             <div><span>区间流量总和</span><strong>{{ bytes(history?.summary?.networkTotalBytes ?? 0) }}</strong><small>接收 {{ bytes(history?.summary?.networkReceiveRateBytes ?? 0) }} · 发送 {{ bytes(history?.summary?.networkTransmitRateBytes ?? 0) }}</small></div>
             <div><span>区间磁盘 IO</span><strong>{{ bytes(history?.summary?.blockTotalBytes ?? 0) }}</strong><small>读取 {{ bytes(history?.summary?.blockReadRateBytes ?? 0) }} · 写入 {{ bytes(history?.summary?.blockWriteRateBytes ?? 0) }}</small></div>
           </div>
+          <p v-if="selectedInstance || userFilter !== 'all'" class="operation-evidence">
+            容器指标按“设备 + 应用”采集；同一设备存在多个同应用用户实例时，无法按用户部署 ID 拆分。未运行实例不展示实时数据。
+          </p>
         </section>
 
         <section class="card app-history-card">
@@ -371,7 +429,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
         </section>
 
         <section class="card">
-          <div class="section-title compact"><div><h2>运行实例</h2></div></div>
+          <div class="section-title compact"><div><h2>应用实例</h2></div></div>
           <div class="table-scroll">
             <table class="fleet-table app-instance-table">
               <thead><tr><th>设备</th><th>用户</th><th>状态</th><th>版本</th><th>部署 ID</th><th>更新时间</th></tr></thead>
@@ -387,12 +445,13 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
 
     <section v-else class="card app-comparison-card">
       <div class="section-title"><div><h2>所有应用对比</h2></div></div>
+      <p v-if="userFilter !== 'all'" class="operation-evidence warning">用户筛选只限定应用部署关系；历史指标仍按“设备 + 应用”聚合，不代表该用户独占这些资源。</p>
       <p v-if="comparisonLoading" class="operation-evidence">正在依次计算 CPU、内存、网络流量和磁盘 I/O…</p>
       <div v-if="comparisonError" class="inline-empty">对比数据加载失败：{{ comparisonError }} <button class="row-link" @click="loadComparison">重试</button></div>
       <template v-else>
         <div class="all-app-metric-grid">
           <section v-for="group in comparisonGroups" :key="group.metric" class="all-app-metric-panel">
-            <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.items.length }} 个实例</span></div>
+            <div class="section-title compact"><div><h3>{{ group.title }}</h3></div><span class="pill unknown">{{ group.items.length }} 个应用设备组合</span></div>
             <div v-if="!group.loaded" class="metric-panel-loading">正在计算…</div>
             <BarChart v-else :items="group.items" :unit="group.unit" />
           </section>

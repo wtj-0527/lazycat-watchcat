@@ -184,6 +184,7 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	}
 	apps := map[string]*app{}
 	instanceResources := map[string]applicationResourceView{}
+	mergedResources := map[string]bool{}
 	if metrics, metricErr := s.store.ListLatestMetrics(r.Context()); metricErr == nil {
 		instanceResources = aggregateApplicationResourcesByDevice(metrics, time.Now().UTC())
 	}
@@ -195,8 +196,16 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 			a = &app{ID: state.AppID, Title: localizedAppTitle(state.AppID, state.Title), Versions: map[string]int{}, StatusCounts: map[string]int{}}
 			apps[state.AppID] = a
 		}
-		instanceResource := instanceResources[state.DeviceID+"\x00"+state.AppID]
-		a.Resources = mergeApplicationResources(a.Resources, instanceResource)
+		resourceKey := state.DeviceID + "\x00" + state.AppID
+		instanceResource := instanceResources[resourceKey]
+		if state.InstanceStatus == "running" {
+			if !mergedResources[resourceKey] {
+				a.Resources = mergeApplicationResources(a.Resources, instanceResource)
+				mergedResources[resourceKey] = true
+			}
+		} else {
+			instanceResource = applicationResourceView{}
+		}
 		a.Instances++
 		a.Versions[state.Version]++
 		a.StatusCounts[state.InstanceStatus]++
