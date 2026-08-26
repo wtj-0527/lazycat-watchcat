@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
-import { usePolling } from '@/composables'
+import { usePagination, usePolling } from '@/composables'
 import { ago } from '@/utils'
+import AppPagination from '@/components/AppPagination.vue'
 import PageState from '@/components/PageState.vue'
 import { appConfirm, appPrompt } from '@/dialog'
 
@@ -21,10 +22,19 @@ const {data:applications}=usePolling(()=>api<ApplicationsPayload>('/api/v1/appli
 const devices=computed(()=>[...new Map((data.value?.items||[]).map(x=>[x.deviceId,x.deviceName||x.deviceId])).entries()])
 const filtered=computed(()=>(data.value?.items||[]).filter(x=>(device.value==='all'||x.deviceId===device.value)&&(status.value==='all'||(status.value==='online')===x.online)&&`${x.nickname} ${x.userId} ${x.deviceName}`.toLowerCase().includes(query.value.toLowerCase())))
 const selected=computed(()=>filtered.value.find(x=>`${x.deviceId}\0${x.userId}`===selectedKey.value)||filtered.value[0])
-watch(filtered,(items)=>{if(items.length&&!items.some(x=>`${x.deviceId}\0${x.userId}`===selectedKey.value))selectedKey.value=`${items[0].deviceId}\0${items[0].userId}`},{immediate:true})
-watch(selected, item=>{if(!item)return;accessMode.value=item.appInstallPermission||item.appAccessNoLimit?'all':'selected';allowedAppIds.value=[...(item.allowedAppIds||[])];accessSearch.value=''},{immediate:true})
-const onlineCount=computed(()=>(data.value?.items||[]).filter(x=>x.online).length)
+const selectedEndpoints=computed(()=>selected.value?.devices||[])
+const selectedSessions=computed(()=>selected.value?.sessions||[])
 const appOptions=computed(()=>(applications.value?.items||[]).filter(app=>app.devices.some(x=>x.deviceId===selected.value?.deviceId)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(accessSearch.value.trim().toLowerCase())))
+const userPagination=usePagination(filtered,20)
+const appAccessPagination=usePagination(appOptions,20)
+const endpointPagination=usePagination(selectedEndpoints,10)
+const sessionPagination=usePagination(selectedSessions,10)
+watch([query,device,status],()=>{userPagination.resetPage()})
+watch(userPagination.page,()=>{const item=userPagination.pagedItems.value[0];if(item)selectedKey.value=`${item.deviceId}\0${item.userId}`})
+watch(filtered,(items)=>{if(items.length&&!items.some(x=>`${x.deviceId}\0${x.userId}`===selectedKey.value))selectedKey.value=`${items[0].deviceId}\0${items[0].userId}`},{immediate:true})
+watch(selected, item=>{userPagination.resetPage();appAccessPagination.resetPage();endpointPagination.resetPage();sessionPagination.resetPage();if(!item)return;accessMode.value=item.appInstallPermission||item.appAccessNoLimit?'all':'selected';allowedAppIds.value=[...(item.allowedAppIds||[])];accessSearch.value=''},{immediate:true})
+watch(accessSearch,appAccessPagination.resetPage)
+const onlineCount=computed(()=>(data.value?.items||[]).filter(x=>x.online).length)
 const duration=(seconds:number)=>{const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60);return h?`${h} 小时 ${m} 分钟`:`${m} 分钟`}
 const dateTime=(value?:string)=>value?new Date(value).toLocaleString('zh-CN'):'—'
 const presence=(item:UserItem)=>item.online?'在线':item.totalDevices>0?'离线':'未发现终端'
@@ -44,7 +54,7 @@ async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(
   <section v-if="showCreate" class="card user-create-card"><div class="section-title"><div><h2>创建本机用户</h2></div></div><div class="user-form"><label><span>用户 ID</span><input v-model="newUser.userId"></label><label><span>初始密码</span><input v-model="newUser.password" type="password"></label><label><span>角色</span><select v-model="newUser.role"><option value="normal">普通用户</option><option value="admin">管理员</option></select></label><button class="primary-button" :disabled="busy" @click="createUser">{{busy?'创建中…':'确认创建'}}</button></div></section>
   <section class="card user-filter-card"><div class="filter-bar"><label class="search-field"><input v-model="query" placeholder="搜索昵称、UID 或设备"></label><select v-model="device"><option value="all">全部设备</option><option v-for="[id,name] in devices" :key="id" :value="id">{{name}}</option></select><select v-model="status"><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option></select></div></section>
   <div class="user-layout">
-    <section class="card user-list"><button v-for="item in filtered" :key="`${item.deviceId}-${item.userId}`" :class="{active:selected?.deviceId===item.deviceId&&selected?.userId===item.userId}" @click="selectedKey=`${item.deviceId}\0${item.userId}`"><span class="user-list-avatar">{{(item.nickname||item.userId).slice(0,1).toUpperCase()}}</span><span><b>{{item.nickname||item.userId}}</b><small>{{item.deviceName}} · {{item.userId}}</small></span><span class="pill" :class="presenceClass(item)">{{presence(item)}}</span></button></section>
+    <section class="card user-list"><button v-for="item in userPagination.pagedItems.value" :key="`${item.deviceId}-${item.userId}`" :class="{active:selected?.deviceId===item.deviceId&&selected?.userId===item.userId}" @click="selectedKey=`${item.deviceId}\0${item.userId}`"><span class="user-list-avatar">{{(item.nickname||item.userId).slice(0,1).toUpperCase()}}</span><span><b>{{item.nickname||item.userId}}</b><small>{{item.deviceName}} · {{item.userId}}</small></span><span class="pill" :class="presenceClass(item)">{{presence(item)}}</span></button><AppPagination v-model:page="userPagination.page.value" v-model:page-size="userPagination.pageSize.value" :total="userPagination.total.value" :page-count="userPagination.pageCount.value" :range-start="userPagination.rangeStart.value" :range-end="userPagination.rangeEnd.value" label="用户列表分页" /></section>
     <section v-if="selected" class="card user-detail">
       <div class="user-detail-head"><div class="user-list-avatar large">{{(selected.nickname||selected.userId).slice(0,1).toUpperCase()}}</div><div><h2>{{selected.nickname}}</h2><p>{{selected.userId}} · {{selected.deviceName}}</p></div><span class="pill" :class="presenceClass(selected)">{{presence(selected)}}</span></div>
       <div class="user-metric-grid"><div><span>最近登录</span><b>{{dateTime(selected.lastLoginAt)}}</b></div><div><span>当前终端</span><b>{{selected.activeDevices}} / {{selected.totalDevices}}</b></div><div><span>24 小时在线</span><b>{{duration(selected.onlineSeconds24h)}}</b></div><div><span>7 天在线</span><b>{{duration(selected.onlineSeconds7d)}}</b></div><div><span>30 天在线</span><b>{{duration(selected.onlineSeconds30d)}}</b></div><div><span>登录次数</span><b>{{selected.loginCount}}</b></div><div><span>应用 / 实例</span><b>{{selected.applicationCount}} / {{selected.instanceCount}}</b></div><div><span>角色</span><b>{{selected.role==='admin'?'管理员':'普通用户'}}</b></div></div>
@@ -58,17 +68,18 @@ async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(
         <template v-if="accessMode==='selected'">
           <label class="app-access-search"><input v-model="accessSearch" placeholder="搜索应用名称或 App ID"></label>
           <div class="app-access-list">
-            <button v-for="app in appOptions" :key="app.id" :class="{selected:allowedAppIds.includes(app.id)}" :disabled="!selected.local" @click="toggleApp(app.id)">
+            <button v-for="app in appAccessPagination.pagedItems.value" :key="app.id" :class="{selected:allowedAppIds.includes(app.id)}" :disabled="!selected.local" @click="toggleApp(app.id)">
               <span><b>{{app.title||app.id}}</b><small>{{app.id}}</small></span><i>{{allowedAppIds.includes(app.id)?'已允许':'未允许'}}</i>
             </button>
             <p v-if="!appOptions.length" class="inline-empty">该设备尚未采集到可配置的应用。</p>
           </div>
+          <AppPagination v-model:page="appAccessPagination.page.value" v-model:page-size="appAccessPagination.pageSize.value" :total="appAccessPagination.total.value" :page-count="appAccessPagination.pageCount.value" :range-start="appAccessPagination.rangeStart.value" :range-end="appAccessPagination.rangeEnd.value" label="应用权限列表分页" />
         </template>
         <div v-if="selected.local" class="app-access-footer"><span v-if="accessMode==='selected'">已选择 {{allowedAppIds.length}} 个应用</span><span v-else>不限制应用访问</span><button class="primary-button" :disabled="accessBusy" @click="saveAppAccess(selected)">{{accessBusy?'保存中…':'保存可见范围'}}</button></div>
         <p v-else class="muted">远端用户的权限为只读；请在 {{selected.deviceName}} 上修改。</p>
       </div>
-      <div class="section-title compact"><div><h3>登录终端</h3></div></div><div class="user-endpoints"><div v-for="endpoint in selected.devices" :key="endpoint.id"><i :class="{online:endpoint.online}"/><span><b>{{endpoint.remarkName||endpoint.name||endpoint.model||'未知终端'}}</b><small>{{endpoint.model||endpoint.id}} · {{endpoint.online?'登录于 '+dateTime(endpoint.loginTime):'当前离线'}}</small></span></div></div>
-      <div class="section-title compact"><div><h3>登录历史</h3></div></div><div class="session-timeline"><div v-for="session in selected.sessions.slice(0,30)" :key="`${session.endDeviceId}-${session.loginAt}`"><i :class="{open:!session.logoutAt}"/><span><b>{{dateTime(session.loginAt)}}</b><small>{{session.logoutAt?'退出 '+dateTime(session.logoutAt):'当前在线'}} · {{duration(session.durationSeconds)}}</small></span></div><p v-if="!selected.sessions.length" class="inline-empty">从开始记录以来尚未观察到登录会话。</p></div>
+      <div class="section-title compact"><div><h3>登录终端</h3></div></div><div class="user-endpoints"><div v-for="endpoint in endpointPagination.pagedItems.value" :key="endpoint.id"><i :class="{online:endpoint.online}"/><span><b>{{endpoint.remarkName||endpoint.name||endpoint.model||'未知终端'}}</b><small>{{endpoint.model||endpoint.id}} · {{endpoint.online?'登录于 '+dateTime(endpoint.loginTime):'当前离线'}}</small></span></div></div><AppPagination v-model:page="endpointPagination.page.value" v-model:page-size="endpointPagination.pageSize.value" :total="endpointPagination.total.value" :page-count="endpointPagination.pageCount.value" :range-start="endpointPagination.rangeStart.value" :range-end="endpointPagination.rangeEnd.value" label="登录终端分页" />
+      <div class="section-title compact"><div><h3>登录历史</h3></div></div><div class="session-timeline"><div v-for="session in sessionPagination.pagedItems.value" :key="`${session.endDeviceId}-${session.loginAt}`"><i :class="{open:!session.logoutAt}"/><span><b>{{dateTime(session.loginAt)}}</b><small>{{session.logoutAt?'退出 '+dateTime(session.logoutAt):'当前在线'}} · {{duration(session.durationSeconds)}}</small></span></div><p v-if="!selected.sessions.length" class="inline-empty">从开始记录以来尚未观察到登录会话。</p></div><AppPagination v-model:page="sessionPagination.page.value" v-model:page-size="sessionPagination.pageSize.value" :total="sessionPagination.total.value" :page-count="sessionPagination.pageCount.value" :range-start="sessionPagination.rangeStart.value" :range-end="sessionPagination.rangeEnd.value" label="登录历史分页" />
     </section>
   </div>
 </PageState>

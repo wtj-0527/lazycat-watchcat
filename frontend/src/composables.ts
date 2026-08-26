@@ -1,5 +1,5 @@
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toValue, watch } from 'vue'
+import type { ComputedRef, MaybeRefOrGetter, Ref } from 'vue'
 
 export function usePolling<T>(loader: () => Promise<T>, interval = 30_000) {
   const data = ref<T>()
@@ -63,4 +63,25 @@ export function useRovingTabs<T extends string>(items: Array<[T, string]>, initi
   }
 
   return { selected, select, move }
+}
+
+export function usePagination<T>(items: MaybeRefOrGetter<readonly T[]>, defaultPageSize = 20) {
+  const page = ref(1)
+  const pageSize = ref(defaultPageSize)
+  const source = computed(() => toValue(items))
+  const total = computed(() => source.value.length)
+  const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+  const rangeStart = computed(() => total.value ? (page.value - 1) * pageSize.value + 1 : 0)
+  const rangeEnd = computed(() => Math.min(page.value * pageSize.value, total.value))
+  const pagedItems = computed(() => source.value.slice(rangeStart.value ? rangeStart.value - 1 : 0, rangeEnd.value)) as ComputedRef<T[]>
+
+  function resetPage() {
+    page.value = 1
+  }
+
+  watch([total, pageSize], () => {
+    page.value = Math.min(Math.max(1, page.value), pageCount.value)
+  }, { flush: 'sync' })
+
+  return { page, pageSize, pageCount, pagedItems, rangeStart, rangeEnd, total, resetPage }
 }

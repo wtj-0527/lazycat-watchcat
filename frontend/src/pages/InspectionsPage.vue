@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '@/api'
-import { usePolling } from '@/composables'
+import { usePagination, usePolling } from '@/composables'
 import type { Inspection } from '@/types'
 import { ago, dateTime, inspectionState, signed } from '@/utils'
 import PageState from '@/components/PageState.vue'
+import AppPagination from '@/components/AppPagination.vue'
 import DonutChart from '@/components/DonutChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -22,6 +23,8 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
   return { items, detail }
 })
 const latest = computed(() => selected.value || data.value?.detail || data.value?.items[0])
+const inspectionItems = computed(() => data.value?.items || [])
+const inspectionPagination = usePagination(inspectionItems, 20)
 const reportChecks = computed(() => latest.value?.report?.checks || {})
 const applicationChecks = computed(() => latest.value?.report?.applicationChecks)
 const notificationChecks = computed(() => latest.value?.report?.notificationChecks)
@@ -144,7 +147,7 @@ function exportReport(format: 'json' | 'pdf') {
       <div class="section-title"><div><h2>巡检历史</h2></div></div>
       <div v-if="data?.items.length" class="table-scroll">
         <table class="fleet-table"><thead><tr><th>报告</th><th>时间 / 类型</th><th>设备</th><th>健康</th><th>Warning</th><th>Critical</th><th>证据</th></tr></thead>
-          <tbody><tr v-for="item in data.items" :key="item.id" class="device-row" @click="selectReport(item)">
+          <tbody><tr v-for="item in inspectionPagination.pagedItems.value" :key="item.id" class="device-row" @click="selectReport(item)">
             <td><button class="row-link" @click.stop="selectReport(item)">#{{ item.id.slice(0, 8) }}</button><small>{{ item.status }}</small></td>
             <td>{{ dateTime(item.startedAt) }}<small>{{ item.triggerType }}</small></td>
             <td>{{ item.deviceCount }}</td><td class="green">{{ item.healthyCount }}</td><td class="amber">{{ item.warningCount }}</td><td class="red">{{ item.criticalCount }}</td>
@@ -153,6 +156,7 @@ function exportReport(format: 'json' | 'pdf') {
         </table>
       </div>
       <div v-else class="inline-empty">尚无巡检记录。可立即执行第一次正式巡检。</div>
+      <AppPagination v-model:page="inspectionPagination.page.value" v-model:page-size="inspectionPagination.pageSize.value" :total="inspectionPagination.total.value" :page-count="inspectionPagination.pageCount.value" :range-start="inspectionPagination.rangeStart.value" :range-end="inspectionPagination.rangeEnd.value" label="巡检历史分页" />
       <div v-if="detailLoading" class="detail-loading">正在读取报告证据…</div>
     </section>
   </PageState>

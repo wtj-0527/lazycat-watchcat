@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { usePolling } from './composables'
+import { usePagination, usePolling } from './composables'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -74,5 +74,21 @@ describe('usePolling', () => {
 
     wrapper.unmount()
     vi.useRealTimers()
+  })
+})
+
+describe('usePagination', () => {
+  it('slices the current page and corrects an out-of-range page when data shrinks', async () => {
+    const items = ref(Array.from({ length: 25 }, (_, index) => index + 1))
+    const pagination = usePagination(items, 10)
+    pagination.page.value = 3
+    expect(pagination.pagedItems.value).toEqual([21, 22, 23, 24, 25])
+    expect(pagination.rangeStart.value).toBe(21)
+    expect(pagination.rangeEnd.value).toBe(25)
+
+    items.value = items.value.slice(0, 8)
+    await nextTick()
+    expect(pagination.page.value).toBe(1)
+    expect(pagination.pagedItems.value).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
   })
 })

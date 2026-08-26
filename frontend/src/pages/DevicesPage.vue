@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
-import { usePolling, useRovingTabs } from '@/composables'
+import { usePagination, usePolling, useRovingTabs } from '@/composables'
 import type { Capability, Device, Metric, Overview } from '@/types'
 import { ago, connectivityState, dateTime, deviceState, formatMetricValue, metricValueAny, statusRank, storageRiskStatus } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
+import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
@@ -62,6 +63,8 @@ const filteredDevices = computed(() => (data.value?.devices || [])
     return matchesQuery && matchesStatus && matchesConnection && matchesCapability && matchesGroup
   })
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
+const devicePagination = usePagination(filteredDevices, 20)
+watch([query, statusFilter, connectivityFilter, capabilityFilter, groupFilter], devicePagination.resetPage)
 
 async function showDevice(id: string) {
   detailDeviceId.value = id
@@ -293,6 +296,7 @@ const eventTimelineItems = computed<BarItem[]>(() => {
   }
   return [...counts.entries()].map(([label, value]) => ({ label, value, color: '#7c3aed' })).slice(-14)
 })
+const capabilityPagination = usePagination(deviceCapabilities, 10)
 const riskMetrics = computed(() => selected.value ? metrics(selected.value).filter((point) => {
   if (storageRiskStatus(point)) return true
   return (point.name === 'system.cpu.usage' || point.name === 'system.memory.usage') && point.value >= 85
@@ -387,7 +391,8 @@ const capabilityCount = computed(() => selected.value
             <aside class="card capability-summary-card">
               <div class="section-title"><div><h2>采集能力</h2></div><span class="pill healthy">{{ capabilityCount }} 可用</span></div>
               <div v-if="deviceCapabilities.length" class="capability-line capability-line-head"><span aria-hidden="true" /><b>能力</b><span>状态</span></div>
-              <div v-for="item in deviceCapabilities" :key="item.capability" class="capability-line"><i :class="{ warning: item.status === 'restricted', unknown: item.status === 'unsupported' || item.status === 'error' }" /><b>{{ item.capability }}</b><span>{{ item.status }}</span></div>
+              <div v-for="item in capabilityPagination.pagedItems.value" :key="item.capability" class="capability-line"><i :class="{ warning: item.status === 'restricted', unknown: item.status === 'unsupported' || item.status === 'error' }" /><b>{{ item.capability }}</b><span>{{ item.status }}</span></div>
+              <AppPagination v-model:page="capabilityPagination.page.value" v-model:page-size="capabilityPagination.pageSize.value" :total="capabilityPagination.total.value" :page-count="capabilityPagination.pageCount.value" :range-start="capabilityPagination.rangeStart.value" :range-end="capabilityPagination.rangeEnd.value" label="设备采集能力分页" />
               <a href="#settings">查看权限原因与修复步骤 →</a>
             </aside>
           </div>
@@ -443,8 +448,9 @@ const capabilityCount = computed(() => selected.value
     </div>
     <section class="card">
       <div class="section-title"><div><h2>设备清单</h2></div></div>
-      <DeviceTable v-if="filteredDevices.length" :items="filteredDevices" clickable @select="showDevice" />
+      <DeviceTable v-if="filteredDevices.length" :items="devicePagination.pagedItems.value" clickable @select="showDevice" />
       <div v-else class="inline-empty">没有符合当前筛选条件的设备。</div>
+      <AppPagination v-model:page="devicePagination.page.value" v-model:page-size="devicePagination.pageSize.value" :total="devicePagination.total.value" :page-count="devicePagination.pageCount.value" :range-start="devicePagination.rangeStart.value" :range-end="devicePagination.rangeEnd.value" label="设备清单分页" />
     </section>
   </PageState>
 </template>

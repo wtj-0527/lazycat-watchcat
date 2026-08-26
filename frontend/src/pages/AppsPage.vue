@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
-import { usePolling } from '@/composables'
+import { usePagination, usePolling } from '@/composables'
 import type { ApplicationItem } from '@/types'
 import { ago, bytes, formatNumber, percent } from '@/utils'
 import AppIcon from '@/components/AppIcon.vue'
+import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import PageState from '@/components/PageState.vue'
@@ -102,6 +103,8 @@ const selectedApp = computed(() => data.value?.items.find((item) => item.id === 
 const selectedInstance = computed(() => selectedApp.value?.devices.find((item) => instanceKey(item.deviceId, item.deployId) === selectedInstanceKey.value))
 const activeResources = computed(() => selectedInstance.value?.resources || selectedApp.value?.resources)
 const visibleSelectedDevices = computed(() => selectedApp.value ? visibleDevices(selectedApp.value) : [])
+const appPagination = usePagination(filtered, 20)
+const instancePagination = usePagination(visibleSelectedDevices, 10)
 const selectedInstanceOptions = computed<SmartOption[]>(() => visibleSelectedDevices.value.map((instance) => ({
   value: instanceKey(instance.deviceId, instance.deployId),
   label: instance.userName || instance.userId || instance.deployId,
@@ -123,10 +126,21 @@ watch(userFilter, () => {
 watch(instanceFilter, () => {
   if (userFilter.value !== 'all' && !availableUsers.value.some((item) => item.id === userFilter.value)) userFilter.value = 'all'
 })
+watch([query, statusFilter, userFilter, instanceFilter, sortMetric, sortDescending], () => {
+  appPagination.resetPage()
+  if (filtered.value.length) selectedAppId.value = filtered.value[0].id
+})
+watch(appPagination.page, () => {
+  if (appPagination.pagedItems.value.length) selectedAppId.value = appPagination.pagedItems.value[0].id
+})
+watch(instancePagination.page, () => {
+  selectedInstanceKey.value = 'all'
+})
 watch(filtered, (items) => {
   if (items.length && !items.some((item) => item.id === selectedAppId.value)) selectedAppId.value = items[0].id
 })
 watch(selectedAppId, () => {
+  instancePagination.resetPage()
   if (selectedInstanceKey.value === 'all') loadHistory()
   else selectedInstanceKey.value = 'all'
 })
@@ -316,13 +330,14 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
       <aside class="card app-resource-list-card">
         <div class="section-title compact"><div><h2>应用</h2><span class="muted">{{ filtered.length }} 个结果</span></div></div>
         <div v-if="filtered.length" class="app-resource-list">
-          <button v-for="item in filtered" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" @click="selectedAppId = item.id">
+          <button v-for="item in appPagination.pagedItems.value" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" @click="selectedAppId = item.id">
             <i :class="appStatus(item)" />
             <span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></span>
             <span class="app-resource-now"><b>{{ formatNumber(item.resources.cpuPercent) }}%</b><small>{{ bytes(item.resources.memoryUsage) }}</small></span>
           </button>
         </div>
         <div v-else class="inline-empty">没有符合当前筛选条件的应用。</div>
+        <AppPagination v-model:page="appPagination.page.value" v-model:page-size="appPagination.pageSize.value" :total="appPagination.total.value" :page-count="appPagination.pageCount.value" :range-start="appPagination.rangeStart.value" :range-end="appPagination.rangeEnd.value" label="应用列表分页" />
       </aside>
 
       <main v-if="selectedApp" class="app-resource-detail">
@@ -360,11 +375,12 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
           <div class="table-scroll">
             <table class="fleet-table app-instance-table">
               <thead><tr><th>设备</th><th>用户</th><th>状态</th><th>版本</th><th>部署 ID</th><th>更新时间</th></tr></thead>
-              <tbody><tr v-for="instance in visibleSelectedDevices" :key="instanceKey(instance.deviceId, instance.deployId)" :class="{ selected: selectedInstanceKey === instanceKey(instance.deviceId, instance.deployId) }" tabindex="0" @click="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)" @keydown.enter="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)">
+              <tbody><tr v-for="instance in instancePagination.pagedItems.value" :key="instanceKey(instance.deviceId, instance.deployId)" :class="{ selected: selectedInstanceKey === instanceKey(instance.deviceId, instance.deployId) }" tabindex="0" @click="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)" @keydown.enter="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)">
                 <td><button class="row-link" @click.stop="selectedInstanceKey = instanceKey(instance.deviceId, instance.deployId)">{{ instance.deviceName || instance.deviceId }}</button></td><td>{{ instance.userName || instance.userId || '未知' }}</td><td><StatusPill :status="instance.status === 'running' ? 'healthy' : instance.status === 'error' ? 'critical' : 'warning'" /></td><td>{{ instance.version || '未知' }}</td><td><code>{{ instance.deployId }}</code></td><td>{{ ago(instance.collectedAt) }}</td>
               </tr></tbody>
             </table>
           </div>
+          <AppPagination v-model:page="instancePagination.page.value" v-model:page-size="instancePagination.pageSize.value" :total="instancePagination.total.value" :page-count="instancePagination.pageCount.value" :range-start="instancePagination.rangeStart.value" :range-end="instancePagination.rangeEnd.value" label="运行实例分页" />
         </section>
       </main>
     </div>

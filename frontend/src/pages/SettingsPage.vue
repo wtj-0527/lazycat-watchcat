@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '@/api'
-import { usePolling, useRovingTabs } from '@/composables'
+import { usePagination, usePolling, useRovingTabs } from '@/composables'
 import type { Backup, Capability, Device, Stability } from '@/types'
 import { ago, backupType, bytes, dateTime, duration } from '@/utils'
 import PageState from '@/components/PageState.vue'
+import AppPagination from '@/components/AppPagination.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { appConfirm } from '@/dialog'
 
@@ -60,8 +61,6 @@ const stabilityEvidence = ref<OperationEvidence>()
 const imageCleanupLoading = ref(false)
 const deletingImageId = ref('')
 const imageCleanupEvidence = ref<OperationEvidence>()
-const danglingPage = ref(1)
-const cachedPage = ref(1)
 const settingsEvidence = ref<OperationEvidence>()
 const maintenanceName = ref('')
 const maintenanceStart = ref('')
@@ -98,19 +97,22 @@ const localCapability = computed(() => data.value?.operations.capabilities.filte
 const connectedDevices = computed(() => (data.value?.devices || []).filter((device) => (
   !device.local && !device.capabilities?.includes('collector.embedded')
 )))
-const imagePageSize = 8
 const danglingImages = computed(() => data.value?.unusedImages.items.filter((item) => item.category === 'dangling') || [])
 const cachedImages = computed(() => data.value?.unusedImages.items.filter((item) => item.category === 'cached') || [])
-const danglingPages = computed(() => Math.max(1, Math.ceil(danglingImages.value.length / imagePageSize)))
-const cachedPages = computed(() => Math.max(1, Math.ceil(cachedImages.value.length / imagePageSize)))
-const visibleDanglingImages = computed(() => {
-  const page = Math.min(danglingPage.value, danglingPages.value)
-  return danglingImages.value.slice((page - 1) * imagePageSize, page * imagePageSize)
-})
-const visibleCachedImages = computed(() => {
-  const page = Math.min(cachedPage.value, cachedPages.value)
-  return cachedImages.value.slice((page - 1) * imagePageSize, page * imagePageSize)
-})
+const settingsDevices = computed(() => data.value?.devices || [])
+const settingsRules = computed(() => data.value?.rules || [])
+const maintenanceWindows = computed(() => data.value?.windows || [])
+const backupItems = computed(() => data.value?.backups || [])
+const auditItems = computed(() => data.value?.audit || [])
+const connectedDevicePagination = usePagination(connectedDevices, 10)
+const settingsDevicePagination = usePagination(settingsDevices, 20)
+const capabilityPagination = usePagination(localCapability, 20)
+const rulePagination = usePagination(settingsRules, 20)
+const maintenancePagination = usePagination(maintenanceWindows, 10)
+const backupPagination = usePagination(backupItems, 10)
+const danglingPagination = usePagination(danglingImages, 10)
+const cachedPagination = usePagination(cachedImages, 10)
+const auditPagination = usePagination(auditItems, 20)
 
 async function createPairingCode() {
   pairingLoading.value = true
@@ -340,8 +342,6 @@ async function deleteUnusedImage(image: UnusedImage) {
     }
     emit('toast', '镜像已删除')
     await refresh()
-    danglingPage.value = Math.min(danglingPage.value, danglingPages.value)
-    cachedPage.value = Math.min(cachedPage.value, cachedPages.value)
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : String(reason)
     imageCleanupEvidence.value = { status: 'error', message }
@@ -445,7 +445,7 @@ async function deleteUnusedImage(image: UnusedImage) {
             <strong>{{ connectedDevices.length }} 台</strong>
           </div>
           <div v-if="connectedDevices.length" class="connected-device-list">
-            <div v-for="device in connectedDevices" :key="device.id" class="connected-device-row">
+            <div v-for="device in connectedDevicePagination.pagedItems.value" :key="device.id" class="connected-device-row">
               <span class="connected-device-icon" aria-hidden="true">✓</span>
               <div>
                 <b>{{ device.name }}</b>
@@ -456,6 +456,7 @@ async function deleteUnusedImage(image: UnusedImage) {
                 <small>最近上报 {{ ago(device.lastSeenAt) }}</small>
               </div>
             </div>
+            <AppPagination v-model:page="connectedDevicePagination.page.value" v-model:page-size="connectedDevicePagination.pageSize.value" :total="connectedDevicePagination.total.value" :page-count="connectedDevicePagination.pageCount.value" :range-start="connectedDevicePagination.rangeStart.value" :range-end="connectedDevicePagination.rangeEnd.value" label="已接入设备分页" />
           </div>
           <div v-else class="connected-devices-empty">
             <span>尚未接入其他设备</span>
@@ -553,7 +554,7 @@ async function deleteUnusedImage(image: UnusedImage) {
     <section v-else-if="data && tab === 'groups'" class="card">
       <div class="section-title"><div><h2>设备组与标签</h2></div></div>
       <div class="table-scroll"><table class="fleet-table"><thead><tr><th>设备</th><th>设备组</th><th>位置</th><th>标签</th><th /></tr></thead><tbody>
-        <tr v-for="device in data.devices" :key="device.id">
+        <tr v-for="device in settingsDevicePagination.pagedItems.value" :key="device.id">
           <td><b>{{ device.name }}</b><small>{{ device.hostname }}</small></td>
           <td><input v-model="device.group" aria-label="设备组"></td>
           <td><input v-model="device.location" aria-label="位置"></td>
@@ -561,18 +562,21 @@ async function deleteUnusedImage(image: UnusedImage) {
           <td><button class="secondary-button tiny" @click="saveDeviceMetadata(device)">保存</button></td>
         </tr>
       </tbody></table></div>
+      <AppPagination v-model:page="settingsDevicePagination.page.value" v-model:page-size="settingsDevicePagination.pageSize.value" :total="settingsDevicePagination.total.value" :page-count="settingsDevicePagination.pageCount.value" :range-start="settingsDevicePagination.rangeStart.value" :range-end="settingsDevicePagination.rangeEnd.value" label="设备组列表分页" />
     </section>
 
     <section v-else-if="data && tab === 'capabilities'" class="card">
       <div class="section-title"><div><h2>Collector 能力</h2></div></div>
-      <div class="capability-list"><div v-for="item in localCapability" :key="`${item.capability}-${item.checkedAt}`"><div><b>{{ item.capability }}</b><p>{{ item.detail }}</p><small>检查于 {{ ago(item.checkedAt) }}</small></div><StatusPill :status="item.status || 'unknown'" /></div></div>
+      <div class="capability-list"><div v-for="item in capabilityPagination.pagedItems.value" :key="`${item.capability}-${item.checkedAt}`"><div><b>{{ item.capability }}</b><p>{{ item.detail }}</p><small>检查于 {{ ago(item.checkedAt) }}</small></div><StatusPill :status="item.status || 'unknown'" /></div></div>
+      <AppPagination v-model:page="capabilityPagination.page.value" v-model:page-size="capabilityPagination.pageSize.value" :total="capabilityPagination.total.value" :page-count="capabilityPagination.pageCount.value" :range-start="capabilityPagination.rangeStart.value" :range-end="capabilityPagination.rangeEnd.value" label="Collector 能力分页" />
     </section>
 
     <section v-else-if="data && tab === 'thresholds'" class="card">
       <div class="section-title"><div><h2>告警阈值</h2></div><button class="primary-button" @click="saveRules">保存并重新评估</button></div>
       <div class="table-scroll"><table class="fleet-table"><thead><tr><th>规则</th><th>指标</th><th>Warning</th><th>Critical</th><th>启用</th></tr></thead><tbody>
-        <tr v-for="rule in data.rules" :key="rule.metric"><td><b>{{ rule.label }}</b></td><td><code>{{ rule.metric }}</code></td><td><input v-model.number="rule.warning" type="number" min="0"></td><td><input v-model.number="rule.critical" type="number" min="0"></td><td><input v-model="rule.enabled" type="checkbox"></td></tr>
+        <tr v-for="rule in rulePagination.pagedItems.value" :key="rule.metric"><td><b>{{ rule.label }}</b></td><td><code>{{ rule.metric }}</code></td><td><input v-model.number="rule.warning" type="number" min="0"></td><td><input v-model.number="rule.critical" type="number" min="0"></td><td><input v-model="rule.enabled" type="checkbox"></td></tr>
       </tbody></table></div>
+      <AppPagination v-model:page="rulePagination.page.value" v-model:page-size="rulePagination.pageSize.value" :total="rulePagination.total.value" :page-count="rulePagination.pageCount.value" :range-start="rulePagination.rangeStart.value" :range-end="rulePagination.rangeEnd.value" label="告警阈值分页" />
     </section>
 
     <section v-else-if="data && tab === 'notifications'" class="card">
@@ -584,7 +588,8 @@ async function deleteUnusedImage(image: UnusedImage) {
       <div class="section-title"><div><h2>维护窗口与巡检计划</h2></div><button class="primary-button" @click="saveOperationalSettings">保存计划</button></div>
       <div class="settings-grid"><label><span>每日巡检小时</span><input v-model.number="data.settings.dailyInspectionHour" type="number" min="0" max="23"></label><label><span>每周日巡检小时</span><input v-model.number="data.settings.weeklyInspectionHour" type="number" min="0" max="23"></label><div><span>时区</span><b>{{ data.operations.schedule.timezone }}</b><StatusPill status="available" /></div></div>
       <div class="maintenance-form"><input v-model="maintenanceName" placeholder="窗口名称"><input v-model="maintenanceStart" type="datetime-local" aria-label="开始时间"><input v-model="maintenanceEnd" type="datetime-local" aria-label="结束时间"><button class="primary-button" @click="addMaintenanceWindow">创建窗口</button></div>
-      <div class="backup-list"><div v-for="item in data.windows" :key="item.id" class="backup-row"><div><b>{{ item.name }}</b><p>{{ dateTime(item.startsAt) }} — {{ dateTime(item.endsAt) }}</p></div><div><StatusPill :status="item.enabled ? 'available' : 'unknown'" /><button class="tiny danger-button" @click="deleteMaintenanceWindow(item.id)">删除</button></div></div><div v-if="!data.windows.length" class="inline-empty">尚无维护窗口。</div></div>
+      <div class="backup-list"><div v-for="item in maintenancePagination.pagedItems.value" :key="item.id" class="backup-row"><div><b>{{ item.name }}</b><p>{{ dateTime(item.startsAt) }} — {{ dateTime(item.endsAt) }}</p></div><div><StatusPill :status="item.enabled ? 'available' : 'unknown'" /><button class="tiny danger-button" @click="deleteMaintenanceWindow(item.id)">删除</button></div></div><div v-if="!data.windows.length" class="inline-empty">尚无维护窗口。</div></div>
+      <AppPagination v-model:page="maintenancePagination.page.value" v-model:page-size="maintenancePagination.pageSize.value" :total="maintenancePagination.total.value" :page-count="maintenancePagination.pageCount.value" :range-start="maintenancePagination.rangeStart.value" :range-end="maintenancePagination.rangeEnd.value" label="维护窗口分页" />
     </section>
 
     <template v-else-if="data && tab === 'retention'">
@@ -598,7 +603,8 @@ async function deleteUnusedImage(image: UnusedImage) {
           <div class="database-status"><StatusPill :status="data.database.integrityOk ? 'healthy' : 'critical'" /><b>{{ data.database.integrityOk ? 'SQLite 完整性检查通过' : data.database.integrityError }}</b><span>{{ bytes(data.database.databaseSize) }}</span></div>
           <p v-if="backupEvidence" class="operation-evidence" :class="backupEvidence.status" role="status">{{ backupEvidence.message }}</p>
           <p v-if="restoreEvidence" class="operation-evidence" :class="restoreEvidence.status" role="status">{{ restoreEvidence.message }}</p>
-          <div class="backup-list"><div v-for="backup in data.backups" :key="backup.name" class="backup-row"><div><b>{{ backupType(backup.type) }} · v{{ backup.appVersion }}</b><p>{{ dateTime(backup.createdAt) }} · {{ bytes(backup.size) }}</p><code>SHA-256 {{ backup.sha256.slice(0, 16) }}…</code></div><div><StatusPill :status="backup.verified ? 'healthy' : 'critical'" /><button class="tiny secondary-button" :disabled="!backup.verified" @click="restoreBackup(backup.name)">恢复</button><button class="tiny danger-button" @click="deleteBackup(backup.name)">删除</button></div></div><div v-if="!data.backups.length" class="inline-empty">尚无备份。版本升级时会自动创建升级前备份。</div></div>
+          <div class="backup-list"><div v-for="backup in backupPagination.pagedItems.value" :key="backup.name" class="backup-row"><div><b>{{ backupType(backup.type) }} · v{{ backup.appVersion }}</b><p>{{ dateTime(backup.createdAt) }} · {{ bytes(backup.size) }}</p><code>SHA-256 {{ backup.sha256.slice(0, 16) }}…</code></div><div><StatusPill :status="backup.verified ? 'healthy' : 'critical'" /><button class="tiny secondary-button" :disabled="!backup.verified" @click="restoreBackup(backup.name)">恢复</button><button class="tiny danger-button" @click="deleteBackup(backup.name)">删除</button></div></div><div v-if="!data.backups.length" class="inline-empty">尚无备份。版本升级时会自动创建升级前备份。</div></div>
+          <AppPagination v-model:page="backupPagination.page.value" v-model:page-size="backupPagination.pageSize.value" :total="backupPagination.total.value" :page-count="backupPagination.pageCount.value" :range-start="backupPagination.rangeStart.value" :range-end="backupPagination.rangeEnd.value" label="数据库备份分页" />
         </section>
         <aside class="card">
           <div class="section-title compact"><div><h2>7 天稳定性观测</h2></div></div>
@@ -627,25 +633,25 @@ async function deleteUnusedImage(image: UnusedImage) {
         </div>
         <div class="image-category">
           <div class="section-title compact"><div><h3>悬空旧镜像</h3><span class="muted">没有标签、没有容器引用，可批量或逐个删除。</span></div></div>
-          <div v-if="visibleDanglingImages.length" class="backup-list">
-            <div v-for="image in visibleDanglingImages" :key="image.id" class="backup-row">
+          <div v-if="danglingPagination.pagedItems.value.length" class="backup-list">
+            <div v-for="image in danglingPagination.pagedItems.value" :key="image.id" class="backup-row">
               <div><b>{{ image.tags.join(', ') }}</b><p>{{ image.id.slice(0, 19) }} · {{ bytes(image.size) }}<template v-if="image.createdAt"> · {{ dateTime(image.createdAt) }}</template></p></div>
               <button class="tiny danger-button" :disabled="deletingImageId === image.id" @click="deleteUnusedImage(image)">{{ deletingImageId === image.id ? '删除中…' : '删除' }}</button>
             </div>
           </div>
           <div v-else class="inline-empty">没有悬空旧镜像。</div>
-          <div v-if="danglingPages > 1" class="pagination"><button :disabled="danglingPage <= 1" @click="danglingPage--">上一页</button><span>{{ danglingPage }} / {{ danglingPages }}</span><button :disabled="danglingPage >= danglingPages" @click="danglingPage++">下一页</button></div>
+          <AppPagination v-model:page="danglingPagination.page.value" v-model:page-size="danglingPagination.pageSize.value" :total="danglingPagination.total.value" :page-count="danglingPagination.pageCount.value" :range-start="danglingPagination.rangeStart.value" :range-end="danglingPagination.rangeEnd.value" label="悬空镜像分页" />
         </div>
         <div class="image-category">
           <div class="section-title compact"><div><h3>未运行缓存镜像</h3><span class="muted">当前无容器引用，但可能属于暂停或尚未启动的 LPK。删除后未来启动会重新拉取。</span></div></div>
-          <div v-if="visibleCachedImages.length" class="backup-list">
-            <div v-for="image in visibleCachedImages" :key="image.id" class="backup-row">
+          <div v-if="cachedPagination.pagedItems.value.length" class="backup-list">
+            <div v-for="image in cachedPagination.pagedItems.value" :key="image.id" class="backup-row">
               <div><b>{{ image.tags.join(', ') }}</b><p>{{ image.id.slice(0, 19) }} · {{ bytes(image.size) }}<template v-if="image.createdAt"> · {{ dateTime(image.createdAt) }}</template></p></div>
               <button class="tiny danger-button" :disabled="deletingImageId === image.id" @click="deleteUnusedImage(image)">{{ deletingImageId === image.id ? '删除中…' : '删除并允许重拉' }}</button>
             </div>
           </div>
           <div v-else class="inline-empty">没有未运行缓存镜像。</div>
-          <div v-if="cachedPages > 1" class="pagination"><button :disabled="cachedPage <= 1" @click="cachedPage--">上一页</button><span>{{ cachedPage }} / {{ cachedPages }}</span><button :disabled="cachedPage >= cachedPages" @click="cachedPage++">下一页</button></div>
+          <AppPagination v-model:page="cachedPagination.page.value" v-model:page-size="cachedPagination.pageSize.value" :total="cachedPagination.total.value" :page-count="cachedPagination.pageCount.value" :range-start="cachedPagination.rangeStart.value" :range-end="cachedPagination.rangeEnd.value" label="缓存镜像分页" />
         </div>
       </section>
     </template>
@@ -653,7 +659,8 @@ async function deleteUnusedImage(image: UnusedImage) {
     <section v-else-if="data && tab === 'audit'" class="card">
       <div class="section-title"><div><h2>用户与审计</h2></div></div>
       <div class="settings-grid"><div><span>用户模式</span><b>单用户</b><StatusPill status="available" /></div><div><span>审计保留</span><b>{{ data.settings.auditRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>巡检保留</span><b>{{ data.settings.inspectionRetentionDays }} 天</b><StatusPill status="available" /></div><div><span>审计记录</span><b>{{ data.audit.length }} 条</b><StatusPill status="available" /></div></div>
-      <div class="table-scroll"><table class="fleet-table"><thead><tr><th>时间</th><th>操作</th><th>对象</th><th>详情</th></tr></thead><tbody><tr v-for="item in data.audit" :key="item.id"><td>{{ dateTime(item.createdAt) }}</td><td><code>{{ item.action }}</code></td><td>{{ item.subjectType }} · {{ item.subjectId }}</td><td><code>{{ JSON.stringify(item.metadata) }}</code></td></tr></tbody></table></div>
+      <div class="table-scroll"><table class="fleet-table"><thead><tr><th>时间</th><th>操作</th><th>对象</th><th>详情</th></tr></thead><tbody><tr v-for="item in auditPagination.pagedItems.value" :key="item.id"><td>{{ dateTime(item.createdAt) }}</td><td><code>{{ item.action }}</code></td><td>{{ item.subjectType }} · {{ item.subjectId }}</td><td><code>{{ JSON.stringify(item.metadata) }}</code></td></tr></tbody></table></div>
+      <AppPagination v-model:page="auditPagination.page.value" v-model:page-size="auditPagination.pageSize.value" :total="auditPagination.total.value" :page-count="auditPagination.pageCount.value" :range-start="auditPagination.rangeStart.value" :range-end="auditPagination.rangeEnd.value" label="审计记录分页" />
     </section>
     </div>
   </PageState>

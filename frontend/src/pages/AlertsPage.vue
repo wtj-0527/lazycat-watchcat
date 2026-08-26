@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
-import { usePolling } from '@/composables'
+import { usePagination, usePolling } from '@/composables'
 import type { Alert } from '@/types'
 import { ago, formatMetricValue } from '@/utils'
 import StatusPill from '@/components/StatusPill.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import AppPagination from '@/components/AppPagination.vue'
 import PageState from '@/components/PageState.vue'
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
@@ -43,7 +44,12 @@ const filtered = computed(() => (data.value?.items || []).filter((alert) => {
   } else matchesFilter = alert.status === filter.value
   return matchesQuery && matchesFilter && matchesSeverity && matchesTime
 }))
-const selectedAlert = computed(() => filtered.value.find((item) => item.fingerprint === selectedFingerprint.value) || filtered.value[0])
+const alertPagination = usePagination(filtered, 20)
+watch([query, filter, severityFilter, timeFilter], alertPagination.resetPage)
+const selectedAlert = computed(() => filtered.value.find((item) => item.fingerprint === selectedFingerprint.value) || alertPagination.pagedItems.value[0])
+watch(alertPagination.page, () => {
+  selectedFingerprint.value = alertPagination.pagedItems.value[0]?.fingerprint || ''
+})
 const lifecycleDistribution = computed(() => [
   { label: '触发中', value: (data.value?.items || []).filter((item) => item.status === 'firing').length, color: '#c51d23' },
   { label: '已确认', value: counts.value.acknowledged, color: '#c05600' },
@@ -136,11 +142,12 @@ async function bulkAcknowledge() {
       <section class="card alert-list-panel">
         <div class="section-title compact"><div><h2>{{ filtered.length }} 个告警</h2></div></div>
         <div v-if="filtered.length" class="triage-list">
-          <button v-for="alert in filtered" :key="alert.fingerprint" class="alert-list-item" :class="{ active: selectedAlert?.fingerprint === alert.fingerprint, critical: alert.severity === 'critical' }" @click="selectedFingerprint = alert.fingerprint">
+          <button v-for="alert in alertPagination.pagedItems.value" :key="alert.fingerprint" class="alert-list-item" :class="{ active: selectedAlert?.fingerprint === alert.fingerprint, critical: alert.severity === 'critical' }" @click="selectedFingerprint = alert.fingerprint">
             <i /><span><b>{{ alert.message || alert.resource }}</b><small>{{ alert.deviceName }} · {{ ago(alert.lastSeenAt || alert.observedAt || alert.collectedAt) }}</small></span><StatusPill :status="alert.severity" />
           </button>
         </div>
         <div v-else class="healthy-empty"><span>✓</span><b>当前筛选下没有告警</b><small>Empty 不等同于未采集能力已健康。</small></div>
+        <AppPagination v-model:page="alertPagination.page.value" v-model:page-size="alertPagination.pageSize.value" :total="alertPagination.total.value" :page-count="alertPagination.pageCount.value" :range-start="alertPagination.rangeStart.value" :range-end="alertPagination.rangeEnd.value" label="告警列表分页" />
       </section>
       <section v-if="selectedAlert" class="card alert-detail-panel">
         <div class="section-title"><div><h2>{{ selectedAlert.message }}</h2></div><StatusPill :status="selectedAlert.status === 'firing' ? selectedAlert.severity : selectedAlert.status" /></div>
