@@ -13,6 +13,7 @@ import InspectionsPage from '@/pages/InspectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import AppDialog from '@/components/AppDialog.vue'
+import { applyTheme, storedTheme, type ThemeMode } from '@/theme'
 
 type Page = 'overview' | 'devices' | 'apps' | 'users' | 'storage' | 'alerts' | 'inspections' | 'onboarding' | 'settings'
 const navs: Array<[Page, string]> = [
@@ -38,6 +39,9 @@ const fleet = ref<Overview>()
 const toastMessage = ref('')
 const globalQuery = ref('')
 const searchNonce = ref(0)
+const themeMode = ref<ThemeMode>(storedTheme())
+const deviceDark = ref(false)
+let deviceThemeQuery: MediaQueryList | undefined
 let toastTimer: number | undefined
 let shellTimer: number | undefined
 let shellLoading = false
@@ -54,6 +58,11 @@ const freshness = computed(() => ago(fleet.value?.updatedAt))
 const activeAlerts = computed(() => fleet.value?.alerts.filter((alert) => alert.status !== 'resolved') || [])
 const activeAlertCount = computed(() => activeAlerts.value.length)
 const hasCriticalAlert = computed(() => activeAlerts.value.some((alert) => alert.severity === 'critical'))
+const themes: Array<{ mode: ThemeMode; label: string; symbol: string }> = [
+  { mode: 'light', label: '白天', symbol: '☀' },
+  { mode: 'dark', label: '夜晚', symbol: '☾' },
+  { mode: 'device', label: '设备', symbol: '◐' },
+]
 
 function pageFromHash(): Page {
   const candidate = location.hash.slice(1) as Page
@@ -93,8 +102,22 @@ function submitGlobalSearch() {
   searchNonce.value++
   toast(`正在搜索“${globalQuery.value.trim()}”`)
 }
+function selectTheme(mode: ThemeMode) {
+  themeMode.value = mode
+  localStorage.setItem('watchcatTheme', mode)
+  applyTheme(mode, deviceDark.value)
+}
+function syncDeviceTheme(event?: MediaQueryListEvent) {
+  deviceDark.value = event?.matches ?? deviceThemeQuery?.matches ?? false
+  if (themeMode.value === 'device') applyTheme('device', deviceDark.value)
+}
 
 onMounted(async () => {
+  if (typeof window.matchMedia === 'function') {
+    deviceThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    syncDeviceTheme()
+    deviceThemeQuery.addEventListener('change', syncDeviceTheme)
+  }
   syncHash()
   window.addEventListener('hashchange', syncHash)
   void loadShell()
@@ -106,6 +129,7 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
+  deviceThemeQuery?.removeEventListener('change', syncDeviceTheme)
   window.removeEventListener('hashchange', syncHash)
   window.clearTimeout(toastTimer)
   window.clearInterval(shellTimer)
@@ -149,6 +173,17 @@ onBeforeUnmount(() => {
           <AppIcon name="search" :size="16" />
           <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
         </form>
+        <div class="theme-switcher" role="group" aria-label="界面主题">
+          <button
+            v-for="item in themes"
+            :key="item.mode"
+            type="button"
+            :class="{ active: themeMode === item.mode }"
+            :aria-pressed="themeMode === item.mode"
+            :title="`${item.label}主题`"
+            @click="selectTheme(item.mode)"
+          ><i>{{ item.symbol }}</i><span>{{ item.label }}</span></button>
+        </div>
         <button
           class="icon-button notification-button"
           :class="{ active: activeAlertCount > 0, critical: hasCriticalAlert }"
