@@ -8,7 +8,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
-import ResourceRankingBoard, { type ResourceRankingItem } from '@/components/ResourceRankingBoard.vue'
+import ResourceBarChart, { type ResourceBarItem } from '@/components/ResourceBarChart.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -44,8 +44,6 @@ const trendError = ref('')
 const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail: Record<string, unknown>; createdAt: string }>>([])
 const deviceCapabilities = ref<Capability[]>([])
 const applicationTitles = ref<Record<string, string>>({})
-const appResourceSort = ref<'cpu' | 'memory' | 'network' | 'io'>('cpu')
-const appResourceDescending = ref(true)
 interface SavedView { id: string; name: string; query: { query?: string; status?: string; connectivity?: string; capability?: string; group?: string } }
 interface Payload extends Overview { savedViews: SavedView[] }
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
@@ -312,39 +310,7 @@ const containerResources = computed<ContainerResource[]>(() => {
     }
   })
 })
-function appResourceValue(item: ContainerResource, metric: typeof appResourceSort.value) {
-  return item[metric]
-}
-const sortedContainerResources = computed(() => [...containerResources.value].sort((a, b) => {
-  const delta = appResourceValue(a, appResourceSort.value) - appResourceValue(b, appResourceSort.value)
-  return (appResourceDescending.value ? -delta : delta) || a.appTitle.localeCompare(b.appTitle)
-}))
-const appResourcePagination = usePagination(sortedContainerResources, 20)
-watch([appResourceSort, appResourceDescending], appResourcePagination.resetPage)
-const appResourceMax = computed(() => ({
-  cpu: Math.max(100, ...containerResources.value.map((item) => item.cpu)),
-  memory: Math.max(1, ...containerResources.value.map((item) => item.memory)),
-  network: Math.max(1, ...containerResources.value.map((item) => item.network)),
-  io: Math.max(1, ...containerResources.value.map((item) => item.io)),
-}))
-function appResourceIntensity(item: ContainerResource, metric: typeof appResourceSort.value) {
-  const value = appResourceValue(item, metric)
-  if (!value) return 0
-  if (metric === 'cpu') return Math.min(1, value / appResourceMax.value.cpu)
-  if (metric === 'memory' && item.memoryPercent > 0) return Math.min(1, item.memoryPercent / 100)
-  return Math.min(1, Math.log1p(value) / Math.log1p(appResourceMax.value[metric]))
-}
-function appResourceCellStyle(item: ContainerResource, metric: typeof appResourceSort.value) {
-  const colors = { cpu: '37,99,235', memory: '124,58,237', network: '21,128,61', io: '192,86,0' }
-  const intensity = appResourceIntensity(item, metric)
-  return { background: `rgba(${colors[metric]},${0.06 + intensity * 0.82})`, color: intensity > .58 ? '#fff' : '#172033' }
-}
-function appResourceDisplay(item: ContainerResource, metric: typeof appResourceSort.value) {
-  if (metric === 'cpu') return `${formatNumber(item.cpu)}%`
-  if (metric === 'memory') return bytes(item.memory)
-  return bytes(item[metric])
-}
-const applicationRankingItems = computed<ResourceRankingItem[]>(() => containerResources.value.map((item) => ({
+const applicationBarItems = computed<ResourceBarItem[]>(() => containerResources.value.map((item) => ({
   id: item.id,
   label: item.appTitle,
   detail: `${item.containerName} · ${item.app}`,
@@ -507,38 +473,9 @@ const capabilityCount = computed(() => selected.value
           <div class="section-title"><div><h2>应用与容器指标</h2></div><span class="pill unknown">{{ containerResources.length }} 个实例</span></div>
           <section v-if="containerResources.length" class="application-ranking-panel">
             <div class="section-title compact">
-              <div><h3>资源热点</h3><span class="muted">分别展示 CPU、内存、网络与磁盘 I/O 排名前 6 的实例；全部实例见下方矩阵。</span></div>
+              <div><h3>资源热点</h3><span class="muted">切换指标查看全部实例，默认按当前值从高到低排列。</span></div>
             </div>
-            <ResourceRankingBoard :items="applicationRankingItems" />
-          </section>
-
-          <section v-if="containerResources.length" class="application-resource-matrix">
-            <div class="section-title application-matrix-title">
-              <div><h3>全部实例资源矩阵</h3><span class="muted">颜色越深表示当前值越高；网络与 I/O 为容器累计计数。</span></div>
-              <div class="application-matrix-controls">
-                <select v-model="appResourceSort" aria-label="应用资源矩阵排序指标">
-                  <option value="cpu">按 CPU 排序</option>
-                  <option value="memory">按内存排序</option>
-                  <option value="network">按网络累计排序</option>
-                  <option value="io">按磁盘 I/O 排序</option>
-                </select>
-                <button class="secondary-button" @click="appResourceDescending = !appResourceDescending">{{ appResourceDescending ? '从高到低 ↓' : '从低到高 ↑' }}</button>
-              </div>
-            </div>
-            <div class="resource-matrix-scroll">
-              <div class="resource-matrix resource-matrix-head" role="row">
-                <span role="columnheader">应用 / 容器</span><span role="columnheader">CPU</span><span role="columnheader">内存</span><span role="columnheader">网络累计</span><span role="columnheader">磁盘 I/O</span><span role="columnheader">状态</span>
-              </div>
-              <div v-for="item in appResourcePagination.pagedItems.value" :key="item.id" class="resource-matrix resource-matrix-row" role="row">
-                <span class="resource-matrix-identity" role="cell"><b>{{ item.appTitle }}</b><small>{{ item.app }} · {{ item.containerName }}</small></span>
-                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'cpu')" role="cell">{{ appResourceDisplay(item, 'cpu') }}</span>
-                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'memory')" role="cell">{{ appResourceDisplay(item, 'memory') }}</span>
-                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'network')" role="cell">{{ appResourceDisplay(item, 'network') }}</span>
-                <span class="resource-heat-cell" :style="appResourceCellStyle(item, 'io')" role="cell">{{ appResourceDisplay(item, 'io') }}</span>
-                <span role="cell"><StatusPill :status="item.running ? 'healthy' : 'unknown'" /></span>
-              </div>
-            </div>
-            <AppPagination v-model:page="appResourcePagination.page.value" v-model:page-size="appResourcePagination.pageSize.value" :total="appResourcePagination.total.value" :page-count="appResourcePagination.pageCount.value" :range-start="appResourcePagination.rangeStart.value" :range-end="appResourcePagination.rangeEnd.value" label="应用资源矩阵分页" />
+            <ResourceBarChart :items="applicationBarItems" />
           </section>
           <div v-else class="inline-empty">当前没有容器资源指标。</div>
         </section>
