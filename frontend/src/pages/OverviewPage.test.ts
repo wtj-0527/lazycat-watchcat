@@ -36,6 +36,11 @@ describe('OverviewPage', () => {
         status: 'active', lastSeenAt: collectedAt, online: true, stale: false, health: 'critical',
         latest: {
           'filesystem.root.usage': [{ name: 'filesystem.root.usage', value: 20, unit: '%', labels: { mount: '/' }, collectedAt }],
+          'system.cpu.usage': [{ name: 'system.cpu.usage', value: 18, unit: '%', labels: {}, collectedAt }],
+          'system.memory.usage': [{ name: 'system.memory.usage', value: 42, unit: '%', labels: {}, collectedAt }],
+          'system.load.1m': [{ name: 'system.load.1m', value: 1.2, unit: '', labels: {}, collectedAt }],
+          'system.temperature': [{ name: 'system.temperature', value: 51, unit: 'celsius', labels: { sensor: 'package' }, collectedAt }],
+          'system.uptime': [{ name: 'system.uptime', value: 7200, unit: 'seconds', labels: {}, collectedAt }],
           'btrfs.usage': [
             { name: 'btrfs.usage', value: 96, unit: '%', labels: { mount: '/data' }, collectedAt },
             { name: 'btrfs.usage', value: 42, unit: '%', labels: { mount: '/backup' }, collectedAt },
@@ -56,8 +61,13 @@ describe('OverviewPage', () => {
     expect(wrapper.get('.capacity-evidence-list').find('.pill').classes()).toContain('critical')
     expect(wrapper.get('.device-health-head').text()).toContain('最新数据')
     expect(wrapper.get('.capacity-evidence-head').text()).toContain('预计写满')
-    expect(wrapper.get('.capacity-evidence-list').text()).toContain('采集能力 2/5')
+    expect(wrapper.get('.capacity-evidence-list').text()).toContain('采集能力 3/5')
     expect(wrapper.findAll('.overview-summary-grid > .card')).toHaveLength(4)
+    expect(wrapper.findAll('.fleet-device-metrics')).toHaveLength(1)
+    expect(wrapper.get('.fleet-realtime-card').text()).toContain('CPU 使用率')
+    expect(wrapper.get('.fleet-realtime-card').text()).toContain('18.0%')
+    expect(wrapper.get('.fleet-realtime-card').text()).toContain('最高温度')
+    expect(wrapper.get('.fleet-realtime-card').text()).toContain('51.0 ℃')
     wrapper.unmount()
   })
 })

@@ -2,8 +2,8 @@
 import { computed } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
-import type { Device, Overview } from '@/types'
-import { ago, deviceState, formatMetricValue, statusRank, storageRiskAdvice, storageRiskStatus, storageUsageMetrics } from '@/utils'
+import type { Device, Metric, Overview } from '@/types'
+import { ago, bytes, deviceState, formatMetricValue, statusRank, storageRiskAdvice, storageRiskStatus, storageUsageMetrics } from '@/utils'
 import AlertRow from '@/components/AlertRow.vue'
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
@@ -32,6 +32,75 @@ const capacityBars = computed(() => storageRows.value.map((row) => ({
   color: row.point && storageRiskStatus(row.point) === 'critical' ? '#c51d23' : row.point && storageRiskStatus(row.point) === 'warning' ? '#c05600' : '#2563eb',
   hint: row.point ? storageRiskAdvice(row.point) : '等待采集',
 })))
+interface RealtimeMetric {
+  label: string
+  value: string
+  detail: string
+  percent?: number
+  status?: 'warning' | 'critical'
+}
+function metricPoints(device: Device, names: string[]): Metric[] {
+  for (const name of names) {
+    const points = device.latest?.[name] || []
+    if (points.length) return points
+  }
+  return []
+}
+function pointDetail(points: Metric[]): string {
+  if (!points.length) return '尚未采集到该指标'
+  const labels = points.map((point) => point.labels?.sensor || point.labels?.interface || point.labels?.device || point.labels?.mount).filter(Boolean)
+  return `${points[0].name}${labels.length ? ` · ${[...new Set(labels)].join('、')}` : ''} · ${ago(points[0].collectedAt)}`
+}
+function singleMetric(device: Device, label: string, names: string[], thresholds?: [number, number]): RealtimeMetric {
+  const points = metricPoints(device, names)
+  const point = points[0]
+  if (!point) return { label, value: '未知', detail: '尚未采集到该指标' }
+  const status = thresholds ? point.value >= thresholds[1] ? 'critical' : point.value >= thresholds[0] ? 'warning' : undefined : undefined
+  return {
+    label,
+    value: formatMetricValue(point.value, point.unit),
+    detail: pointDetail(points),
+    percent: point.unit === '%' ? Math.max(0, Math.min(100, point.value)) : undefined,
+    status,
+  }
+}
+function maxMetric(device: Device, label: string, names: string[], thresholds?: [number, number]): RealtimeMetric {
+  const points = metricPoints(device, names)
+  if (!points.length) return { label, value: '未知', detail: '尚未采集到该指标' }
+  const point = [...points].sort((a, b) => b.value - a.value)[0]
+  const status = thresholds ? point.value >= thresholds[1] ? 'critical' : point.value >= thresholds[0] ? 'warning' : undefined : undefined
+  return { label, value: formatMetricValue(point.value, point.unit), detail: pointDetail([point]), status }
+}
+function total(device: Device, primary: string, fallback: string): { value: number; points: Metric[] } {
+  const direct = device.latest?.[primary] || []
+  const points = direct.length ? direct : (device.latest?.[fallback] || [])
+  return { value: points.reduce((sum, point) => sum + point.value, 0), points }
+}
+function pairedCounter(device: Device, label: string, left: [string, string, string], right: [string, string, string]): RealtimeMetric {
+  const a = total(device, left[0], left[1])
+  const b = total(device, right[0], right[1])
+  const points = [...a.points, ...b.points]
+  return {
+    label,
+    value: points.length ? `${left[2]} ${bytes(a.value)} · ${right[2]} ${bytes(b.value)}` : '未知',
+    detail: pointDetail(points),
+  }
+}
+function realtimeMetrics(device: Device): RealtimeMetric[] {
+  const storage = storageUsageMetrics(device).sort((a, b) => b.value - a.value)[0]
+  return [
+    singleMetric(device, 'CPU 使用率', ['system.cpu.usage'], [85, 95]),
+    singleMetric(device, '内存使用率', ['system.memory.usage'], [85, 95]),
+    singleMetric(device, '1 分钟负载', ['system.load.1m']),
+    maxMetric(device, '最高温度', ['system.temperature', 'disk.temperature'], [70, 80]),
+    storage
+      ? { label: '最高存储使用率', value: formatMetricValue(storage.value, storage.unit), detail: pointDetail([storage]), percent: storage.value, status: storage.value >= 95 ? 'critical' : storage.value >= 85 ? 'warning' : undefined }
+      : { label: '最高存储使用率', value: '未知', detail: '尚未采集到该指标' },
+    singleMetric(device, '运行时间', ['system.uptime']),
+    pairedCounter(device, '网络累计流量', ['network.receive.bytes_total', 'network.interface.receive.bytes_total', '收'], ['network.transmit.bytes_total', 'network.interface.transmit.bytes_total', '发']),
+    pairedCounter(device, '磁盘累计 I/O', ['disk.io.read.bytes_total', 'disk.io.read.bytes_total', '读'], ['disk.io.write.bytes_total', 'disk.io.write.bytes_total', '写']),
+  ]
+}
 function capabilitySummary(device: Device): string {
   const latest = Object.keys(device.latest || {})
   const available = ['system.', 'container.', 'filesystem.', 'disk.', 'btrfs.']
@@ -92,6 +161,30 @@ function capabilityDetail(device: Device): string {
         <div v-else class="healthy-empty"><span>✓</span><b>当前没有活动风险</b></div>
       </aside>
     </div>
+
+    <section class="card fleet-realtime-card">
+      <div class="section-title">
+        <div><h2>设备实时指标</h2></div>
+        <span class="overview-card-meta">{{ orderedDevices.length }} 台设备</span>
+      </div>
+      <div v-if="orderedDevices.length" class="fleet-realtime-grid">
+        <article v-for="device in orderedDevices" :key="device.id" class="fleet-device-metrics">
+          <header>
+            <div><i :class="deviceState(device)" /><span><b>{{ device.name }}</b><small>{{ device.hostname || device.id }} · {{ ago(device.lastSeenAt) }}</small></span></div>
+            <StatusPill :status="deviceState(device)" />
+          </header>
+          <div class="realtime-metric-grid">
+            <div v-for="item in realtimeMetrics(device)" :key="item.label" class="realtime-metric" :class="item.status" :title="item.detail">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <i v-if="item.percent !== undefined"><em :style="{width:`${item.percent}%`}" /></i>
+              <small>{{ item.detail }}</small>
+            </div>
+          </div>
+        </article>
+      </div>
+      <div v-else class="inline-empty">设备接入并完成首次采集后，将在此显示 CPU、内存、温度、存储和 I/O 指标。</div>
+    </section>
 
     <section class="card capacity-risk-card">
       <div class="section-title"><div><h2>容量风险与预计写满时间</h2></div></div>
