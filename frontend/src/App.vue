@@ -6,15 +6,16 @@ import { ago } from '@/utils'
 import OverviewPage from '@/pages/OverviewPage.vue'
 import DevicesPage from '@/pages/DevicesPage.vue'
 import AppsPage from '@/pages/AppsPage.vue'
+import UsersPage from '@/pages/UsersPage.vue'
 import StoragePage from '@/pages/StoragePage.vue'
 import AlertsPage from '@/pages/AlertsPage.vue'
 import InspectionsPage from '@/pages/InspectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import AppIcon from '@/components/AppIcon.vue'
 
-type Page = 'overview' | 'devices' | 'apps' | 'storage' | 'alerts' | 'inspections' | 'onboarding' | 'settings'
+type Page = 'overview' | 'devices' | 'apps' | 'users' | 'storage' | 'alerts' | 'inspections' | 'onboarding' | 'settings'
 const navs: Array<[Page, string]> = [
-  ['overview', '总览'], ['devices', '设备'], ['apps', '应用'],
+  ['overview', '总览'], ['devices', '设备'], ['apps', '应用'], ['users', '用户'],
   ['storage', '存储'], ['alerts', '告警'], ['inspections', '巡检'],
   ['onboarding', '接入'], ['settings', '设置'],
 ]
@@ -22,6 +23,7 @@ const pages = {
   overview: OverviewPage,
   devices: DevicesPage,
   apps: AppsPage,
+  users: UsersPage,
   storage: StoragePage,
   alerts: AlertsPage,
   inspections: InspectionsPage,

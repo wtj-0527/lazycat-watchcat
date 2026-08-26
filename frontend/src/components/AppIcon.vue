@@ -31,6 +31,9 @@ defineProps<{ name: string; size?: number }>()
       <rect x="3" y="14" width="7" height="7" rx="2" />
       <rect x="14" y="14" width="7" height="7" rx="2" />
     </template>
+    <template v-else-if="name === 'users'">
+      <circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M17 15a5 5 0 0 1 3.5 5" />
+    </template>
     <template v-else-if="name === 'storage'">
       <ellipse cx="12" cy="5" rx="8" ry="3" />
       <path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" />

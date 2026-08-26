@@ -166,6 +166,7 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 	}
 	if e.upstream != nil {
 		e.attachRuntimeApplications(ctx, &batch)
+		e.attachRuntimeUsers(ctx, &batch)
 		sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		e.upstream.Send(sendCtx, batch)
 		cancel()
@@ -173,6 +174,25 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 	if e.syncAlerts != nil {
 		_ = e.syncAlerts(ctx)
 	}
+}
+
+func (e *Embedded) attachRuntimeUsers(ctx context.Context, batch *protocol.MetricBatch) {
+	items, err := e.store.ListRuntimeUsers(ctx)
+	if err != nil {
+		e.logger.Warn("read runtime users for upstream", "error", err)
+		return
+	}
+	for _, u := range items {
+		if u.DeviceID != e.deviceID {
+			continue
+		}
+		item := protocol.RuntimeUser{UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices}
+		for _, d := range u.Devices {
+			item.Devices = append(item.Devices, protocol.RuntimeUserDevice{ID: d.ID, Name: d.Name, Model: d.Model, RemarkName: d.RemarkName, Online: d.Online, BindingTime: d.BindingTime, LoginTime: d.LoginTime})
+		}
+		batch.Users = append(batch.Users, item)
+	}
+	batch.UsersCollected = len(batch.Users) > 0
 }
 
 func (e *Embedded) attachRuntimeApplications(ctx context.Context, batch *protocol.MetricBatch) {

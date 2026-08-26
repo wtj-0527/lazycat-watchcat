@@ -18,6 +18,7 @@ import (
 	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
 	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeapps"
+	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeusers"
 	"github.com/wtj-0527/lazycat-watchcat/internal/stability"
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
@@ -32,6 +33,7 @@ type Server struct {
 	stability     *stability.Monitor
 	restart       func()
 	runtimeApps   *runtimeapps.Source
+	runtimeUsers  *runtimeusers.Source
 	localDeviceID string
 	analytics     chan struct{}
 	docker        dockerMaintenance
@@ -52,6 +54,9 @@ func (s *Server) ConfigureOperations(manager *backup.Manager, monitor *stability
 }
 func (s *Server) ConfigureRuntimeApps(source *runtimeapps.Source, localDeviceID string) {
 	s.runtimeApps, s.localDeviceID = source, localDeviceID
+}
+func (s *Server) ConfigureRuntimeUsers(source *runtimeusers.Source, localDeviceID string) {
+	s.runtimeUsers, s.localDeviceID = source, localDeviceID
 }
 func (s *Server) ConfigureDockerMaintenance(docker *collector.DockerCollector, localDeviceID string) {
 	s.docker, s.localDeviceID = docker, localDeviceID
@@ -81,6 +86,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/metrics", s.metricHistory)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/events", s.deviceEvents)
 	s.mux.HandleFunc("GET /api/v1/applications", s.applications)
+	s.mux.HandleFunc("GET /api/v1/users", s.usersView)
+	s.mux.HandleFunc("POST /api/v1/users", s.createUser)
+	s.mux.HandleFunc("PUT /api/v1/users/{id}/role", s.changeUserRole)
+	s.mux.HandleFunc("PUT /api/v1/users/{id}/password", s.resetUserPassword)
+	s.mux.HandleFunc("DELETE /api/v1/users/{id}", s.deleteUser)
 	s.mux.HandleFunc("GET /api/v1/applications/metrics/compare", s.applicationMetricsComparison)
 	s.mux.HandleFunc("GET /api/v1/applications/{id}/metrics", s.applicationMetrics)
 	s.mux.HandleFunc("GET /api/v1/storage", s.storageView)
@@ -230,6 +240,10 @@ func (s *Server) ingestMetrics(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "application_ingest_failed", "应用实例写入失败")
 		return
 	}
+	if err := s.ingestRuntimeUsers(r.Context(), batch); err != nil {
+		problem(w, 500, "user_ingest_failed", "用户状态写入失败")
+		return
+	}
 	_ = s.SyncAlerts(r.Context())
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points), "applicationsAccepted": len(batch.Applications)})
 }
@@ -283,8 +297,27 @@ func (s *Server) ingestMetricsMTLS(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "application_ingest_failed", "应用实例写入失败")
 		return
 	}
+	if err := s.ingestRuntimeUsers(r.Context(), batch); err != nil {
+		problem(w, 500, "user_ingest_failed", "用户状态写入失败")
+		return
+	}
 	_ = s.SyncAlerts(r.Context())
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": len(batch.Points), "applicationsAccepted": len(batch.Applications)})
+}
+
+func (s *Server) ingestRuntimeUsers(ctx context.Context, batch protocol.MetricBatch) error {
+	if !batch.UsersCollected {
+		return nil
+	}
+	items := make([]store.RuntimeUser, 0, len(batch.Users))
+	for _, u := range batch.Users {
+		item := store.RuntimeUser{DeviceID: batch.DeviceID, UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices}
+		for _, d := range u.Devices {
+			item.Devices = append(item.Devices, store.RuntimeUserDevice{ID: d.ID, Name: d.Name, Model: d.Model, RemarkName: d.RemarkName, Online: d.Online, BindingTime: d.BindingTime, LoginTime: d.LoginTime})
+		}
+		items = append(items, item)
+	}
+	return s.store.ObserveRuntimeUsers(ctx, batch.DeviceID, items)
 }
 
 func (s *Server) ingestRuntimeApplications(ctx context.Context, batch protocol.MetricBatch) error {
@@ -334,10 +367,13 @@ func (s *Server) rotateCertificateMTLS(w http.ResponseWriter, r *http.Request) {
 }
 
 func validBatch(batch protocol.MetricBatch) bool {
-	if batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 || len(batch.Applications) > 5000 {
+	if batch.DeviceID == "" || len(batch.Points) == 0 || len(batch.Points) > 1000 || len(batch.Applications) > 5000 || len(batch.Users) > 1000 {
 		return false
 	}
 	if !batch.ApplicationsCollected && len(batch.Applications) > 0 {
+		return false
+	}
+	if !batch.UsersCollected && len(batch.Users) > 0 {
 		return false
 	}
 	now := time.Now().UTC()

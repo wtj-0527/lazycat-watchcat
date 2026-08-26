@@ -141,9 +141,11 @@ describe('AppsPage', () => {
 
     const wrapper = mount(AppsPage)
     await flushPromises()
-    expect(wrapper.get('[aria-label="运行实例"]').findAll('option')).toHaveLength(3)
-
-    await wrapper.get('[aria-label="运行实例"]').setValue('device-2\u0000deploy-2')
+    await wrapper.get('[aria-label="运行实例"]').trigger('click')
+    expect(wrapper.findAll('.smart-select-options > button')).toHaveLength(3)
+    const target = wrapper.findAll('.smart-select-options > button').find((item) => item.text().includes('deploy-2'))
+    expect(target).toBeTruthy()
+    await target!.trigger('click')
     await flushPromises()
 
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('/api/v1/applications/multi/metrics?hours=24&deviceId=device-2'))).toBe(true)

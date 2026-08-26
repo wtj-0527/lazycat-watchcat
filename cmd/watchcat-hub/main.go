@@ -18,6 +18,7 @@ import (
 	"github.com/wtj-0527/lazycat-watchcat/internal/notify"
 	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
 	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeapps"
+	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeusers"
 	"github.com/wtj-0527/lazycat-watchcat/internal/scheduler"
 	"github.com/wtj-0527/lazycat-watchcat/internal/stability"
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
@@ -89,6 +90,32 @@ func main() {
 					syncCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 					if _, err := handlers.SyncRuntimeApplications(syncCtx, uid); err != nil {
 						logger.Warn("refresh LazyCat runtime applications", "error", err)
+					}
+					cancel()
+				}
+				<-ticker.C
+			}
+		}()
+	}
+	userCtx, userCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	userSource, userErr := runtimeusers.NewPersistent(userCtx, filepath.Join(cfg.DataDir, "runtime-user-id"))
+	userCancel()
+	if userErr != nil {
+		logger.Warn("connect LazyCat user manager", "error", userErr)
+	} else {
+		defer userSource.Close()
+		handlers.ConfigureRuntimeUsers(userSource, embedded.DeviceID())
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				uid := userSource.LastUID()
+				if uid != "" {
+					syncCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+					if users, err := userSource.Query(syncCtx, uid); err != nil {
+						logger.Warn("refresh LazyCat users", "error", err)
+					} else if err = st.ObserveRuntimeUsers(syncCtx, embedded.DeviceID(), users); err != nil {
+						logger.Warn("persist LazyCat users", "error", err)
 					}
 					cancel()
 				}

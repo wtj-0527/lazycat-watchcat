@@ -182,6 +182,43 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(device_id,deploy_id)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_application_runtime_app ON application_runtime_state(app_id,instance_status);`,
+		`CREATE TABLE IF NOT EXISTS user_runtime_state (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			nickname TEXT NOT NULL DEFAULT '',
+			role TEXT NOT NULL DEFAULT 'normal',
+			app_install_permission INTEGER NOT NULL DEFAULT 0,
+			online INTEGER NOT NULL DEFAULT 0,
+			active_devices INTEGER NOT NULL DEFAULT 0,
+			total_devices INTEGER NOT NULL DEFAULT 0,
+			first_observed_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,user_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS user_device_state (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			end_device_id TEXT NOT NULL,
+			name TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			remark_name TEXT NOT NULL DEFAULT '',
+			online INTEGER NOT NULL DEFAULT 0,
+			binding_time TEXT NOT NULL DEFAULT '',
+			login_time TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,user_id,end_device_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS user_login_sessions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			end_device_id TEXT NOT NULL,
+			login_at TEXT NOT NULL,
+			logout_at TEXT,
+			created_at TEXT NOT NULL
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_session_open ON user_login_sessions(device_id,user_id,end_device_id) WHERE logout_at IS NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_user_session_history ON user_login_sessions(device_id,user_id,login_at DESC);`,
 		`CREATE TABLE IF NOT EXISTS device_metadata (
 			device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
 			group_name TEXT NOT NULL DEFAULT '',
@@ -238,6 +275,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("migration application user_name: %w", err)
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(9, datetime('now'))`)
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(10, datetime('now'))`)
 	return nil
 }
 

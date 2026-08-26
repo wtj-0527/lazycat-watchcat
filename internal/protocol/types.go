@@ -56,6 +56,29 @@ type MetricBatch struct {
 	Points                []MetricPoint        `json:"points"`
 	Applications          []RuntimeApplication `json:"applications,omitempty"`
 	ApplicationsCollected bool                 `json:"applicationsCollected,omitempty"`
+	Users                 []RuntimeUser        `json:"users,omitempty"`
+	UsersCollected        bool                 `json:"usersCollected,omitempty"`
+}
+
+type RuntimeUser struct {
+	UserID               string              `json:"userId"`
+	Nickname             string              `json:"nickname"`
+	Role                 string              `json:"role"`
+	AppInstallPermission bool                `json:"appInstallPermission"`
+	Online               bool                `json:"online"`
+	ActiveDevices        int                 `json:"activeDevices"`
+	TotalDevices         int                 `json:"totalDevices"`
+	Devices              []RuntimeUserDevice `json:"devices"`
+}
+
+type RuntimeUserDevice struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Model       string    `json:"model"`
+	RemarkName  string    `json:"remarkName"`
+	Online      bool      `json:"online"`
+	BindingTime time.Time `json:"bindingTime,omitempty"`
+	LoginTime   time.Time `json:"loginTime,omitempty"`
 }
 
 type RuntimeApplication struct {

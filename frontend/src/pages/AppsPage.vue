@@ -9,6 +9,7 @@ import BarChart, { type BarItem } from '@/components/BarChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import SmartSelect, { type SmartOption } from '@/components/SmartSelect.vue'
 
 interface RuntimeUser { id: string; name: string }
 interface Payload { items: ApplicationItem[]; users: RuntimeUser[]; source: string; stale: boolean; updatedAt?: string }
@@ -101,6 +102,13 @@ const selectedApp = computed(() => data.value?.items.find((item) => item.id === 
 const selectedInstance = computed(() => selectedApp.value?.devices.find((item) => instanceKey(item.deviceId, item.deployId) === selectedInstanceKey.value))
 const activeResources = computed(() => selectedInstance.value?.resources || selectedApp.value?.resources)
 const visibleSelectedDevices = computed(() => selectedApp.value ? visibleDevices(selectedApp.value) : [])
+const selectedInstanceOptions = computed<SmartOption[]>(() => visibleSelectedDevices.value.map((instance) => ({
+  value: instanceKey(instance.deviceId, instance.deployId),
+  label: instance.userName || instance.userId || instance.deployId,
+  group: instance.deviceName || instance.deviceId,
+  meta: `${instance.deployId} · ${instance.version || '版本未知'}`,
+  status: instance.status,
+})))
 
 watch(() => data.value?.items, (items) => {
   if (!items?.length) return
@@ -323,12 +331,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
             <div><h2>{{ selectedApp.title || selectedApp.id }}</h2><span class="muted">{{ selectedApp.id }} · {{ Object.keys(selectedApp.versions).join(' / ') || '版本未知' }}</span></div>
             <div class="app-instance-switcher">
               <label for="application-instance">运行实例</label>
-              <select id="application-instance" v-model="selectedInstanceKey" aria-label="运行实例">
-                <option value="all">全部实例（{{ visibleSelectedDevices.length }}）</option>
-                <option v-for="instance in visibleSelectedDevices" :key="instanceKey(instance.deviceId, instance.deployId)" :value="instanceKey(instance.deviceId, instance.deployId)">
-                  {{ instance.deviceName || instance.deviceId }} · {{ instance.deployId }} · {{ instance.version || '版本未知' }}
-                </option>
-              </select>
+              <SmartSelect v-model="selectedInstanceKey" :options="selectedInstanceOptions" :all-label="`全部实例（${visibleSelectedDevices.length}）`" control-label="运行实例" searchable />
               <StatusPill :status="selectedInstance ? (selectedInstance.status === 'running' ? 'healthy' : selectedInstance.status === 'error' ? 'critical' : 'warning') : appStatus(selectedApp)" />
             </div>
           </div>
