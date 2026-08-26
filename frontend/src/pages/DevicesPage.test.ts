@@ -133,6 +133,7 @@ describe('DevicesPage detail tabs', () => {
 
     await wrapper.get('#device-tab-system').trigger('click')
     expect(wrapper.find('.raw-metrics').exists()).toBe(false)
+    expect(wrapper.get('.device-detail-insights').classes()).not.toContain('card')
     expect(wrapper.findAll('.detail-chart-card').length).toBeGreaterThan(0)
     expect(wrapper.get('.detail-kpi-grid').text()).toContain('CPU')
 
@@ -177,6 +178,7 @@ describe('DevicesPage detail tabs', () => {
     await flushPromises()
     await wrapper.get('#device-tab-apps').trigger('click')
 
+    expect(wrapper.get('.device-app-insights').classes()).not.toContain('card')
     expect(wrapper.find('.resource-ranking-board').exists()).toBe(true)
     expect(wrapper.findAll('.resource-ranking-column')).toHaveLength(4)
     expect(wrapper.findAll('.resource-ranking-list')).toHaveLength(4)

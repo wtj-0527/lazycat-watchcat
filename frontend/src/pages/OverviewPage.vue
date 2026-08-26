@@ -133,7 +133,7 @@ function capabilityDetail(device: Device): string {
 
     </div>
 
-    <section class="card fleet-realtime-card">
+    <section class="fleet-realtime-card">
       <div class="section-title">
         <div><h2>设备实时指标</h2></div>
         <span class="overview-card-meta">{{ orderedDevices.length }} 台设备</span>

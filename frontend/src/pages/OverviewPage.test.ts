@@ -65,6 +65,7 @@ describe('OverviewPage', () => {
     expect(wrapper.get('.capacity-evidence-list').text()).toContain('采集能力 4/5')
     expect(wrapper.findAll('.overview-summary-grid > .card')).toHaveLength(2)
     expect(wrapper.findAll('.fleet-device-metrics')).toHaveLength(1)
+    expect(wrapper.get('.fleet-realtime-card').classes()).not.toContain('card')
     expect(wrapper.get('.fleet-realtime-card').text()).toContain('CPU 使用率')
     expect(wrapper.get('.fleet-realtime-card').text()).toContain('18.0%')
     expect(wrapper.get('.fleet-realtime-card').text()).toContain('最高温度')

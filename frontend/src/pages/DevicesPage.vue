@@ -609,7 +609,7 @@ const capabilityCount = computed(() => selected.value
           </div>
         </div>
 
-        <section v-else-if="selectedTab === 'system'" class="card device-detail-insights">
+        <section v-else-if="selectedTab === 'system'" class="device-detail-insights">
           <div class="section-title"><div><h2>系统</h2></div><span class="pill unknown">{{ ago(selected.lastSeenAt) }}</span></div>
           <div class="detail-kpi-grid">
             <article><span>CPU</span><strong>{{ pointValue('system.cpu.usage') }}</strong><small>当前使用率</small></article>
@@ -641,7 +641,7 @@ const capabilityCount = computed(() => selected.value
           </div>
         </section>
 
-        <section v-else-if="selectedTab === 'storage'" class="card device-detail-insights">
+        <section v-else-if="selectedTab === 'storage'" class="device-detail-insights">
           <div class="section-title"><div><h2>存储与硬件</h2></div><span class="pill unknown">{{ storageDisks.length }} 块物理磁盘</span></div>
           <div class="physical-disk-grid">
             <article v-for="disk in storageDisks" :key="disk.device" class="physical-disk-card" :class="{ warning: (disk.temperature || 0) >= 55 || disk.smartErrors > 0 }">
@@ -663,7 +663,7 @@ const capabilityCount = computed(() => selected.value
           </section>
         </section>
 
-        <section v-else-if="selectedTab === 'network'" class="card device-detail-insights">
+        <section v-else-if="selectedTab === 'network'" class="device-detail-insights">
           <div class="section-title"><div><h2>网络</h2></div><span class="pill unknown">实时速率与累计流量分开显示</span></div>
           <div class="detail-kpi-grid">
             <article><span>当前下载</span><strong>{{ formatNumber(currentNetworkRates['下载'] || 0) }} MiB/s</strong><small>根据相邻采集计数计算</small></article>
@@ -687,7 +687,7 @@ const capabilityCount = computed(() => selected.value
           </div>
         </section>
 
-        <section v-else-if="selectedTab === 'events'" class="card device-detail-insights">
+        <section v-else-if="selectedTab === 'events'" class="device-detail-insights">
           <div class="section-title"><div><h2>设备事件</h2></div><span class="pill unknown">最近 {{ deviceEvents.length }} 条</span></div>
           <div class="detail-kpi-grid event-kpis">
             <article><span>全部事件</span><strong>{{ eventStats.total }}</strong><small>当前保留窗口</small></article>
@@ -708,7 +708,7 @@ const capabilityCount = computed(() => selected.value
           </section>
         </section>
 
-        <section v-else-if="selectedTab === 'apps'" class="card device-app-insights">
+        <section v-else-if="selectedTab === 'apps'" class="device-app-insights">
           <div class="section-title"><div><h2>应用与容器指标</h2></div><span class="pill unknown">{{ containerResources.length }} 个实例</span></div>
           <section v-if="containerResources.length" class="application-ranking-panel">
             <div class="section-title compact">
