@@ -7,9 +7,8 @@ import { ago, bytes, connectivityState, dateTime, deviceState, formatMetricValue
 import AppIcon from '@/components/AppIcon.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import BarChart, { type BarItem } from '@/components/BarChart.vue'
-import DonutChart from '@/components/DonutChart.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
-import ResourceBubbleChart, { type ResourceBubbleItem } from '@/components/ResourceBubbleChart.vue'
+import ResourceRankingBoard, { type ResourceRankingItem } from '@/components/ResourceRankingBoard.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -345,11 +344,7 @@ function appResourceDisplay(item: ContainerResource, metric: typeof appResourceS
   if (metric === 'memory') return bytes(item.memory)
   return bytes(item[metric])
 }
-const applicationStatusDistribution = computed(() => [
-  { label: '运行中', value: containerResources.value.filter((item) => item.running).length, color: '#118847' },
-  { label: '已停止', value: containerResources.value.filter((item) => !item.running).length, color: '#94a3b8' },
-])
-const applicationBubbleItems = computed<ResourceBubbleItem[]>(() => containerResources.value.map((item) => ({
+const applicationRankingItems = computed<ResourceRankingItem[]>(() => containerResources.value.map((item) => ({
   id: item.id,
   label: item.appTitle,
   detail: `${item.containerName} · ${item.app}`,
@@ -510,16 +505,12 @@ const capabilityCount = computed(() => selected.value
 
         <section v-else-if="selectedTab === 'apps'" class="card device-app-insights">
           <div class="section-title"><div><h2>应用与容器指标</h2></div><span class="pill unknown">{{ containerResources.length }} 个实例</span></div>
-          <div v-if="containerResources.length" class="device-app-visual-grid">
-            <section class="application-bubble-panel">
-              <div class="section-title compact"><div><h3>CPU × 内存资源分布</h3><span class="muted">位置表示 CPU 与内存，气泡大小表示累计网络与磁盘 I/O</span></div></div>
-              <ResourceBubbleChart :items="applicationBubbleItems" />
-            </section>
-            <section class="application-status-panel">
-              <div class="section-title compact"><div><h3>运行状态</h3></div></div>
-              <DonutChart :items="applicationStatusDistribution" center-label="实例" />
-            </section>
-          </div>
+          <section v-if="containerResources.length" class="application-ranking-panel">
+            <div class="section-title compact">
+              <div><h3>资源热点</h3><span class="muted">分别展示 CPU、内存、网络与磁盘 I/O 排名前 6 的实例；全部实例见下方矩阵。</span></div>
+            </div>
+            <ResourceRankingBoard :items="applicationRankingItems" />
+          </section>
 
           <section v-if="containerResources.length" class="application-resource-matrix">
             <div class="section-title application-matrix-title">
