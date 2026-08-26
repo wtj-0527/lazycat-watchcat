@@ -10,6 +10,7 @@ import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import { appConfirm, appPrompt } from '@/dialog'
 
 type DetailTab = 'overview' | 'system' | 'storage' | 'apps' | 'network' | 'events'
 const detailTabs: Array<[DetailTab, string]> = [
@@ -163,7 +164,7 @@ function markCustomView() {
   selectedView.value = 'custom'
 }
 async function saveView() {
-  const name = window.prompt('保存视图名称')
+  const name = await appPrompt({ title: '保存当前视图', message: '为当前筛选条件设置一个容易识别的名称。', inputPlaceholder: '视图名称', confirmText: '保存视图' })
   if (!name) return
   await api('/api/v1/saved-views', {
     method: 'POST',
@@ -173,8 +174,10 @@ async function saveView() {
 }
 async function editMetadata() {
   if (!selected.value) return
-  const group = window.prompt('设备组', selected.value.group || '') ?? (selected.value.group || '')
-  const location = window.prompt('位置', selected.value.location || '') ?? (selected.value.location || '')
+  const group = await appPrompt({ title: '修改设备组', inputValue: selected.value.group || '', inputPlaceholder: '设备组', confirmText: '下一步' })
+  if (group === null) return
+  const location = await appPrompt({ title: '修改设备位置', inputValue: selected.value.location || '', inputPlaceholder: '位置', confirmText: '保存资料' })
+  if (location === null) return
   await api(`/api/v1/devices/${encodeURIComponent(selected.value.id)}/metadata`, {
     method: 'PUT', body: JSON.stringify({ group, location, labels: selected.value.labels || {} }),
   })
@@ -183,7 +186,7 @@ async function editMetadata() {
 async function deleteDevice() {
   if (!selected.value || selected.value.local || deletingDevice.value) return
   const device = selected.value
-  if (!window.confirm(`确定双向彻底移除设备“${device.name}”吗？本机将永久删除该设备的指标、告警、运行状态和凭据；对方下次通信时会自动清除上游配置。之后必须使用新邀请重新接入。`)) return
+  if (!await appConfirm({ title: '彻底移除设备', message: `确定双向彻底移除设备“${device.name}”吗？本机将永久删除该设备的指标、告警、运行状态和凭据；对方下次通信时会自动清除上游配置。之后必须使用新邀请重新接入。`, confirmText: '彻底移除', danger: true })) return
   deletingDevice.value = true
   detailError.value = ''
   try {

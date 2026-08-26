@@ -4,6 +4,7 @@ import { api } from '@/api'
 import { usePolling } from '@/composables'
 import { ago } from '@/utils'
 import PageState from '@/components/PageState.vue'
+import { appConfirm, appPrompt } from '@/dialog'
 
 interface Endpoint { id:string; name:string; model:string; remarkName:string; online:boolean; bindingTime?:string; loginTime?:string }
 interface Session { endDeviceId:string; loginAt:string; logoutAt?:string; durationSeconds:number }
@@ -30,9 +31,9 @@ const presence=(item:UserItem)=>item.online?'在线':item.totalDevices>0?'离线
 const presenceClass=(item:UserItem)=>item.online?'healthy':'unknown'
 function toggleApp(id:string){allowedAppIds.value=allowedAppIds.value.includes(id)?allowedAppIds.value.filter(x=>x!==id):[...allowedAppIds.value,id]}
 async function createUser(){busy.value=true;try{await api('/api/v1/users',{method:'POST',body:JSON.stringify(newUser.value)});emit('toast','用户已创建');showCreate.value=false;newUser.value={userId:'',password:'',role:'normal'};await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{busy.value=false}}
-async function changeRole(item:UserItem){if(!confirm(`确认将 ${item.nickname} 调整为${item.role==='admin'?'普通用户':'管理员'}？`))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/role`,{method:'PUT',body:JSON.stringify({role:item.role==='admin'?'normal':'admin'})});emit('toast','角色已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
-async function resetPassword(item:UserItem){const password=prompt(`为 ${item.nickname} 设置新密码（至少 8 位）`);if(!password)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/password`,{method:'PUT',body:JSON.stringify({password})});emit('toast','密码已重置')}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
-async function removeUser(item:UserItem){if(!confirm(`确认删除用户 ${item.nickname}？本次不会清理用户数据。`))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}`,{method:'DELETE'});emit('toast','用户已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
+async function changeRole(item:UserItem){if(!await appConfirm({title:'调整用户角色',message:`确认将 ${item.nickname} 调整为${item.role==='admin'?'普通用户':'管理员'}？`,confirmText:'确认调整'}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/role`,{method:'PUT',body:JSON.stringify({role:item.role==='admin'?'normal':'admin'})});emit('toast','角色已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
+async function resetPassword(item:UserItem){const password=await appPrompt({title:'重置用户密码',message:`为 ${item.nickname} 设置新密码，至少 8 位。`,inputType:'password',inputPlaceholder:'输入新密码',confirmText:'确认重置'});if(!password)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/password`,{method:'PUT',body:JSON.stringify({password})});emit('toast','密码已重置')}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
+async function removeUser(item:UserItem){if(!await appConfirm({title:'删除用户',message:`确认删除用户 ${item.nickname}？本次不会清理用户数据。`,confirmText:'删除用户',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}`,{method:'DELETE'});emit('toast','用户已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/app-access`,{method:'PUT',body:JSON.stringify({noLimit:accessMode.value==='all',allowedAppIds:allowedAppIds.value})});emit('toast','应用可见范围已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{accessBusy.value=false}}
 </script>
 

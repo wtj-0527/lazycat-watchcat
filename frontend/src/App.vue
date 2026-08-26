@@ -12,6 +12,7 @@ import AlertsPage from '@/pages/AlertsPage.vue'
 import InspectionsPage from '@/pages/InspectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import AppDialog from '@/components/AppDialog.vue'
 
 type Page = 'overview' | 'devices' | 'apps' | 'users' | 'storage' | 'alerts' | 'inspections' | 'onboarding' | 'settings'
 const navs: Array<[Page, string]> = [
@@ -170,4 +171,5 @@ onBeforeUnmount(() => {
     </section>
   </main>
   <div id="toast" :class="{ show: toastMessage }">{{ toastMessage }}</div>
+  <AppDialog />
 </template>

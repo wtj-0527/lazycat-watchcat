@@ -6,6 +6,7 @@ import type { Backup, Capability, Device, Stability } from '@/types'
 import { ago, backupType, bytes, dateTime, duration } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import { appConfirm } from '@/dialog'
 
 interface Settings {
   appVersion: string; deploymentMode: string; embeddedCollector: boolean; singleUser: boolean; maxDevices: number
@@ -161,7 +162,7 @@ async function joinExistingWatchCat() {
   }
 }
 async function disconnectUpstream() {
-  if (!window.confirm('确定双向彻底移除吗？主 WatchCat 将永久删除本设备的历史指标、告警、运行状态和凭据；本机也会删除上游配置。重新加入必须生成新邀请。')) return
+  if (!await appConfirm({ title: '断开并彻底移除', message: '主 WatchCat 将永久删除本设备的历史指标、告警、运行状态和凭据；本机也会删除上游配置。重新加入必须生成新邀请。', confirmText: '彻底移除', danger: true })) return
   await api('/api/v1/upstream', { method: 'DELETE' })
   await refresh()
   emit('toast', '已从主 WatchCat 彻底移除，并清除本机上游凭据')
@@ -246,7 +247,7 @@ async function createBackup() {
   }
 }
 async function deleteBackup(name: string) {
-  if (!window.confirm(`确定删除备份 ${name}？删除后无法恢复。`)) return
+  if (!await appConfirm({ title: '删除数据库备份', message: `确定删除备份 ${name}？删除后无法恢复。`, confirmText: '删除备份', danger: true })) return
   try {
     await api(`/api/v1/backups/${encodeURIComponent(name)}`, { method: 'DELETE' })
     backupEvidence.value = { status: 'success', message: `备份 ${name} 已删除` }
@@ -259,7 +260,7 @@ async function deleteBackup(name: string) {
   }
 }
 async function restoreBackup(name: string) {
-  if (!window.confirm('恢复将重启 WatchCat 并造成短暂断连；替换前会再创建安全备份。确定继续？')) return
+  if (!await appConfirm({ title: '恢复数据库备份', message: '恢复将重启 WatchCat 并造成短暂断连；替换前会再创建安全备份。', confirmText: '确认恢复', danger: true })) return
   restoreEvidence.value = undefined
   try {
     const result = await api<RestoreResult>(`/api/v1/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' })
@@ -274,7 +275,7 @@ async function restoreBackup(name: string) {
   }
 }
 async function resetStability() {
-  if (!window.confirm('确定清零当前稳定性观测并重新计算 7 天周期？')) return
+  if (!await appConfirm({ title: '重置稳定性观测', message: '确定清零当前稳定性观测并重新计算 7 天周期？', confirmText: '重新开始', danger: true })) return
   stabilityLoading.value = true
   stabilityEvidence.value = undefined
   try {
@@ -298,9 +299,12 @@ async function resetStability() {
 async function pruneUnusedImages() {
   if (!data.value?.unusedImages.available || data.value.unusedImages.danglingCount === 0) return
   const preview = data.value.unusedImages
-  if (!window.confirm(
-    `确定清理 ${preview.danglingCount} 个悬空旧镜像？\n\n镜像逻辑大小约 ${bytes(preview.danglingSize)}。带标签、可能供暂停应用未来启动使用的缓存镜像不会批量删除。`,
-  )) return
+  if (!await appConfirm({
+    title: '清理悬空旧镜像',
+    message: `确定清理 ${preview.danglingCount} 个悬空旧镜像？镜像逻辑大小约 ${bytes(preview.danglingSize)}。带标签、可能供暂停应用未来启动使用的缓存镜像不会批量删除。`,
+    confirmText: '开始清理',
+    danger: true,
+  })) return
   imageCleanupLoading.value = true
   imageCleanupEvidence.value = undefined
   try {
@@ -325,7 +329,7 @@ async function deleteUnusedImage(image: UnusedImage) {
   const warning = cached
     ? '该镜像可能供当前未启动的 LPK 使用；删除后下次启动需要重新拉取。'
     : '该镜像没有标签且未被容器引用。'
-  if (!window.confirm(`确定删除镜像 ${label}？\n\n${warning}`)) return
+  if (!await appConfirm({ title: '删除镜像', message: `确定删除镜像 ${label}？${warning}`, confirmText: '删除镜像', danger: true })) return
   deletingImageId.value = image.id
   imageCleanupEvidence.value = undefined
   try {

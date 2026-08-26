@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsPage from './SettingsPage.vue'
 
 const apiMock = vi.hoisted(() => vi.fn())
+const confirmMock = vi.hoisted(() => vi.fn(async () => true))
 vi.mock('@/api', () => ({ api: apiMock }))
+vi.mock('@/dialog', () => ({ appConfirm: confirmMock }))
 
 const now = new Date().toISOString()
 
@@ -225,7 +227,6 @@ describe('SettingsPage tabs', () => {
       }
       return base(path)
     })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mount(SettingsPage)
     await flushPromises()
     await wrapper.get('#settings-tab-retention').trigger('click')
@@ -236,7 +237,7 @@ describe('SettingsPage tabs', () => {
     await wrapper.get('.image-cleanup-card .danger-button').trigger('click')
     await flushPromises()
 
-    expect(confirm).toHaveBeenCalledOnce()
+    expect(confirmMock).toHaveBeenCalledOnce()
     expect(apiMock).toHaveBeenCalledWith('/api/v1/docker/images/prune', { method: 'POST' })
     expect(wrapper.text()).toContain('删除 2 个镜像')
     expect(wrapper.text()).toContain('没有悬空镜像')
@@ -258,7 +259,6 @@ describe('SettingsPage tabs', () => {
       }
       return base(path, options)
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mount(SettingsPage)
     await flushPromises()
     await wrapper.get('#settings-tab-retention').trigger('click')

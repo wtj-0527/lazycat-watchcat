@@ -9,6 +9,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import PageState from '@/components/PageState.vue'
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
+import { appConfirm } from '@/dialog'
 
 const emit = defineEmits<{ toast: [message: string] }>()
 const query = ref(sessionStorage.getItem('watchcatSearch') || '')
@@ -97,7 +98,7 @@ async function action(fingerprint: string, name: string) {
 }
 async function bulkAcknowledge() {
   const fingerprints = filtered.value.filter((item) => item.status !== 'resolved').map((item) => item.fingerprint)
-  if (!fingerprints.length || !window.confirm(`确认当前筛选下的 ${fingerprints.length} 个告警？`)) return
+  if (!fingerprints.length || !await appConfirm({ title: '批量确认告警', message: `确认当前筛选下的 ${fingerprints.length} 个告警？`, confirmText: `确认 ${fingerprints.length} 个告警` })) return
   await api('/api/v1/alerts/bulk-acknowledge', { method: 'POST', body: JSON.stringify({ fingerprints }) })
   await refresh()
   emit('toast', `已确认 ${fingerprints.length} 个告警`)

@@ -4,7 +4,9 @@ import type { Device, Overview } from '@/types'
 import DevicesPage from './DevicesPage.vue'
 
 const apiMock = vi.hoisted(() => vi.fn())
+const confirmMock = vi.hoisted(() => vi.fn(async () => true))
 vi.mock('@/api', () => ({ api: apiMock }))
+vi.mock('@/dialog', () => ({ appConfirm: confirmMock, appPrompt: vi.fn(async () => null) }))
 
 const device: Device = {
   id: 'd1', name: '猫盒-01', hostname: 'lc-01', osVersion: 'LazyCat OS', collectorVersion: '1.8.0',
@@ -146,7 +148,6 @@ describe('DevicesPage detail tabs', () => {
   })
 
   it('deletes a remote device after confirmation and hides deletion for the local device', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => true))
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/overview') return overview
       if (path === '/api/v1/devices/d1' && options?.method === 'DELETE') return undefined
@@ -162,6 +163,7 @@ describe('DevicesPage detail tabs', () => {
     expect(wrapper.get('.danger-button').text()).toContain('双向彻底移除')
     await wrapper.get('.danger-button').trigger('click')
     await flushPromises()
+    expect(confirmMock).toHaveBeenCalledOnce()
     expect(apiMock).toHaveBeenCalledWith('/api/v1/devices/d1', { method: 'DELETE' })
     expect(wrapper.text()).toContain('设备清单')
     wrapper.unmount()
