@@ -22,7 +22,7 @@ const devices=computed(()=>[...new Map((data.value?.items||[]).map(x=>[x.deviceI
 const filtered=computed(()=>(data.value?.items||[]).filter(x=>(device.value==='all'||x.deviceId===device.value)&&(status.value==='all'||(status.value==='online')===x.online)&&`${x.nickname} ${x.userId} ${x.deviceName}`.toLowerCase().includes(query.value.toLowerCase())))
 const selected=computed(()=>filtered.value.find(x=>`${x.deviceId}\0${x.userId}`===selectedKey.value)||filtered.value[0])
 watch(filtered,(items)=>{if(items.length&&!items.some(x=>`${x.deviceId}\0${x.userId}`===selectedKey.value))selectedKey.value=`${items[0].deviceId}\0${items[0].userId}`},{immediate:true})
-watch(selected, item=>{if(!item)return;accessMode.value=item.appAccessNoLimit?'all':'selected';allowedAppIds.value=[...(item.allowedAppIds||[])];accessSearch.value=''},{immediate:true})
+watch(selected, item=>{if(!item)return;accessMode.value=item.appInstallPermission||item.appAccessNoLimit?'all':'selected';allowedAppIds.value=[...(item.allowedAppIds||[])];accessSearch.value=''},{immediate:true})
 const onlineCount=computed(()=>(data.value?.items||[]).filter(x=>x.online).length)
 const appOptions=computed(()=>(applications.value?.items||[]).filter(app=>app.devices.some(x=>x.deviceId===selected.value?.deviceId)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(accessSearch.value.trim().toLowerCase())))
 const duration=(seconds:number)=>{const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60);return h?`${h} 小时 ${m} 分钟`:`${m} 分钟`}
@@ -34,7 +34,7 @@ async function createUser(){busy.value=true;try{await api('/api/v1/users',{metho
 async function changeRole(item:UserItem){if(!await appConfirm({title:'调整用户角色',message:`确认将 ${item.nickname} 调整为${item.role==='admin'?'普通用户':'管理员'}？`,confirmText:'确认调整'}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/role`,{method:'PUT',body:JSON.stringify({role:item.role==='admin'?'normal':'admin'})});emit('toast','角色已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function resetPassword(item:UserItem){const password=await appPrompt({title:'重置用户密码',message:`为 ${item.nickname} 设置新密码，至少 8 位。`,inputType:'password',inputPlaceholder:'输入新密码',confirmText:'确认重置'});if(!password)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/password`,{method:'PUT',body:JSON.stringify({password})});emit('toast','密码已重置')}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function removeUser(item:UserItem){if(!await appConfirm({title:'删除用户',message:`确认删除用户 ${item.nickname}？本次不会清理用户数据。`,confirmText:'删除用户',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}`,{method:'DELETE'});emit('toast','用户已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
-async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/app-access`,{method:'PUT',body:JSON.stringify({noLimit:accessMode.value==='all',allowedAppIds:allowedAppIds.value})});emit('toast','应用可见范围已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{accessBusy.value=false}}
+async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/app-access`,{method:'PUT',body:JSON.stringify({noLimit:item.appInstallPermission||accessMode.value==='all',allowedAppIds:item.appInstallPermission?[]:allowedAppIds.value})});emit('toast','应用可见范围已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{accessBusy.value=false}}
 </script>
 
 <template>
@@ -51,9 +51,9 @@ async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(
       <div v-if="selected.local" class="user-actions"><button class="secondary-button" @click="changeRole(selected)">调整角色</button><button class="secondary-button" @click="resetPassword(selected)">重置密码</button><button class="danger-button" @click="removeUser(selected)">删除用户</button></div><p v-else class="muted">远端设备当前仅查看；管理操作需进入该设备上的 WatchCat。</p>
       <div class="section-title compact"><div><h3>应用可见范围</h3><p>LazyCat 当前按应用 ID 授权；同一应用的多个部署实例不能分别设置。</p></div></div>
       <div class="app-access-panel">
-        <div class="access-mode">
+        <div class="access-mode" :class="{single:selected.appInstallPermission}">
           <button :class="{active:accessMode==='all'}" :disabled="!selected.local" @click="accessMode='all'"><b>全部应用</b><small>该用户可以访问本机所有应用</small></button>
-          <button :class="{active:accessMode==='selected'}" :disabled="!selected.local" @click="accessMode='selected'"><b>指定应用</b><small>仅允许访问下面选中的应用</small></button>
+          <button v-if="!selected.appInstallPermission" :class="{active:accessMode==='selected'}" :disabled="!selected.local" @click="accessMode='selected'"><b>指定应用</b><small>仅允许访问下面选中的应用</small></button>
         </div>
         <template v-if="accessMode==='selected'">
           <label class="app-access-search"><input v-model="accessSearch" placeholder="搜索应用名称或 App ID"></label>
@@ -66,7 +66,6 @@ async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(
         </template>
         <div v-if="selected.local" class="app-access-footer"><span v-if="accessMode==='selected'">已选择 {{allowedAppIds.length}} 个应用</span><span v-else>不限制应用访问</span><button class="primary-button" :disabled="accessBusy" @click="saveAppAccess(selected)">{{accessBusy?'保存中…':'保存可见范围'}}</button></div>
         <p v-else class="muted">远端用户的权限为只读；请在 {{selected.deviceName}} 上修改。</p>
-        <p v-if="selected.appInstallPermission" class="access-warning">该用户拥有应用安装权限。LazyCat 可能拒绝将其改为“指定应用”，拒绝原因会按服务端原文显示。</p>
       </div>
       <div class="section-title compact"><div><h3>登录终端</h3></div></div><div class="user-endpoints"><div v-for="endpoint in selected.devices" :key="endpoint.id"><i :class="{online:endpoint.online}"/><span><b>{{endpoint.remarkName||endpoint.name||endpoint.model||'未知终端'}}</b><small>{{endpoint.model||endpoint.id}} · {{endpoint.online?'登录于 '+dateTime(endpoint.loginTime):'当前离线'}}</small></span></div></div>
       <div class="section-title compact"><div><h3>登录历史</h3></div></div><div class="session-timeline"><div v-for="session in selected.sessions.slice(0,30)" :key="`${session.endDeviceId}-${session.loginAt}`"><i :class="{open:!session.logoutAt}"/><span><b>{{dateTime(session.loginAt)}}</b><small>{{session.logoutAt?'退出 '+dateTime(session.logoutAt):'当前在线'}} · {{duration(session.durationSeconds)}}</small></span></div><p v-if="!selected.sessions.length" class="inline-empty">从开始记录以来尚未观察到登录会话。</p></div>

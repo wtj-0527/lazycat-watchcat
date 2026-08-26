@@ -34,6 +34,15 @@ func TestAggregateApplicationResourcesIgnoresStaleContainers(t *testing.T) {
 	}
 }
 
+func TestLocalizedAppTitleUsesLazyCatProductNames(t *testing.T) {
+	if got := localizedAppTitle("cloud.lazycat.app.photo", "Photos"); got != "懒猫相册" {
+		t.Fatalf("title=%q", got)
+	}
+	if got := localizedAppTitle("community.lazycat.app.watchcat", "WatchCat"); got != "WatchCat" {
+		t.Fatalf("fallback title=%q", got)
+	}
+}
+
 func TestApplicationHistoryAggregatesContainersAndCounterRates(t *testing.T) {
 	start := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 	gauge := []store.ApplicationMetricSample{

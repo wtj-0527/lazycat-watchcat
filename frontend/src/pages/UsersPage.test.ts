@@ -11,7 +11,7 @@ describe('UsersPage', () => {
   it('uses presence wording and saves application visibility by app id', async () => {
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/applications') {
-        return { items: [{ id: 'app.one', title: '应用一', devices: [{ deviceId: 'd1' }] }] }
+        return { items: [{ id: 'app.one', title: '应用一', devices: [{ deviceId: 'd1' }] }, { id: 'cloud.lazycat.app.photo', title: '懒猫相册', devices: [{ deviceId: 'd1' }] }] }
       }
       if (path === '/api/v1/users' && !options) {
         return {

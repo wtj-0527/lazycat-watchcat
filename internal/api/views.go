@@ -192,7 +192,7 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	for _, state := range states {
 		a := apps[state.AppID]
 		if a == nil {
-			a = &app{ID: state.AppID, Title: state.Title, Versions: map[string]int{}, StatusCounts: map[string]int{}}
+			a = &app{ID: state.AppID, Title: localizedAppTitle(state.AppID, state.Title), Versions: map[string]int{}, StatusCounts: map[string]int{}}
 			apps[state.AppID] = a
 		}
 		instanceResource := instanceResources[state.DeviceID+"\x00"+state.AppID]
@@ -238,6 +238,33 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(userList, func(i, j int) bool { return userList[i]["name"] < userList[j]["name"] })
 	writeJSON(w, 200, map[string]any{"items": out, "users": userList, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
+}
+
+func localizedAppTitle(appID, fallback string) string {
+	if title := map[string]string{
+		"cloud.lazycat.app.contacts":                    "懒猫通讯录",
+		"cloud.lazycat.app.downloader":                  "懒猫下载器",
+		"cloud.lazycat.app.movie":                       "懒猫影视",
+		"cloud.lazycat.app.photo":                       "懒猫相册",
+		"cloud.lazycat.app.todolist":                    "懒猫清单",
+		"cloud.lazycat.app.video":                       "懒猫视频",
+		"cloud.lazycat.shell.appstore":                  "应用商店",
+		"cloud.lazycat.shell.backup":                    "备份与恢复",
+		"cloud.lazycat.shell.files":                     "懒猫云盘",
+		"cloud.lazycat.shell.home":                      "桌面",
+		"cloud.lazycat.shell.settings":                  "系统设置",
+		"cloud.lazycat.developer.tools":                 "开发者工具",
+		"cloud.lazycat.app.forward":                     "端口转发",
+		"cloud.lazycat.app.cloudmount":                  "OpenList 挂载工具",
+		"cloud.lazycat.app.testflight":                  "测试飞行",
+		"cloud.lazycat.app.lazycat-agent-browser-skill": "懒猫智能体浏览器",
+	}[appID]; title != "" {
+		return title
+	}
+	if strings.TrimSpace(fallback) != "" {
+		return fallback
+	}
+	return appID
 }
 
 func (s *Server) SyncRuntimeApplications(ctx context.Context, uid string) (int, error) {
