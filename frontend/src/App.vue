@@ -94,6 +94,18 @@ async function loadShell() {
     shellLoading = false
   }
 }
+async function checkVersion() {
+  try {
+    const next = await api<{ version: string }>(`/api/v1/version?ts=${Date.now()}`, { cache: 'no-store' })
+    if (version.value !== '—' && version.value !== next.version) {
+      window.location.reload()
+      return
+    }
+    version.value = next.version
+  } catch {
+    if (version.value === '—') version.value = '—'
+  }
+}
 function submitGlobalSearch() {
   const value = globalQuery.value.trim().toLowerCase()
   if (!value) return
@@ -126,12 +138,11 @@ onMounted(async () => {
   syncHash()
   window.addEventListener('hashchange', syncHash)
   void loadShell()
-  shellTimer = window.setInterval(loadShell, 30_000)
-  try {
-    version.value = (await api<{ version: string }>('/api/v1/version')).version
-  } catch {
-    version.value = '—'
-  }
+  void checkVersion()
+  shellTimer = window.setInterval(() => {
+    void loadShell()
+    void checkVersion()
+  }, 30_000)
 })
 onBeforeUnmount(() => {
   deviceThemeQuery?.removeEventListener('change', syncDeviceTheme)

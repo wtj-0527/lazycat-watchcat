@@ -46,4 +46,10 @@ func TestStaticCachePolicy(t *testing.T) {
 	if got := asset.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Fatalf("asset cache policy=%q", got)
 	}
+
+	version := httptest.NewRecorder()
+	handler.ServeHTTP(version, httptest.NewRequest(http.MethodGet, "/api/v1/version", nil))
+	if got := version.Header().Get("Cache-Control"); got != "no-store, max-age=0" {
+		t.Fatalf("api cache policy=%q", got)
+	}
 }
