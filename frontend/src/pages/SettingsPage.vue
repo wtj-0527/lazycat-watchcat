@@ -46,6 +46,7 @@ const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, 
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
 const collectorHubURL = ref(localStorage.getItem('maoyanInviteEndpoint') || window.location.origin)
+const showConnectionSettings = ref(false)
 const backupLoading = ref(false)
 const backupEvidence = ref<OperationEvidence>()
 const restoreEvidence = ref<OperationEvidence>()
@@ -318,14 +319,7 @@ async function deleteUnusedImage(image: UnusedImage) {
     <div class="page-intro">
       <div><h2>{{ isOnboardingRoute ? '接入新设备' : '设置与治理' }}</h2></div>
     </div>
-    <div v-if="isOnboardingRoute" class="onboarding-progress" aria-label="接入步骤">
-      <div class="done"><b>1</b><span>选择方式</span></div>
-      <div class="done"><b>2</b><span>生成邀请</span></div>
-      <div class="active"><b>3</b><span>验证连接</span></div>
-      <div><b>4</b><span>能力探测</span></div>
-      <div><b>5</b><span>完成</span></div>
-    </div>
-    <div v-else class="settings-tabs" role="tablist" aria-label="设置分类">
+    <div v-if="!isOnboardingRoute" class="settings-tabs" role="tablist" aria-label="设置分类">
       <button
         v-for="[key, label] in tabs"
         :id="`settings-tab-${key}`"
@@ -344,52 +338,84 @@ async function deleteUnusedImage(image: UnusedImage) {
     <p v-if="settingsEvidence" class="operation-evidence" :class="settingsEvidence.status" role="status">{{ settingsEvidence.message }}</p>
 
     <template v-if="data && tab === 'onboarding'">
-      <div class="onboarding-layout">
-        <section class="card">
-          <div class="section-title"><div><h2>邀请新设备</h2><span class="muted">生成一次性设备邀请，在任意已安装猫眼 Collector 的设备上粘贴即可加入。</span></div></div>
-          <ol class="onboarding-steps">
-            <li><span>1</span><div><b>生成邀请</b><p>邀请只能使用一次，并在到期后自动失效。</p></div><button class="primary-button" :disabled="pairingLoading" @click="createPairingCode">{{ pairingLoading ? '生成中…' : '生成设备邀请' }}</button></li>
-            <li><span>2</span><div><b>发送到目标设备</b><p>复制完整邀请，不需要分别传递地址、端口和配对码。</p></div><StatusPill :status="pairing ? 'available' : 'unknown'" /></li>
-            <li><span>3</span><div><b>安全接入</b><p>目标设备验证邀请后签发独立身份，并开始上报真实指标。</p></div><StatusPill :status="data.settings.embeddedCollector ? 'available' : 'unknown'" /></li>
-          </ol>
-          <div v-if="pairing" class="pairing-code-box">
-            <span>一次性设备邀请已就绪</span>
-            <strong>{{ pairing.code }}</strong>
-            <small>有效期至 {{ dateTime(pairing.expiresAt) }}</small>
-            <div class="button-row">
-              <button class="primary-button" @click="copyPairingLink">复制设备邀请</button>
-              <button class="secondary-button tiny" @click="copyPairingCode">仅复制配对码</button>
+      <div class="device-connect-page">
+        <section class="connect-hero">
+          <div class="connect-hero-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M8.5 15.5l7-7M7 17H5.5a4.5 4.5 0 010-9H9m6-1h3.5a4.5 4.5 0 010 9H15" /></svg>
+          </div>
+          <div class="connect-hero-copy">
+            <span class="connect-eyebrow">安全设备接入</span>
+            <h1>连接另一台设备</h1>
+            <p>生成一个一次性邀请，在目标设备粘贴后即可建立加密连接。无需分别配置设备名称、地址和配对码。</p>
+            <div class="connect-hero-meta">
+              <span><i />一次性使用</span>
+              <span><i />自动过期</span>
+              <span><i />独立设备身份</span>
             </div>
           </div>
-          <div class="pairing-target-guide">
-            <b>在目标设备上</b>
-            <ol>
-              <li>安装猫眼 Collector，并打开设备接入入口</li>
-              <li>粘贴“设备邀请”</li>
-              <li>确认加入，等待设备出现在设备列表</li>
-            </ol>
+          <button class="primary-button connect-generate-button" :disabled="pairingLoading" @click="createPairingCode">
+            {{ pairingLoading ? '正在生成…' : pairing ? '重新生成邀请' : '生成设备邀请' }}
+          </button>
+        </section>
+
+        <section v-if="pairing" class="invite-ready-card" aria-live="polite">
+          <div class="invite-ready-heading">
+            <div class="invite-success-icon" aria-hidden="true">✓</div>
+            <div>
+              <span>邀请已生成</span>
+              <h2>复制后发送到目标设备</h2>
+            </div>
+            <small>有效期至 {{ dateTime(pairing.expiresAt) }}</small>
           </div>
-          <details class="pairing-invite-panel">
-            <summary>高级连接设置</summary>
-            <p>通常无需修改。仅当目标设备无法访问当前猫眼地址时，改为局域网可达地址或你手动配置的转发地址。</p>
+          <div class="invite-code-row">
+            <div>
+              <span>配对码</span>
+              <strong>{{ pairing.code }}</strong>
+            </div>
+            <button class="primary-button" @click="copyPairingLink">复制设备邀请</button>
+          </div>
+          <div class="invite-ready-footer">
+            <span>邀请内已包含连接地址与配对码</span>
+            <div>
+              <button class="text-button" @click="copyPairingCode">仅复制配对码</button>
+              <button class="text-button" @click="showConnectionSettings = !showConnectionSettings">
+                {{ showConnectionSettings ? '收起连接设置' : '修改连接地址' }}
+              </button>
+            </div>
+          </div>
+          <div v-if="showConnectionSettings" class="connection-settings-panel">
             <label>
               <span>目标设备可访问的猫眼地址</span>
               <input v-model="collectorHubURL" type="url" placeholder="https://maoyan.example.com">
             </label>
-            <small>设备邀请已包含此地址和一次性配对码。配对码位于 URL 的 <code>#</code> 片段，不会随普通 HTTP 请求写入访问日志。</small>
-          </details>
+            <p>仅当目标设备无法访问当前地址时修改。可以填写局域网可达地址，或你手动配置的转发地址。</p>
+          </div>
         </section>
-        <aside class="card deployment-card">
-          <div class="section-title compact"><div><h2>当前部署</h2><span class="muted">Production profile</span></div></div>
-          <dl class="definition-list">
-            <div><dt>应用版本</dt><dd>v{{ data.settings.appVersion }}</dd></div>
-            <div><dt>部署模式</dt><dd>单一 LPK</dd></div>
-            <div><dt>本机 Collector</dt><dd>{{ data.settings.embeddedCollector ? '已内置' : '未启用' }}</dd></div>
-            <div><dt>用户模式</dt><dd>{{ data.settings.singleUser ? '单用户' : '多用户' }}</dd></div>
-            <div><dt>设备上限</dt><dd>{{ data.settings.maxDevices }}</dd></div>
-          </dl>
-          <p class="production-note">仅安装一个猫眼 LPK；Hub、Web UI、SQLite、告警、巡检、通知和本机 Collector 同包运行。</p>
-        </aside>
+
+        <div class="connect-guide-grid">
+          <section class="connect-guide-card">
+            <div class="connect-card-heading">
+              <span class="connect-card-icon target" aria-hidden="true">↗</span>
+              <div><h2>在目标设备上完成</h2><p>整个过程只需要粘贴一次。</p></div>
+            </div>
+            <ol class="connect-steps">
+              <li><b>1</b><div><strong>打开接入入口</strong><span>安装猫眼 Collector，并进入设备接入页面。</span></div></li>
+              <li><b>2</b><div><strong>粘贴设备邀请</strong><span>无需再填写主机名、地址或端口。</span></div></li>
+              <li><b>3</b><div><strong>确认加入</strong><span>首次指标上报后，设备会自动出现在列表中。</span></div></li>
+            </ol>
+          </section>
+          <section class="connect-guide-card">
+            <div class="connect-card-heading">
+              <span class="connect-card-icon secure" aria-hidden="true">✓</span>
+              <div><h2>连接受到保护</h2><p>每台设备使用独立身份。</p></div>
+            </div>
+            <ul class="security-list">
+              <li><i>✓</i><div><strong>邀请仅能使用一次</strong><span>使用后立即失效，过期邀请无法再次配对。</span></div></li>
+              <li><i>✓</i><div><strong>设备身份独立签发</strong><span>连接建立后使用独立证书上报数据。</span></div></li>
+              <li><i>✓</i><div><strong>随时撤销设备</strong><span>从设备列表删除后，需要新邀请才能重新加入。</span></div></li>
+            </ul>
+          </section>
+        </div>
       </div>
     </template>
 
