@@ -118,6 +118,9 @@ describe('production state helpers', () => {
     expect(storageRiskStatus(point('disk.nvme.media_errors', 1))).toBe('critical')
     expect(storageRiskStatus(point('disk.nvme.critical_warning', 1, 'bitmask'))).toBe('critical')
     expect(storageRiskStatus(point('disk.ata.reallocated_sectors', 1))).toBe('warning')
+    expect(storageRiskStatus(point('disk.ata.pending_sectors', 1))).toBe('critical')
+    expect(storageRiskStatus(point('disk.ata.offline_uncorrectable', 1))).toBe('critical')
+    expect(storageRiskStatus(point('disk.ata.reported_uncorrectable', 1))).toBe('critical')
     expect(storageRiskAdvice(point('disk.ata.reallocated_sectors', 1))).toContain('坏扇区')
 
     const root = point('filesystem.root.usage', 20, '%')

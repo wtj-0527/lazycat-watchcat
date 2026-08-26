@@ -40,6 +40,9 @@ func (f *fakeDockerMaintenance) DeleteUnusedImage(_ context.Context, imageID str
 func (f *fakeDockerMaintenance) CollectStorageInventory(context.Context, time.Time) ([]protocol.MetricPoint, []string) {
 	return nil, nil
 }
+func (f *fakeDockerMaintenance) CollectSMART(context.Context, time.Time) ([]protocol.MetricPoint, []string) {
+	return nil, nil
+}
 
 func TestDockerImagePreviewAndPruneAreAudited(t *testing.T) {
 	root := t.TempDir()

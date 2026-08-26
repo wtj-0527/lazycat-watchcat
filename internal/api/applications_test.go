@@ -107,6 +107,11 @@ func TestTemperatureAlertsUseStableSensorClasses(t *testing.T) {
 	if severity, _ := metricAlert("system.temperature", 86, "celsius", map[string]string{"sensor": "nvme_composite"}); severity != "warning" {
 		t.Fatalf("NVMe composite threshold mismatch, severity=%q", severity)
 	}
+	for _, metric := range []string{"disk.ata.pending_sectors", "disk.ata.offline_uncorrectable", "disk.ata.reported_uncorrectable"} {
+		if severity, _ := metricAlert(metric, 1, "count", map[string]string{"device": "sda"}); severity != "critical" {
+			t.Fatalf("%s severity=%q", metric, severity)
+		}
+	}
 }
 
 type fakeRuntimePackageManager struct {

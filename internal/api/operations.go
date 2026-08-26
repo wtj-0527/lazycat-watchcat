@@ -15,6 +15,7 @@ type dockerMaintenance interface {
 	PruneUnusedImages(context.Context) (collector.ImagePruneResult, error)
 	DeleteUnusedImage(context.Context, string) (collector.ImageDeleteResult, error)
 	CollectStorageInventory(context.Context, time.Time) ([]protocol.MetricPoint, []string)
+	CollectSMART(context.Context, time.Time) ([]protocol.MetricPoint, []string)
 }
 
 func (s *Server) versionView(w http.ResponseWriter, _ *http.Request) {
@@ -26,10 +27,13 @@ func (s *Server) storageCheck(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusServiceUnavailable, "storage_check_unavailable", "存储只读检查服务未配置")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 	now := time.Now().UTC()
 	points, warnings := s.docker.CollectStorageInventory(ctx, now)
+	smartPoints, smartWarnings := s.docker.CollectSMART(ctx, now)
+	points = append(points, smartPoints...)
+	warnings = append(warnings, smartWarnings...)
 	if len(points) == 0 {
 		problem(w, http.StatusServiceUnavailable, "storage_check_failed", "未获得物理磁盘或 Btrfs 数据")
 		return

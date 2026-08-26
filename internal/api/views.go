@@ -1306,6 +1306,7 @@ func isHealthMetric(name string) bool {
 	case "system.cpu.usage", "filesystem.root.usage", "btrfs.usage", "system.memory.usage",
 		"system.temperature", "container.memory.usage_percent", "disk.temperature",
 		"disk.nvme.media_errors", "disk.nvme.critical_warning", "disk.ata.reallocated_sectors",
+		"disk.ata.pending_sectors", "disk.ata.offline_uncorrectable", "disk.ata.reported_uncorrectable",
 		"lpk.application.healthy":
 		return true
 	default:
@@ -1426,6 +1427,18 @@ func metricAlertWithRules(name string, value float64, unit string, labels map[st
 	case "disk.ata.reallocated_sectors":
 		if value > 0 {
 			return "warning", fmt.Sprintf("重映射扇区 %.0f", value)
+		}
+	case "disk.ata.pending_sectors":
+		if value > 0 {
+			return "critical", fmt.Sprintf("待处理扇区 %.0f", value)
+		}
+	case "disk.ata.offline_uncorrectable":
+		if value > 0 {
+			return "critical", fmt.Sprintf("离线不可校正扇区 %.0f", value)
+		}
+	case "disk.ata.reported_uncorrectable":
+		if value > 0 {
+			return "critical", fmt.Sprintf("已报告不可校正错误 %.0f", value)
 		}
 	case "lpk.application.healthy":
 		if value < 1 {

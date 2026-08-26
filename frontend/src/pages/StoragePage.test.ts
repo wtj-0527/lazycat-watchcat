@@ -104,12 +104,46 @@ describe('StoragePage', () => {
     await flushPromises()
 
     expect(wrapper.get('.storage-resource-card').text()).toContain('备份盘')
-    expect(wrapper.get('.storage-resource-card').text()).toContain('sdb · WDC WD40EZAX')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('猫盒 · 备份盘')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('sdb · Western Digital')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('WDC WD40EZAX · WD-TEST')
     expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷')
     expect(wrapper.text()).not.toContain('最高使用率卷 · 14 天趋势')
     expect(wrapper.findAll('.storage-history-panel')).toHaveLength(2)
     expect(wrapper.get('.storage-resource-card').text()).toContain('磁盘 I/O 趋势')
     expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · 使用趋势')
+    wrapper.unmount()
+  })
+
+  it('keeps identical Linux device names separated by WatchCat device', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [
+          { deviceId: 'nasw', deviceName: 'nasw', name: 'disk.capacity', value: 1_000_000_000_000, unit: 'bytes', labels: { device: 'sda', model: 'ST1000LM048-2E7172', serial: 'SEAGATE-1', media: 'hdd', transport: 'sata' }, collectedAt },
+          { deviceId: 'canway', deviceName: 'canway', name: 'disk.capacity', value: 2_000_000_000_000, unit: 'bytes', labels: { device: 'sda', model: 'TOSHIBA MQ04ABD200', serial: 'TOSHIBA-1', media: 'hdd', transport: 'sata' }, collectedAt },
+          { deviceId: 'nasw', deviceName: 'nasw', name: 'btrfs.usage', value: 10, unit: '%', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+          { deviceId: 'nasw', deviceName: 'nasw', name: 'btrfs.size', value: 1_000_000_000_000, unit: 'bytes', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+          { deviceId: 'canway', deviceName: 'canway', name: 'btrfs.usage', value: 20, unit: '%', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+          { deviceId: 'canway', deviceName: 'canway', name: 'btrfs.size', value: 2_000_000_000_000, unit: 'bytes', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+        ],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+    const cards = wrapper.findAll('.storage-expanded-disk')
+
+    expect(cards).toHaveLength(2)
+    expect(cards[0].text() + cards[1].text()).toContain('nasw · 主数据盘')
+    expect(cards[0].text() + cards[1].text()).toContain('canway · 主数据盘')
+    expect(cards[0].text() + cards[1].text()).toContain('sda · Seagate')
+    expect(cards[0].text() + cards[1].text()).toContain('sda · Toshiba')
+    expect(wrapper.findAll('.volume-panel')).toHaveLength(2)
     wrapper.unmount()
   })
 })

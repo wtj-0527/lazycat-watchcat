@@ -178,8 +178,15 @@ func parseSmart(raw []byte, device string, now time.Time) ([]protocol.MetricPoin
 		}
 	}
 	for _, a := range s.ATASmartAttributes.Table {
-		if a.Name == "Reallocated_Sector_Ct" {
+		switch a.Name {
+		case "Reallocated_Sector_Ct":
 			add("disk.ata.reallocated_sectors", a.Raw.Value, "count")
+		case "Current_Pending_Sector":
+			add("disk.ata.pending_sectors", a.Raw.Value, "count")
+		case "Offline_Uncorrectable":
+			add("disk.ata.offline_uncorrectable", a.Raw.Value, "count")
+		case "Reported_Uncorrect":
+			add("disk.ata.reported_uncorrectable", a.Raw.Value, "count")
 		}
 	}
 	if len(p) == 0 {

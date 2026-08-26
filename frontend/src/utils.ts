@@ -57,6 +57,9 @@ export function storageRiskStatus(point: Metric): 'critical' | 'warning' | undef
       return undefined
     case 'disk.nvme.media_errors':
     case 'disk.nvme.critical_warning':
+    case 'disk.ata.pending_sectors':
+    case 'disk.ata.offline_uncorrectable':
+    case 'disk.ata.reported_uncorrectable':
       return point.value > 0 ? 'critical' : undefined
     case 'disk.ata.reallocated_sectors':
       return point.value > 0 ? 'warning' : undefined
@@ -68,6 +71,9 @@ export function storageRiskStatus(point: Metric): 'critical' | 'warning' | undef
 export function storageRiskAdvice(point: Metric): string {
   if (point.name === 'disk.nvme.media_errors') return '检查 NVMe 健康与备份'
   if (point.name === 'disk.nvme.critical_warning') return '立即检查 NVMe 健康与备份'
+  if (point.name === 'disk.ata.pending_sectors') return '立即备份并更换磁盘'
+  if (point.name === 'disk.ata.offline_uncorrectable') return '立即备份并更换磁盘'
+  if (point.name === 'disk.ata.reported_uncorrectable') return '立即备份并检查磁盘与连接'
   if (point.name === 'disk.ata.reallocated_sectors') return '检查磁盘坏扇区趋势与备份'
   if (point.name === 'disk.temperature') return '检查散热和负载'
   return '清理空间或扩容'

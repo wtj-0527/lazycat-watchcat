@@ -432,6 +432,21 @@ const storageDisks = computed<StorageDiskView[]>(() => {
       if (current.status !== 'critical') current.status = 'warning'
       current.smartEvidence.push(`重映射扇区 ${formatNumber(point.value, 0)}`)
     }
+    if (point.name === 'disk.ata.pending_sectors' && point.value > 0) {
+      current.smartObserved = true
+      current.status = 'critical'
+      current.smartEvidence.push(`待处理扇区 ${formatNumber(point.value, 0)}`)
+    }
+    if (point.name === 'disk.ata.offline_uncorrectable' && point.value > 0) {
+      current.smartObserved = true
+      current.status = 'critical'
+      current.smartEvidence.push(`离线不可校正 ${formatNumber(point.value, 0)}`)
+    }
+    if (point.name === 'disk.ata.reported_uncorrectable' && point.value > 0) {
+      current.smartObserved = true
+      current.status = 'critical'
+      current.smartEvidence.push(`已报告不可校正 ${formatNumber(point.value, 0)}`)
+    }
     devices.set(device, current)
   }
   for (const disk of devices.values()) {

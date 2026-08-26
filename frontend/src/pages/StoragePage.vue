@@ -11,7 +11,17 @@ import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
 interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[]; summary: { totalBytes: number; fillWithin30Days: number } }
-interface VolumeResource { usage: Metric; mount: string; size: number; free: number; filesystem: string; backingDevice: string; physicalDevice: string }
+interface VolumeResource {
+  key: string
+  deviceId: string
+  usage: Metric
+  mount: string
+  size: number
+  free: number
+  filesystem: string
+  backingDevice: string
+  physicalDevice: string
+}
 
 const checking = ref(false)
 const checkMessage = ref('')
@@ -39,8 +49,11 @@ const itemList = computed(() => data.value?.items || [])
 const riskStatus = (item: Metric) => item.risk || storageRiskStatus(item)
 const metricTime = (item: Metric) => new Date(item.collectedAt).getTime()
 function latestMetric(items: Metric[]) { return [...items].sort((a, b) => metricTime(b) - metricTime(a))[0] }
-function metricFor(device: string, name: string) {
-  return latestMetric(itemList.value.filter((item) => String(item.labels?.device || '').replace('/dev/', '') === device.replace('/dev/', '') && item.name === name))
+function metricFor(deviceId: string, device: string, name: string) {
+  return latestMetric(itemList.value.filter((item) =>
+    item.deviceId === deviceId
+    && String(item.labels?.device || '').replace('/dev/', '') === device.replace('/dev/', '')
+    && item.name === name))
 }
 function physicalDeviceFromBacking(backing: string) {
   const name = backing.split('/').pop() || ''
@@ -63,6 +76,21 @@ function diskPurpose(device: string, diskVolumes: VolumeResource[]) {
   if (diskVolumes.some((volume) => volume.mount.startsWith('/lzcsys/storage/'))) return '扩展数据盘'
   return device.startsWith('nvme') ? '固态磁盘' : '未挂载磁盘'
 }
+function diskBrand(model?: string, vendor?: string) {
+  if (vendor?.trim()) return vendor.trim()
+  const value = String(model || '').trim()
+  const upper = value.toUpperCase()
+  if (upper.startsWith('TOSHIBA')) return 'Toshiba'
+  if (upper.startsWith('WDC ') || upper.startsWith('WD_') || upper.startsWith('WD ')) return 'Western Digital'
+  if (/^ST\d/.test(upper)) return 'Seagate'
+  if (upper.startsWith('LEXAR')) return 'Lexar'
+  if (upper.startsWith('SAMSUNG')) return 'Samsung'
+  if (upper.startsWith('KINGSTON')) return 'Kingston'
+  if (upper.startsWith('CRUCIAL')) return 'Crucial'
+  if (upper.startsWith('MICRON')) return 'Micron'
+  if (upper.startsWith('INTEL')) return 'Intel'
+  return '品牌未知'
+}
 
 const volumes = computed<VolumeResource[]>(() => {
   const btrfsUsage = itemList.value.filter((item) => item.name === 'btrfs.usage')
@@ -70,16 +98,25 @@ const volumes = computed<VolumeResource[]>(() => {
   const latestByMount = new Map<string, Metric>()
   for (const usage of usageItems) {
     const mount = usage.labels?.mount || '未知卷'
-    const current = latestByMount.get(mount)
-    if (!current || (!current.labels?.backing_device && usage.labels?.backing_device) || metricTime(usage) > metricTime(current)) latestByMount.set(mount, usage)
+    const key = `${usage.deviceId}\u0000${mount}`
+    const current = latestByMount.get(key)
+    if (!current || (!current.labels?.backing_device && usage.labels?.backing_device) || metricTime(usage) > metricTime(current)) latestByMount.set(key, usage)
   }
   return [...latestByMount.values()].map((usage) => {
     const mount = usage.labels?.mount || '未知卷'
-    const atMount = (name: string) => latestMetric(itemList.value.filter((item) => item.name === name && item.labels?.mount === mount))
+    const deviceId = usage.deviceId || ''
+    const key = `${deviceId}\u0000${mount}`
+    const atMount = (name: string) => latestMetric(itemList.value.filter((item) =>
+      item.deviceId === deviceId && item.name === name && item.labels?.mount === mount))
     const size = atMount('btrfs.size')
-    const free = latestMetric(itemList.value.filter((item) => (item.name === 'btrfs.free_estimated' || item.name === 'filesystem.root.available') && item.labels?.mount === mount))
+    const free = latestMetric(itemList.value.filter((item) =>
+      item.deviceId === deviceId
+      && (item.name === 'btrfs.free_estimated' || item.name === 'filesystem.root.available')
+      && item.labels?.mount === mount))
     const backingDevice = usage.labels?.backing_device || size?.labels?.backing_device || ''
     return {
+      key,
+      deviceId,
       usage,
       mount,
       size: size?.value || (free?.value && usage.value < 100 ? free.value / (1 - usage.value / 100) : 0),
@@ -97,24 +134,36 @@ const physicalDisks = computed(() => {
   const unique = new Map<string, Metric>()
   for (const item of devices) {
     const device = String(item.labels?.device || '').replace('/dev/', '')
-    const current = unique.get(device)
-    if (device && (!current || (!current.labels?.serial && item.labels?.serial) || metricTime(item) > metricTime(current))) unique.set(device, item)
+    const key = `${item.deviceId}\u0000${device}`
+    const current = unique.get(key)
+    if (device && (!current || (!current.labels?.serial && item.labels?.serial) || metricTime(item) > metricTime(current))) unique.set(key, item)
   }
-  return [...unique.entries()].map(([device, base]) => {
-    const identity = latestMetric(itemList.value.filter((item) => String(item.labels?.device || '').replace('/dev/', '') === device && item.labels?.serial))
-      || latestMetric(itemList.value.filter((item) => String(item.labels?.device || '').replace('/dev/', '') === device && item.labels?.model))
-    const temperature = metricFor(device, 'disk.temperature')
-    const hours = metricFor(device, 'disk.power_on_hours')
-    const risks = itemList.value.filter((item) => String(item.labels?.device || '').replace('/dev/', '') === device && riskStatus(item))
-    const diskVolumes = volumes.value.filter((volume) => volume.physicalDevice === device)
+  return [...unique.entries()].map(([key, base]) => {
+    const deviceId = base.deviceId || ''
+    const device = String(base.labels?.device || '').replace('/dev/', '')
+    const identity = latestMetric(itemList.value.filter((item) => item.deviceId === deviceId && String(item.labels?.device || '').replace('/dev/', '') === device && item.labels?.serial))
+      || latestMetric(itemList.value.filter((item) => item.deviceId === deviceId && String(item.labels?.device || '').replace('/dev/', '') === device && item.labels?.model))
+    const temperature = metricFor(deviceId, device, 'disk.temperature')
+    const hours = metricFor(deviceId, device, 'disk.power_on_hours')
+    const risks = itemList.value.filter((item) => item.deviceId === deviceId && String(item.labels?.device || '').replace('/dev/', '') === device && riskStatus(item))
+    const diskVolumes = volumes.value.filter((volume) => volume.deviceId === deviceId && volume.physicalDevice === device)
     const status = risks.some((item) => riskStatus(item) === 'critical') ? 'critical' : risks.length ? 'warning' : 'healthy'
-    return { device, base, model: identity?.labels?.model || base.labels?.model, serial: identity?.labels?.serial || base.labels?.serial, temperature, hours, risks, volumes: diskVolumes, purpose: diskPurpose(device, diskVolumes), status }
+    const model = identity?.labels?.model || base.labels?.model
+    return {
+      key, deviceId, device, base, model,
+      brand: diskBrand(model, identity?.labels?.vendor || base.labels?.vendor),
+      serial: identity?.labels?.serial || base.labels?.serial,
+      temperature, hours, risks, volumes: diskVolumes,
+      purpose: diskPurpose(device, diskVolumes), status,
+    }
   }).sort((a, b) => Number(b.status === 'critical') - Number(a.status === 'critical') || Number(b.status === 'warning') - Number(a.status === 'warning') || b.base.value - a.base.value)
 })
-const orphanVolumes = computed(() => volumes.value.filter((volume) => !physicalDisks.value.some((disk) => disk.device === volume.physicalDevice)))
+const orphanVolumes = computed(() => volumes.value.filter((volume) =>
+  !physicalDisks.value.some((disk) => disk.deviceId === volume.deviceId && disk.device === volume.physicalDevice)))
 
 const btrfsVolumes = computed(() => volumes.value.filter((item) => item.filesystem === 'Btrfs').map((volume) => {
-  const atMount = (name: string) => latestMetric(itemList.value.filter((item) => item.name === name && item.labels?.mount === volume.mount))
+  const atMount = (name: string) => latestMetric(itemList.value.filter((item) =>
+    item.deviceId === volume.deviceId && item.name === name && item.labels?.mount === volume.mount))
   const errors = ['btrfs.write_io_errors', 'btrfs.read_io_errors', 'btrfs.flush_io_errors', 'btrfs.corruption_errors', 'btrfs.generation_errors'].reduce((sum, name) => sum + (atMount(name)?.value || 0), 0)
   const missing = atMount('btrfs.device_missing')?.value || 0
   const scrubKnown = atMount('btrfs.scrub.known')?.value === 1
@@ -143,8 +192,10 @@ function historyRange() {
 function chartPoint(item: Metric) {
   return { value: item.value, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt) }
 }
-function counterRates(items: Metric[], device: string) {
-  const points = items.filter((item) => String(item.labels?.device || '').replace('/dev/', '') === device).sort((a, b) => metricTime(a) - metricTime(b))
+function counterRates(items: Metric[], deviceId: string, device: string) {
+  const points = items.filter((item) =>
+    (!item.deviceId || item.deviceId === deviceId)
+    && String(item.labels?.device || '').replace('/dev/', '') === device).sort((a, b) => metricTime(a) - metricTime(b))
   return points.slice(1).map((item, index) => {
     const previous = points[index]
     const seconds = Math.max(1, (metricTime(item) - metricTime(previous)) / 1000)
@@ -183,14 +234,14 @@ async function loadAllHistory() {
         ...volumeNames.map((name) => api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=${encodeURIComponent(name)}&${historyRange()}`)),
       ])
       for (const disk of group.disks) {
-        nextDisks[disk.device] = [
-          { name: '读取', color: '#2563eb', points: counterRates(read.items || [], disk.device) },
-          { name: '写入', color: '#10b981', points: counterRates(write.items || [], disk.device) },
+        nextDisks[disk.key] = [
+          { name: '读取', color: '#2563eb', points: counterRates(read.items || [], deviceId, disk.device) },
+          { name: '写入', color: '#10b981', points: counterRates(write.items || [], deviceId, disk.device) },
         ]
       }
       const byName = new Map(volumeNames.map((name, index) => [name, volumeResults[index]?.items || []]))
       for (const volume of group.volumes) {
-        nextVolumes[volume.mount] = [{ name: volumeName(volume.mount), color: '#2563eb', points: (byName.get(volume.usage.name) || []).filter((item) => item.labels?.mount === volume.mount).map(chartPoint) }]
+        nextVolumes[volume.key] = [{ name: volumeName(volume.mount), color: '#2563eb', points: (byName.get(volume.usage.name) || []).filter((item) => (!item.deviceId || item.deviceId === deviceId) && item.labels?.mount === volume.mount).map(chartPoint) }]
       }
     }))
     if (request === historyRequest) { diskHistory.value = nextDisks; volumeHistory.value = nextVolumes }
@@ -245,33 +296,33 @@ async function runStorageCheck() {
       <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
       <div v-if="historyLoading" class="inline-empty">正在读取全部磁盘与卷的历史数据…</div>
       <div class="storage-expanded-list">
-        <article v-for="disk in physicalDisks" :key="disk.device" class="storage-expanded-disk">
+        <article v-for="disk in physicalDisks" :key="disk.key" class="storage-expanded-disk">
           <div class="storage-expanded-disk-heading">
-            <div class="storage-expanded-identity"><span class="storage-device-icon">{{ disk.base.labels?.media === 'ssd' ? 'SSD' : 'HDD' }}</span><div><small>{{ disk.purpose }}</small><h3>{{ disk.device }} · {{ disk.model || '型号待采集' }}</h3><p>{{ disk.serial || '序列号未知' }}</p></div></div>
+            <div class="storage-expanded-identity"><span class="storage-device-icon">{{ disk.base.labels?.media === 'ssd' ? 'SSD' : 'HDD' }}</span><div><small>{{ disk.base.deviceName || '未知设备' }} · {{ disk.purpose }}</small><h3>{{ disk.device }} · {{ disk.brand }}</h3><p>{{ disk.model || '型号待采集' }} · {{ disk.serial || '序列号未知' }}</p></div></div>
             <StatusPill :status="disk.status" />
           </div>
           <div class="storage-detail-stats"><span><small>容量</small><b>{{ bytes(disk.base.value) }}</b></span><span><small>介质 / 接口</small><b>{{ (disk.base.labels?.media || '未知').toUpperCase() }} / {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</b></span><span><small>温度</small><b>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</b></span><span><small>通电时间</small><b>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</b></span></div>
           <div class="storage-expanded-charts" :class="{ single: !disk.volumes.length }">
-            <section class="storage-history-panel"><div><h4>磁盘 I/O 趋势</h4><span class="muted">读取 / 写入平均速率</span></div><LineChart :series="diskHistory[disk.device] || []" :min="0" unit=" MiB/s" :height="190" /></section>
-            <section v-for="volume in disk.volumes" :key="volume.mount" class="storage-history-panel volume-panel">
+            <section class="storage-history-panel"><div><h4>磁盘 I/O 趋势</h4><span class="muted">读取 / 写入平均速率</span></div><LineChart :series="diskHistory[disk.key] || []" :min="0" unit=" MiB/s" :height="190" /></section>
+            <section v-for="volume in disk.volumes" :key="volume.key" class="storage-history-panel volume-panel">
               <div class="storage-volume-heading"><div><h4>{{ volumeName(volume.mount) }} · 使用趋势</h4><span class="muted">{{ volume.mount }}</span></div><StatusPill :status="volume.usage.value >= 90 ? 'warning' : 'healthy'" /></div>
               <div class="storage-volume-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
-              <LineChart :series="volumeHistory[volume.mount] || []" :min="0" :max="100" unit="%" :height="190" />
+              <LineChart :series="volumeHistory[volume.key] || []" :min="0" :max="100" unit="%" :height="190" />
             </section>
           </div>
           <p v-if="!disk.volumes.length" class="storage-unmounted-note">该磁盘当前没有已挂载卷，仍展示物理磁盘 I/O 历史。</p>
         </article>
-        <article v-for="volume in orphanVolumes" :key="`orphan-${volume.mount}`" class="storage-expanded-disk orphan-volume-card">
+        <article v-for="volume in orphanVolumes" :key="`orphan-${volume.key}`" class="storage-expanded-disk orphan-volume-card">
           <div class="storage-expanded-disk-heading"><div class="storage-expanded-identity"><span class="storage-device-icon">VOL</span><div><small>{{ volume.usage.deviceName || '未知设备' }} · 尚未关联物理磁盘</small><h3>{{ volumeName(volume.mount) }}</h3><p>{{ volume.mount }}</p></div></div><StatusPill :status="volume.usage.value >= 90 ? 'warning' : 'healthy'" /></div>
           <div class="storage-volume-summary orphan-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
-          <section class="storage-history-panel volume-panel"><div><h4>存储卷使用趋势</h4><span class="muted">等待底层设备身份后将自动归入对应物理磁盘</span></div><LineChart :series="volumeHistory[volume.mount] || []" :min="0" :max="100" unit="%" :height="190" /></section>
+          <section class="storage-history-panel volume-panel"><div><h4>存储卷使用趋势</h4><span class="muted">等待底层设备身份后将自动归入对应物理磁盘</span></div><LineChart :series="volumeHistory[volume.key] || []" :min="0" :max="100" unit="%" :height="190" /></section>
         </article>
         <div v-if="!physicalDisks.length && !orphanVolumes.length" class="inline-empty">尚未获得物理磁盘清单。</div>
       </div>
     </section>
 
     <section class="card btrfs-health-card"><div class="section-title"><div><h2>Btrfs 健康中心</h2></div><StatusPill :status="capabilityStatus('btrfs')?.status || 'unknown'" /></div>
-      <div class="btrfs-grid"><article v-for="volume in btrfsPagination.pagedItems.value" :key="volume.mount" class="btrfs-volume"><div><b>{{ volumeName(volume.mount) }}</b><StatusPill :status="volume.status" /></div><small class="muted">{{ volume.mount }}</small><dl><span><dt>整体使用率</dt><dd>{{ volume.usage.value.toFixed(1) }}%</dd></span><span><dt>预计可用</dt><dd>{{ bytes(volume.free) }}</dd></span><span><dt>已分配</dt><dd>{{ bytes(volume.allocated) }}</dd></span><span><dt>未分配</dt><dd>{{ bytes(volume.unallocated) }}</dd></span><span><dt>设备错误</dt><dd>{{ volume.errors }}</dd></span><span><dt>缺失设备空间</dt><dd>{{ volume.missing ? bytes(volume.missing) : '0 B' }}</dd></span></dl><p :class="volume.scrubKnown ? 'muted' : 'operation-evidence warning'">{{ volume.scrubKnown ? '已有 Scrub 状态记录' : '尚无 Scrub 历史，不能判定最近校验时间' }}</p></article><div v-if="!btrfsVolumes.length" class="inline-empty">Btrfs 只读采集尚未返回；点击“立即只读检查”。</div></div>
+      <div class="btrfs-grid"><article v-for="volume in btrfsPagination.pagedItems.value" :key="volume.key" class="btrfs-volume"><div><b>{{ volumeName(volume.mount) }}</b><StatusPill :status="volume.status" /></div><small class="muted">{{ volume.usage.deviceName || '未知设备' }} · {{ volume.mount }}</small><dl><span><dt>整体使用率</dt><dd>{{ volume.usage.value.toFixed(1) }}%</dd></span><span><dt>预计可用</dt><dd>{{ bytes(volume.free) }}</dd></span><span><dt>已分配</dt><dd>{{ bytes(volume.allocated) }}</dd></span><span><dt>未分配</dt><dd>{{ bytes(volume.unallocated) }}</dd></span><span><dt>设备错误</dt><dd>{{ volume.errors }}</dd></span><span><dt>缺失设备空间</dt><dd>{{ volume.missing ? bytes(volume.missing) : '0 B' }}</dd></span></dl><p :class="volume.scrubKnown ? 'muted' : 'operation-evidence warning'">{{ volume.scrubKnown ? '已有 Scrub 状态记录' : '尚无 Scrub 历史，不能判定最近校验时间' }}</p></article><div v-if="!btrfsVolumes.length" class="inline-empty">Btrfs 只读采集尚未返回；点击“立即只读检查”。</div></div>
       <AppPagination v-model:page="btrfsPagination.page.value" v-model:page-size="btrfsPagination.pageSize.value" :total="btrfsPagination.total.value" :page-count="btrfsPagination.pageCount.value" :range-start="btrfsPagination.rangeStart.value" :range-end="btrfsPagination.rangeEnd.value" label="Btrfs 卷分页" />
     </section>
 
