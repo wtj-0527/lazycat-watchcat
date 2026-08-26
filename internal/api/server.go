@@ -35,6 +35,7 @@ type Server struct {
 	analytics     chan struct{}
 	docker        dockerMaintenance
 	dockerPrune   chan struct{}
+	upstream      *collector.Upstream
 }
 
 func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
@@ -54,7 +55,8 @@ func (s *Server) ConfigureRuntimeApps(source *runtimeapps.Source, localDeviceID 
 func (s *Server) ConfigureDockerMaintenance(docker *collector.DockerCollector, localDeviceID string) {
 	s.docker, s.localDeviceID = docker, localDeviceID
 }
-func (s *Server) Handler() http.Handler { return securityHeaders(s.mux) }
+func (s *Server) ConfigureUpstream(upstream *collector.Upstream) { s.upstream = upstream }
+func (s *Server) Handler() http.Handler                          { return securityHeaders(s.mux) }
 func (s *Server) CollectorHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
@@ -66,6 +68,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	s.mux.HandleFunc("POST /api/v1/pairing-codes", s.createPairingCode)
 	s.mux.HandleFunc("POST /api/v1/collectors/pair", s.pairCollector)
+	s.mux.HandleFunc("POST /api/v1/metrics/batch", s.ingestMetrics)
+	s.mux.HandleFunc("GET /api/v1/upstream", s.upstreamStatus)
+	s.mux.HandleFunc("POST /api/v1/upstream/join", s.joinUpstream)
+	s.mux.HandleFunc("DELETE /api/v1/upstream", s.disconnectUpstream)
 	s.mux.HandleFunc("GET /api/v1/overview", s.overview)
 	s.mux.HandleFunc("GET /api/v1/devices", s.listDevices)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}", s.deviceDetail)

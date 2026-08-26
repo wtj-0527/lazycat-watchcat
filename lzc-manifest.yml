@@ -11,7 +11,7 @@ application:
 
 services:
   maoyan:
-    image: registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.16.6@sha256:f3fb60907a968038d819a147d60b70730ad5d0baf2081827cff70ce78585fb85
+    image: registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-maoyan:1.17.0@sha256:f74168d40e79aaf912a3349d41e744163a7d0d1f2885f17f3971b575a3372c34
     environment:
       - MAOYAN_ADDR=:8080
       - MAOYAN_COLLECTOR_ADDR=:8443

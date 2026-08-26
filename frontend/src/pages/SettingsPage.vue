@@ -29,24 +29,28 @@ interface ImagePruneResult { imagesDeleted: number; referencesUntagged: number; 
 interface ImageDeleteResult { imageId: string; referencesUntagged: number; deleteRecords: number }
 interface Payload {
   settings: Settings; operations: Operations; database: DatabaseStatus; backups: Backup[]; stability: Stability
-  devices: Device[]; rules: AlertRule[]; windows: MaintenanceWindow[]; audit: AuditEntry[]; unusedImages: UnusedImages
+  devices: Device[]; rules: AlertRule[]; windows: MaintenanceWindow[]; audit: AuditEntry[]; unusedImages: UnusedImages; upstream: UpstreamStatus
 }
 interface PairingCode { code: string; expiresAt: string }
+interface UpstreamStatus { paired: boolean; hubUrl?: string; deviceId?: string; lastSuccessAt?: string; lastError?: string }
 interface RestoreResult { status: string; backup: string; message: string }
 interface OperationEvidence { status: 'success' | 'warning' | 'error'; message: string }
 type Tab = 'onboarding' | 'groups' | 'capabilities' | 'thresholds' | 'notifications' | 'maintenance' | 'retention' | 'audit'
 const tabs: Array<[Tab, string]> = [
-  ['onboarding', '设备接入'], ['groups', '设备组与标签'], ['capabilities', 'Collector 能力'], ['thresholds', '告警阈值'],
+  ['groups', '设备组与标签'], ['capabilities', 'Collector 能力'], ['thresholds', '告警阈值'],
   ['notifications', '通知渠道'], ['maintenance', '维护窗口'], ['retention', '数据保留'], ['audit', '用户与审计'],
 ]
 const props = defineProps<{ initialTab?: Tab }>()
 const isOnboardingRoute = computed(() => props.initialTab === 'onboarding')
 const emit = defineEmits<{ toast: [message: string] }>()
-const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, props.initialTab || 'onboarding', 'settings-tab-')
+const { selected: tab, select: selectTab, move: moveTab } = useRovingTabs(tabs, props.initialTab || 'thresholds', 'settings-tab-')
 const pairing = ref<PairingCode>()
 const pairingLoading = ref(false)
 const collectorHubURL = ref(localStorage.getItem('maoyanInviteEndpoint') || window.location.origin)
 const showConnectionSettings = ref(false)
+const connectMode = ref<'invite' | 'join'>('invite')
+const joinInvitation = ref('')
+const joinLoading = ref(false)
 const backupLoading = ref(false)
 const backupEvidence = ref<OperationEvidence>()
 const restoreEvidence = ref<OperationEvidence>()
@@ -62,7 +66,7 @@ const maintenanceName = ref('')
 const maintenanceStart = ref('')
 const maintenanceEnd = ref('')
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
-  const [settings, operations, database, backups, stability, devices, rules, windows, audit, unusedImages] = await Promise.all([
+  const [settings, operations, database, backups, stability, devices, rules, windows, audit, unusedImages, upstream] = await Promise.all([
     api<Settings>('/api/v1/settings'), api<Operations>('/api/v1/operations'), api<DatabaseStatus>('/api/v1/database/status'),
     api<{ items: Backup[] }>('/api/v1/backups'), api<Stability>('/api/v1/stability'),
     api<{ items: Device[] }>('/api/v1/devices').catch(() => ({ items: [] })),
@@ -73,6 +77,7 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
       available: false, count: 0, totalSize: 0, danglingCount: 0, danglingSize: 0, cachedCount: 0, cachedSize: 0, items: [],
       error: reason instanceof Error ? reason.message : String(reason),
     })),
+    api<UpstreamStatus>('/api/v1/upstream').catch(() => ({ paired: false })),
   ])
   return {
     settings,
@@ -85,6 +90,7 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
     windows: windows.items || [],
     audit: audit.items || [],
     unusedImages: { ...unusedImages, items: unusedImages.items || [] },
+    upstream,
   }
 })
 const localCapability = computed(() => data.value?.operations.capabilities.filter((item) => !item.capability.startsWith('remote.')) || [])
@@ -131,6 +137,31 @@ async function copyPairingLink() {
   } catch {
     emit('toast', '请先生成邀请并填写目标设备可访问的有效地址')
   }
+}
+async function joinExistingMaoyan() {
+  if (!joinInvitation.value.trim()) {
+    emit('toast', '请先粘贴完整的设备邀请')
+    return
+  }
+  joinLoading.value = true
+  try {
+    await api<UpstreamStatus>('/api/v1/upstream/join', {
+      method: 'POST', body: JSON.stringify({ invitation: joinInvitation.value.trim() }),
+    })
+    joinInvitation.value = ''
+    await refresh()
+    emit('toast', '已加入现有猫眼，正在上报第一批指标')
+  } catch (reason) {
+    emit('toast', reason instanceof Error ? reason.message : String(reason))
+  } finally {
+    joinLoading.value = false
+  }
+}
+async function disconnectUpstream() {
+  if (!window.confirm('确定断开与现有猫眼的连接吗？本机数据不会删除，重新加入需要新的设备邀请。')) return
+  await api('/api/v1/upstream', { method: 'DELETE' })
+  await refresh()
+  emit('toast', '已断开上游连接')
 }
 async function saveDeviceMetadata(device: Device) {
   await api(`/api/v1/devices/${encodeURIComponent(device.id)}/metadata`, {
@@ -334,12 +365,17 @@ async function deleteUnusedImage(image: UnusedImage) {
       >{{ label }}</button>
     </div>
 
-    <div v-if="data" id="settings-panel" role="tabpanel" :aria-labelledby="`settings-tab-${tab}`">
+    <div v-if="data" id="settings-panel" role="tabpanel" :aria-label="isOnboardingRoute ? '设备接入' : undefined" :aria-labelledby="isOnboardingRoute ? undefined : `settings-tab-${tab}`">
     <p v-if="settingsEvidence" class="operation-evidence" :class="settingsEvidence.status" role="status">{{ settingsEvidence.message }}</p>
 
     <template v-if="data && tab === 'onboarding'">
       <div class="device-connect-page">
-        <section class="connect-hero">
+        <div class="connect-mode-switch" role="tablist" aria-label="设备接入方式">
+          <button :class="{ active: connectMode === 'invite' }" role="tab" :aria-selected="connectMode === 'invite'" @click="connectMode = 'invite'">邀请其他设备</button>
+          <button :class="{ active: connectMode === 'join' }" role="tab" :aria-selected="connectMode === 'join'" @click="connectMode = 'join'">加入现有猫眼</button>
+        </div>
+
+        <section v-if="connectMode === 'invite'" class="connect-hero">
           <div class="connect-hero-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M8.5 15.5l7-7M7 17H5.5a4.5 4.5 0 010-9H9m6-1h3.5a4.5 4.5 0 010 9H15" /></svg>
           </div>
@@ -358,7 +394,7 @@ async function deleteUnusedImage(image: UnusedImage) {
           </button>
         </section>
 
-        <section v-if="pairing" class="invite-ready-card" aria-live="polite">
+        <section v-if="connectMode === 'invite' && pairing" class="invite-ready-card" aria-live="polite">
           <div class="invite-ready-heading">
             <div class="invite-success-icon" aria-hidden="true">✓</div>
             <div>
@@ -392,14 +428,49 @@ async function deleteUnusedImage(image: UnusedImage) {
           </div>
         </section>
 
-        <div class="connect-guide-grid">
+        <section v-if="connectMode === 'join'" class="join-existing-card">
+          <div v-if="data.upstream.paired" class="joined-state">
+            <div class="invite-success-icon" aria-hidden="true">✓</div>
+            <div>
+              <span>已加入现有猫眼</span>
+              <h1>本机正在向主猫眼上报数据</h1>
+              <p>{{ data.upstream.hubUrl }}</p>
+              <small v-if="data.upstream.lastSuccessAt">最近上报 {{ ago(data.upstream.lastSuccessAt) }}</small>
+              <small v-else>连接已建立，正在等待第一批指标上报。</small>
+              <em v-if="data.upstream.lastError">{{ data.upstream.lastError }}</em>
+            </div>
+            <button class="danger-button" @click="disconnectUpstream">断开连接</button>
+          </div>
+          <template v-else>
+            <div class="join-existing-heading">
+              <span class="connect-card-icon join" aria-hidden="true">↓</span>
+              <div>
+                <span class="connect-eyebrow">加入设备群</span>
+                <h1>粘贴设备邀请</h1>
+                <p>在另一台猫眼中生成邀请，然后将完整内容粘贴到这里。本机名称会自动识别。</p>
+              </div>
+            </div>
+            <label class="join-invitation-field">
+              <span>设备邀请</span>
+              <textarea v-model="joinInvitation" autocomplete="off" placeholder="粘贴完整邀请，例如：http://猫眼地址/#pairing-code=..." />
+            </label>
+            <div class="join-actions">
+              <span>邀请只会使用一次，配对成功后不会保留原始配对码。</span>
+              <button class="primary-button" :disabled="joinLoading || !joinInvitation.trim()" @click="joinExistingMaoyan">
+                {{ joinLoading ? '正在验证并加入…' : '验证并加入' }}
+              </button>
+            </div>
+          </template>
+        </section>
+
+        <div v-if="connectMode === 'invite'" class="connect-guide-grid">
           <section class="connect-guide-card">
             <div class="connect-card-heading">
               <span class="connect-card-icon target" aria-hidden="true">↗</span>
               <div><h2>在目标设备上完成</h2><p>整个过程只需要粘贴一次。</p></div>
             </div>
             <ol class="connect-steps">
-              <li><b>1</b><div><strong>打开接入入口</strong><span>安装猫眼 Collector，并进入设备接入页面。</span></div></li>
+              <li><b>1</b><div><strong>打开目标设备上的猫眼</strong><span>进入“接入”，选择“加入现有猫眼”。</span></div></li>
               <li><b>2</b><div><strong>粘贴设备邀请</strong><span>无需再填写主机名、地址或端口。</span></div></li>
               <li><b>3</b><div><strong>确认加入</strong><span>首次指标上报后，设备会自动出现在列表中。</span></div></li>
             </ol>
@@ -413,6 +484,30 @@ async function deleteUnusedImage(image: UnusedImage) {
               <li><i>✓</i><div><strong>邀请仅能使用一次</strong><span>使用后立即失效，过期邀请无法再次配对。</span></div></li>
               <li><i>✓</i><div><strong>设备身份独立签发</strong><span>连接建立后使用独立证书上报数据。</span></div></li>
               <li><i>✓</i><div><strong>随时撤销设备</strong><span>从设备列表删除后，需要新邀请才能重新加入。</span></div></li>
+            </ul>
+          </section>
+        </div>
+        <div v-else-if="!data.upstream.paired" class="connect-guide-grid join-guide-grid">
+          <section class="connect-guide-card">
+            <div class="connect-card-heading">
+              <span class="connect-card-icon target" aria-hidden="true">↗</span>
+              <div><h2>如何获得邀请</h2><p>在作为主节点的猫眼上操作。</p></div>
+            </div>
+            <ol class="connect-steps">
+              <li><b>1</b><div><strong>打开“接入”</strong><span>选择“邀请其他设备”。</span></div></li>
+              <li><b>2</b><div><strong>生成设备邀请</strong><span>如有需要，先修改为本机可以访问的连接地址。</span></div></li>
+              <li><b>3</b><div><strong>复制并粘贴到这里</strong><span>地址和一次性配对码已经包含在同一条邀请中。</span></div></li>
+            </ol>
+          </section>
+          <section class="connect-guide-card">
+            <div class="connect-card-heading">
+              <span class="connect-card-icon secure" aria-hidden="true">✓</span>
+              <div><h2>加入后会发生什么</h2><p>本机仍可独立使用。</p></div>
+            </div>
+            <ul class="security-list">
+              <li><i>✓</i><div><strong>保留本机监控</strong><span>本机数据库、告警和页面不会被关闭。</span></div></li>
+              <li><i>✓</i><div><strong>同步真实指标</strong><span>同一批采集数据会持续上报到主猫眼。</span></div></li>
+              <li><i>✓</i><div><strong>可随时断开</strong><span>断开只删除本机上游凭据，不会删除本机历史数据。</span></div></li>
             </ul>
           </section>
         </div>

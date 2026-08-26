@@ -252,6 +252,9 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .settings-tabs button.active { background: var(--primary); color: #fff; font-weight: 600; }
 .operations-layout { display: grid; grid-template-columns: 1.35fr .65fr; gap: 16px; }
 .device-connect-page { display: grid; gap: 18px; width: 100%; max-width: 1180px; margin: 0 auto; }
+.connect-mode-switch { display: inline-flex; justify-self: start; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 11px; background: #fff; }
+.connect-mode-switch button { min-height: 36px; padding: 0 18px; border-radius: 8px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; }
+.connect-mode-switch button.active { background: var(--primary); color: #fff; box-shadow: 0 5px 12px rgba(37, 99, 235, .18); }
 .connect-hero { position: relative; display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; align-items: center; gap: 20px; min-height: 190px; padding: 30px 32px; overflow: hidden; border: 1px solid #dbe7ff; border-radius: 18px; background: linear-gradient(135deg, #fff 0%, #f6f9ff 58%, #edf4ff 100%); box-shadow: 0 12px 34px rgba(37, 99, 235, .08); }
 .connect-hero::after { position: absolute; top: -100px; right: -80px; width: 280px; height: 280px; border: 50px solid rgba(37, 99, 235, .045); border-radius: 50%; content: ''; pointer-events: none; }
 .connect-hero-icon { position: relative; z-index: 1; display: grid; place-items: center; width: 58px; height: 58px; border-radius: 17px; background: var(--primary); box-shadow: 0 10px 24px rgba(37, 99, 235, .25); }
@@ -297,7 +300,26 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .connect-steps strong, .security-list strong { display: block; font-size: 12px; }
 .connect-steps span, .security-list span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .security-list i { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #dcfce7; color: #15803d; font-size: 10px; font-style: normal; font-weight: 800; }
+.join-existing-card { padding: 30px 32px; border: 1px solid #dbe7ff; border-radius: 18px; background: #fff; box-shadow: 0 10px 30px rgba(15, 23, 42, .05); }
+.join-existing-heading { display: flex; align-items: center; gap: 16px; }
+.connect-card-icon.join { width: 52px; height: 52px; border-radius: 15px; background: #eff6ff; color: #2563eb; font-size: 22px; }
+.join-existing-heading h1 { margin: 5px 0 6px; font-size: 24px; }
+.join-existing-heading p { margin: 0; color: var(--secondary); font-size: 12px; }
+.join-invitation-field { display: grid; gap: 8px; margin-top: 24px; color: var(--secondary); font-size: 11px; font-weight: 700; }
+.join-invitation-field textarea { width: 100%; min-height: 112px; resize: vertical; padding: 14px 15px; border: 1px solid var(--border); border-radius: 11px; background: #f8fafc; color: var(--text); font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; transition: border-color .15s, box-shadow .15s; }
+.join-invitation-field textarea:focus { border-color: #60a5fa; outline: 0; box-shadow: 0 0 0 3px rgba(59, 130, 246, .12); }
+.join-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 15px; }
+.join-actions > span { color: var(--muted); font-size: 11px; }
+.join-actions .primary-button { min-width: 140px; min-height: 42px; }
+.joined-state { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 15px; }
+.joined-state > div:nth-child(2) > span { color: #15803d; font-size: 11px; font-weight: 700; }
+.joined-state h1 { margin: 4px 0 7px; font-size: 20px; }
+.joined-state p { margin: 0 0 6px; color: var(--secondary); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.joined-state small { color: var(--muted); }
+.joined-state em { display: block; margin-top: 7px; color: var(--critical); font-size: 10px; font-style: normal; }
+.join-guide-grid { align-items: start; }
 @media (max-width: 620px) {
+  .connect-mode-switch { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
   .connect-hero { grid-template-columns: 1fr; padding: 24px; }
   .connect-hero-icon { width: 48px; height: 48px; }
   .connect-generate-button { grid-column: 1; width: 100%; }
@@ -307,6 +329,12 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
   .invite-code-row .primary-button { width: 100%; }
   .invite-ready-footer { align-items: flex-start; flex-direction: column; }
   .invite-ready-footer > div { flex-wrap: wrap; }
+  .join-existing-card { padding: 24px; }
+  .join-existing-heading { align-items: flex-start; }
+  .join-actions { align-items: stretch; flex-direction: column; }
+  .join-actions .primary-button { width: 100%; }
+  .joined-state { grid-template-columns: 42px 1fr; }
+  .joined-state .danger-button { grid-column: 2; justify-self: start; }
 }
 .capability-list > div { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--border-subtle); }
 .capability-list > div:last-child { border-bottom: 0; }

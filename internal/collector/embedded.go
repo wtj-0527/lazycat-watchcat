@@ -30,12 +30,14 @@ type Embedded struct {
 	advanced   AdvancedConfig
 	hal        *HALCollector
 	docker     *DockerCollector
+	upstream   *Upstream
 	dataPath   string
 	syncAlerts func(context.Context) error
 }
 
-func (e *Embedded) DeviceID() string         { return e.deviceID }
-func (e *Embedded) Docker() *DockerCollector { return e.docker }
+func (e *Embedded) DeviceID() string               { return e.deviceID }
+func (e *Embedded) Docker() *DockerCollector       { return e.docker }
+func (e *Embedded) SetUpstream(upstream *Upstream) { e.upstream = upstream }
 
 func NewEmbedded(ctx context.Context, st *store.Store, logger *slog.Logger, syncAlerts func(context.Context) error) (*Embedded, error) {
 	hostname := envValue("LAZYCAT_BOX_NAME", "")
@@ -161,6 +163,11 @@ func (e *Embedded) collect(ctx context.Context, includeAdvanced bool) {
 	if err := e.store.IngestMetrics(ctx, batch); err != nil {
 		e.logger.Warn("embedded collector metric ingest", "error", err)
 		return
+	}
+	if e.upstream != nil {
+		sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		e.upstream.Send(sendCtx, batch)
+		cancel()
 	}
 	if e.syncAlerts != nil {
 		_ = e.syncAlerts(ctx)

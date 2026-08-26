@@ -68,6 +68,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer embedded.Close()
+	upstream := collector.NewUpstream(cfg.DataDir, logger)
+	embedded.SetUpstream(upstream)
+	handlers.ConfigureUpstream(upstream)
 	handlers.ConfigureDockerMaintenance(embedded.Docker(), embedded.DeviceID())
 	runtimeCtx, runtimeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	runtimeSource, runtimeErr := runtimeapps.New(runtimeCtx)

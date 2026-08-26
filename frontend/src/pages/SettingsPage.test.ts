@@ -26,6 +26,7 @@ beforeEach(() => {
       startedAt: now, targetEndAt: now, lastSampleAt: now, sampleCount: 1, failureCount: 0, consecutiveFailures: 0,
       databaseIntegrityOk: true, databaseLatencyMs: 1, metricFreshnessSeconds: 2, pendingNotifications: 0, qualified: false, remainingSeconds: 3600,
     }
+    if (path === '/api/v1/upstream') return { paired: false }
     throw new Error(`unexpected API call ${path}`)
   })
 })
@@ -37,11 +38,11 @@ afterEach(() => {
 
 describe('SettingsPage tabs', () => {
   it('uses roving tabindex and supports arrow, Home, and End navigation', async () => {
-    const wrapper = mount(SettingsPage, { attachTo: document.body })
+    const wrapper = mount(SettingsPage, { attachTo: document.body, props: { initialTab: 'groups' } })
     await flushPromises()
     const tabs = wrapper.findAll('[role="tab"]')
 
-    expect(tabs).toHaveLength(8)
+    expect(tabs).toHaveLength(7)
     for (const item of tabs) {
       expect(document.getElementById(item.attributes('aria-controls')!)).not.toBeNull()
     }
@@ -50,16 +51,16 @@ describe('SettingsPage tabs', () => {
     expect(tabs[1].attributes('tabindex')).toBe('-1')
 
     await tabs[0].trigger('keydown', { key: 'ArrowRight' })
-    expect(wrapper.get('#settings-tab-groups').attributes('aria-selected')).toBe('true')
-    expect(document.activeElement?.id).toBe('settings-tab-groups')
+    expect(wrapper.get('#settings-tab-capabilities').attributes('aria-selected')).toBe('true')
+    expect(document.activeElement?.id).toBe('settings-tab-capabilities')
 
-    await wrapper.get('#settings-tab-groups').trigger('keydown', { key: 'End' })
+    await wrapper.get('#settings-tab-capabilities').trigger('keydown', { key: 'End' })
     expect(wrapper.get('#settings-tab-audit').attributes('aria-selected')).toBe('true')
 
     await wrapper.get('#settings-tab-audit').trigger('keydown', { key: 'Home' })
-    expect(wrapper.get('#settings-tab-onboarding').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('#settings-tab-groups').attributes('aria-selected')).toBe('true')
     const panel = wrapper.get('[role="tabpanel"]')
-    expect(panel.attributes('aria-labelledby')).toBe('settings-tab-onboarding')
+    expect(panel.attributes('aria-labelledby')).toBe('settings-tab-groups')
     wrapper.unmount()
   })
 
@@ -102,6 +103,7 @@ describe('SettingsPage tabs', () => {
     expect(wrapper.text()).not.toContain('192.168.')
     expect(wrapper.text()).not.toContain('当前部署')
     expect(wrapper.text()).not.toContain('高级连接设置')
+    expect(wrapper.text()).toContain('加入现有猫眼')
     await wrapper.get('.connect-hero .primary-button').trigger('click')
     await flushPromises()
     await wrapper.get('.invite-ready-card .primary-button').trigger('click')
@@ -109,6 +111,33 @@ describe('SettingsPage tabs', () => {
     expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/localhost:\d+\/#pairing-code=PAIR-1234$/))
     await wrapper.findAll('.text-button').at(1)!.trigger('click')
     expect(wrapper.text()).toContain('目标设备可访问的猫眼地址')
+    wrapper.unmount()
+  })
+
+  it('pastes an invitation and joins an existing Maoyan from the onboarding page', async () => {
+    const base = apiMock.getMockImplementation()!
+    let paired = false
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/upstream') return paired ? { paired: true, hubUrl: 'http://hub:18080', deviceId: 'device-2' } : { paired: false }
+      if (path === '/api/v1/upstream/join' && options?.method === 'POST') {
+        paired = true
+        return { paired: true, hubUrl: 'http://hub:18080', deviceId: 'device-2' }
+      }
+      return base(path, options)
+    })
+    const wrapper = mount(SettingsPage, { props: { initialTab: 'onboarding' } })
+    await flushPromises()
+
+    await wrapper.get('.connect-mode-switch button:nth-child(2)').trigger('click')
+    await wrapper.get('.join-invitation-field textarea').setValue('http://hub:18080/#pairing-code=PAIR-1234')
+    await wrapper.get('.join-actions .primary-button').trigger('click')
+    await flushPromises()
+
+    expect(apiMock).toHaveBeenCalledWith('/api/v1/upstream/join', {
+      method: 'POST', body: JSON.stringify({ invitation: 'http://hub:18080/#pairing-code=PAIR-1234' }),
+    })
+    expect(wrapper.text()).toContain('已加入现有猫眼')
+    expect(wrapper.text()).toContain('http://hub:18080')
     wrapper.unmount()
   })
 
