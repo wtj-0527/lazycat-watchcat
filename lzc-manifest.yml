@@ -11,7 +11,7 @@ application:
 
 services:
   watchcat:
-    image: registry.lazycat.cloud/wtj_0527/wtjking/lazycat-watchcat:0f1d1464b4c77cc6
+    image: registry.lazycat.cloud/wtj_0527/wtjking/lazycat-watchcat:fb884a3d3d512feb
     environment:
       - WATCHCAT_ADDR=:8080
       - WATCHCAT_COLLECTOR_ADDR=:8443
