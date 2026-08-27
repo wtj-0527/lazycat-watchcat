@@ -75,13 +75,28 @@ function volumeName(mount: string) {
   if (mount === '/lzcsys/data') return '主数据卷'
   if (mount === '/lzcsys/var') return '系统卷'
   if (mount.startsWith('/lzcsys/run/mnt/')) return '备份卷'
+  if (mount.startsWith('/lzcsys/run/media/')) return '外接分区'
   if (mount.startsWith('/lzcsys/storage/')) return '扩展数据卷'
   return mount
+}
+function partitionName(volume: VolumeResource) {
+  return volume.backingDevice.split('/').pop() || volumeName(volume.mount)
+}
+function volumeTitle(volume: VolumeResource) {
+  const logicalName = volumeName(volume.mount)
+  const partition = partitionName(volume)
+  return logicalName === '外接分区' ? `${partition} · ${volume.filesystem}` : `${logicalName} · ${partition}`
+}
+function filesystemName(value?: string) {
+  const name = String(value || '').toLowerCase()
+  if (name === 'fuseblk') return 'NTFS'
+  return name ? name.toUpperCase() : '文件系统'
 }
 function diskPurpose(device: string, diskVolumes: VolumeResource[]) {
   if (diskVolumes.some((volume) => volume.mount === '/lzcsys/var')) return '系统盘'
   if (diskVolumes.some((volume) => volume.mount === '/lzcsys/data')) return '主数据盘'
   if (diskVolumes.some((volume) => volume.mount.startsWith('/lzcsys/run/mnt/'))) return '备份盘'
+  if (diskVolumes.some((volume) => volume.mount.startsWith('/lzcsys/run/media/'))) return '外接数据盘'
   if (diskVolumes.some((volume) => volume.mount.startsWith('/lzcsys/storage/'))) return '扩展数据盘'
   return device.startsWith('nvme') ? '固态磁盘' : '未挂载磁盘'
 }
@@ -102,8 +117,12 @@ function diskBrand(model?: string, vendor?: string) {
 }
 
 const volumes = computed<VolumeResource[]>(() => {
-  const btrfsUsage = itemList.value.filter((item) => item.name === 'btrfs.usage')
-  const usageItems = btrfsUsage.length ? btrfsUsage : itemList.value.filter((item) => item.name === 'filesystem.root.usage')
+  const volumeUsage = itemList.value.filter((item) => item.name === 'btrfs.usage' || item.name === 'filesystem.volume.usage')
+  const deviceIdsWithVolumeUsage = new Set(volumeUsage.map((item) => item.deviceId))
+  const usageItems = [
+    ...volumeUsage,
+    ...itemList.value.filter((item) => item.name === 'filesystem.root.usage' && !deviceIdsWithVolumeUsage.has(item.deviceId)),
+  ]
   const latestByMount = new Map<string, Metric>()
   for (const usage of usageItems) {
     const mount = usage.labels?.mount || '未知卷'
@@ -117,10 +136,10 @@ const volumes = computed<VolumeResource[]>(() => {
     const key = `${deviceId}\u0000${mount}`
     const atMount = (name: string) => latestMetric(itemList.value.filter((item) =>
       item.deviceId === deviceId && item.name === name && item.labels?.mount === mount))
-    const size = atMount('btrfs.size')
+    const size = atMount('btrfs.size') || atMount('filesystem.volume.size')
     const free = latestMetric(itemList.value.filter((item) =>
       item.deviceId === deviceId
-      && (item.name === 'btrfs.free_estimated' || item.name === 'filesystem.root.available')
+      && (item.name === 'btrfs.free_estimated' || item.name === 'filesystem.volume.available' || item.name === 'filesystem.root.available')
       && item.labels?.mount === mount))
     const backingDevice = usage.labels?.backing_device || size?.labels?.backing_device || ''
     return {
@@ -130,7 +149,7 @@ const volumes = computed<VolumeResource[]>(() => {
       mount,
       size: size?.value || (free?.value && usage.value < 100 ? free.value / (1 - usage.value / 100) : 0),
       free: free?.value || 0,
-      filesystem: usage.name.startsWith('btrfs.') ? 'Btrfs' : '文件系统',
+      filesystem: usage.name.startsWith('btrfs.') ? 'Btrfs' : filesystemName(usage.labels?.filesystem),
       backingDevice,
       physicalDevice: physicalDeviceFromBacking(backingDevice),
     }
@@ -231,6 +250,18 @@ function risksForDisk(deviceId: string, device: string) {
 function risksForVolume(volume: VolumeResource) {
   return riskItems.value.filter((item) =>
     item.deviceId === volume.deviceId && item.labels?.mount === volume.mount)
+}
+function riskTitle(item: Metric) {
+  const labels: Record<string, string> = {
+    'disk.ata.reported_uncorrectable': '已报告不可校正错误',
+    'disk.ata.offline_uncorrectable': '离线不可校正扇区',
+    'disk.ata.pending_sectors': '待处理扇区',
+    'disk.ata.reallocated_sectors': '重映射扇区',
+    'disk.nvme.media_errors': 'NVMe 介质错误',
+    'disk.nvme.critical_warning': 'NVMe 严重警告',
+    'disk.temperature': '磁盘温度过高',
+  }
+  return labels[item.name] || metricLabel(item)
 }
 watch(() => data.value?.updatedAt, () => { if (data.value?.updatedAt) loadAllHistory() })
 
@@ -354,25 +385,28 @@ async function runStorageCheck() {
           </div>
           <div class="storage-detail-stats"><span><small>容量</small><b>{{ bytes(disk.base.value) }}</b></span><span><small>介质 / 接口</small><b>{{ (disk.base.labels?.media || '未知').toUpperCase() }} / {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</b></span><span><small>温度</small><b>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</b></span><span><small>通电时间</small><b>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</b></span></div>
           <div v-if="risksForDisk(disk.deviceId, disk.device).length" class="embedded-storage-risks">
-            <div class="embedded-risk-title"><b>需要处理的磁盘风险</b><span>{{ risksForDisk(disk.deviceId, disk.device).length }} 项</span></div>
-            <div v-for="risk in risksForDisk(disk.deviceId, disk.device)" :key="`${risk.name}-${risk.collectedAt}`" class="embedded-risk-row">
-              <StatusPill :status="riskStatus(risk) || 'unknown'" />
-              <span><b>{{ metricLabel(risk) }}</b><small>{{ risk.name }} · {{ ago(risk.collectedAt) }}</small></span>
-              <strong>{{ formatMetricValue(risk.value, risk.unit) }}</strong>
-              <p>{{ storageRiskAdvice(risk) }}</p>
+            <div class="embedded-risk-title"><b>磁盘健康风险</b><span>{{ risksForDisk(disk.deviceId, disk.device).length }} 项</span></div>
+            <div class="embedded-risk-list">
+              <div v-for="risk in risksForDisk(disk.deviceId, disk.device)" :key="`${risk.name}-${risk.collectedAt}`" class="embedded-risk-row">
+                <StatusPill :status="riskStatus(risk) || 'unknown'" />
+                <span><b>{{ riskTitle(risk) }}</b><small>{{ risk.name }} · {{ ago(risk.collectedAt) }}</small></span>
+                <strong>{{ formatMetricValue(risk.value, risk.unit) }}</strong>
+                <p>{{ storageRiskAdvice(risk) }}</p>
+              </div>
             </div>
           </div>
           <div class="storage-expanded-charts" :class="{ single: !disk.volumes.length }">
             <section class="storage-history-panel"><div><h4>磁盘 I/O 趋势</h4><span class="muted">读取 / 写入平均速率</span></div><LineChart :series="diskHistory[disk.key] || []" :min="0" unit=" MiB/s" :height="190" /></section>
             <section v-for="volume in disk.volumes" :key="volume.key" class="storage-history-panel volume-panel">
               <div class="storage-volume-heading">
-                <div><h4>{{ volumeName(volume.mount) }} · 容量与 Btrfs</h4><span class="muted">{{ volume.mount }}</span></div>
+                <div><h4>{{ volumeTitle(volume) }}</h4><span class="muted">{{ volume.mount }}</span></div>
                 <div class="storage-volume-state">
                   <StatusPill :status="volumeStatus(volume, disk.status)" />
                   <small v-if="volumeStatusReason(volume, disk.status)">{{ volumeStatusReason(volume, disk.status) }}</small>
                 </div>
               </div>
               <div class="storage-volume-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
+              <div class="storage-capacity-track" aria-hidden="true"><i :style="{ width: `${Math.min(100, Math.max(0, volume.usage.value))}%` }"></i></div>
               <div v-if="btrfsFor(volume)" class="embedded-btrfs-summary">
                 <span><small>已分配</small><b>{{ bytes(btrfsFor(volume)?.allocated || 0) }}</b></span>
                 <span><small>未分配</small><b>{{ bytes(btrfsFor(volume)?.unallocated || 0) }}</b></span>
@@ -389,8 +423,9 @@ async function runStorageCheck() {
           <p v-if="!disk.volumes.length" class="storage-unmounted-note">该磁盘当前没有已挂载卷，仍展示物理磁盘 I/O 历史。</p>
         </article>
         <article v-for="volume in orphanVolumes" :key="`orphan-${volume.key}`" class="storage-expanded-disk orphan-volume-card">
-          <div class="storage-expanded-disk-heading"><div class="storage-expanded-identity"><span class="storage-device-icon">VOL</span><div><small>{{ volume.usage.deviceName || '未知设备' }} · 尚未关联物理磁盘</small><h3>{{ volumeName(volume.mount) }}</h3><p>{{ volume.mount }}</p></div></div><div class="storage-volume-state"><StatusPill :status="volumeStatus(volume)" /><small v-if="volumeStatusReason(volume)">{{ volumeStatusReason(volume) }}</small></div></div>
+          <div class="storage-expanded-disk-heading"><div class="storage-expanded-identity"><span class="storage-device-icon">VOL</span><div><small>{{ volume.usage.deviceName || '未知设备' }} · 尚未关联物理磁盘</small><h3>{{ volumeTitle(volume) }}</h3><p>{{ volume.mount }}</p></div></div><div class="storage-volume-state"><StatusPill :status="volumeStatus(volume)" /><small v-if="volumeStatusReason(volume)">{{ volumeStatusReason(volume) }}</small></div></div>
           <div class="storage-volume-summary orphan-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
+          <div class="storage-capacity-track" aria-hidden="true"><i :style="{ width: `${Math.min(100, Math.max(0, volume.usage.value))}%` }"></i></div>
           <div v-if="btrfsFor(volume)" class="embedded-btrfs-summary">
             <span><small>已分配</small><b>{{ bytes(btrfsFor(volume)?.allocated || 0) }}</b></span><span><small>未分配</small><b>{{ bytes(btrfsFor(volume)?.unallocated || 0) }}</b></span><span><small>设备错误</small><b>{{ btrfsFor(volume)?.errors || 0 }}</b></span><span><small>缺失空间</small><b>{{ btrfsFor(volume)?.missing ? bytes(btrfsFor(volume)?.missing || 0) : '0 B' }}</b></span>
           </div>

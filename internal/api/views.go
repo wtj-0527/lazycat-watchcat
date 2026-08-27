@@ -282,7 +282,7 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 			"installStatus": state.InstallStatus, "version": state.Version, "domain": state.Domain,
 			"builtin": state.Builtin, "userId": userID, "userName": userName,
 			"collectedAt": state.UpdatedAt, "resources": instanceResource,
-			"autostart": autostart[state.DeviceID+"\x00"+state.DeployID],
+			"autostart":    autostart[state.DeviceID+"\x00"+state.DeployID],
 			"controllable": !applicationControlRestricted(state),
 		})
 		if state.UpdatedAt.After(updatedAt) {
@@ -1306,7 +1306,7 @@ func hasFreshHealthEvidence(latest map[string][]store.LatestMetric, now time.Tim
 
 func isHealthMetric(name string) bool {
 	switch name {
-	case "system.cpu.usage", "filesystem.root.usage", "btrfs.usage", "system.memory.usage",
+	case "system.cpu.usage", "filesystem.root.usage", "filesystem.volume.usage", "btrfs.usage", "system.memory.usage",
 		"system.temperature", "container.memory.usage_percent", "disk.temperature",
 		"disk.nvme.media_errors", "disk.nvme.critical_warning", "disk.ata.reallocated_sectors",
 		"disk.ata.pending_sectors", "disk.ata.offline_uncorrectable", "disk.ata.reported_uncorrectable",

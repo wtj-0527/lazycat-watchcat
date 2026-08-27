@@ -113,7 +113,38 @@ describe('StoragePage', () => {
     expect(wrapper.text()).not.toContain('最高使用率卷 · 14 天趋势')
     expect(wrapper.findAll('.storage-history-panel')).toHaveLength(2)
     expect(wrapper.get('.storage-resource-card').text()).toContain('磁盘 I/O 趋势')
-    expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · 容量与 Btrfs')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · sdb1')
+    wrapper.unmount()
+  })
+
+  it('associates a mounted non-Btrfs partition with its physical disk and shows usage', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [
+          { deviceId: 'd1', deviceName: 'nasw', name: 'disk.capacity', value: 1_000_204_886_016, unit: 'bytes', labels: { device: 'sda', model: 'ST1000LM048-2E7172', serial: 'WL1EME5D', media: 'hdd', transport: 'sata' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'filesystem.volume.usage', value: 84, unit: '%', labels: { mount: '/lzcsys/run/media/sda1', backing_device: '/dev/sda1', filesystem: 'ntfs' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'filesystem.volume.size', value: 644_247_191_552, unit: 'bytes', labels: { mount: '/lzcsys/run/media/sda1', backing_device: '/dev/sda1', filesystem: 'ntfs' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'filesystem.volume.available', value: 103_368_351_744, unit: 'bytes', labels: { mount: '/lzcsys/run/media/sda1', backing_device: '/dev/sda1', filesystem: 'ntfs' }, collectedAt },
+        ],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+
+    const disk = wrapper.get('.storage-expanded-disk')
+    expect(disk.text()).toContain('nasw · 外接数据盘')
+    expect(disk.text()).toContain('sda1 · NTFS')
+    expect(disk.text()).toContain('/lzcsys/run/media/sda1')
+    expect(disk.text()).toContain('84.0%')
+    expect(disk.text()).toContain('503.73 GiB')
+    expect(disk.text()).not.toContain('当前没有已挂载卷')
+    expect(disk.find('.storage-capacity-track').exists()).toBe(true)
     wrapper.unmount()
   })
 

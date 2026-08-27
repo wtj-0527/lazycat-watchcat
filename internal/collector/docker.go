@@ -30,6 +30,7 @@ const smartHelperLabel = "community.lazycat.app.watchcat.smart-helper"
 var smartBlockDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 var dockerImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var safeBtrfsMount = regexp.MustCompile(`^/lzcsys/(?:data|var|run/mnt/[A-Za-z0-9._-]+|storage/[A-Za-z0-9._-]+)$`)
+var safeFilesystemMount = regexp.MustCompile(`^/lzcsys/(?:data|var|run/(?:mnt|media)/[A-Za-z0-9._-]+|storage/[A-Za-z0-9._-]+)$`)
 var safeBtrfsDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+[0-9]+|nvme[0-9]+n[0-9]+p[0-9]+|mapper/[A-Za-z0-9._+-]+)$`)
 
 type DockerCollector struct {
@@ -759,8 +760,12 @@ func (d *DockerCollector) CollectSMART(ctx context.Context, now time.Time) ([]pr
 
 func (d *DockerCollector) CollectStorageInventory(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
 	points, warnings := d.CollectDiskInventory(ctx, now)
+	filesystemPoints, filesystemWarnings := d.CollectMountedFilesystems(ctx, now)
 	btrfsPoints, btrfsWarnings := d.CollectBtrfs(ctx, now)
-	return append(points, btrfsPoints...), append(warnings, btrfsWarnings...)
+	points = append(points, filesystemPoints...)
+	points = append(points, btrfsPoints...)
+	warnings = append(warnings, filesystemWarnings...)
+	return points, append(warnings, btrfsWarnings...)
 }
 
 func (d *DockerCollector) CollectDiskInventory(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
@@ -818,6 +823,97 @@ done`
 		points = append(points, protocol.MetricPoint{Name: "disk.capacity", Value: sectors * 512, Unit: "bytes", Labels: labels, CollectedAt: now})
 	}
 	return points, nil
+}
+
+type mountedFilesystem struct {
+	path       string
+	device     string
+	filesystem string
+}
+
+func (d *DockerCollector) discoverMountedFilesystems(ctx context.Context, image string) ([]mountedFilesystem, error) {
+	const script = `awk '{for(i=1;i<=NF;i++) if($i=="-"){if($(i+1)!="btrfs") print $5 "\t" $(i+1) "\t" $(i+2); break}}' /host-mountinfo`
+	cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", script})
+	cfg.HostConfig.Binds = []string{"/proc/1/mountinfo:/host-mountinfo:ro"}
+	raw, code, err := d.runHelper(ctx, cfg)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("filesystem mount discovery exited %d: %w", code, err)
+	}
+	unique := map[string]mountedFilesystem{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		mount := strings.ReplaceAll(fields[0], `\040`, " ")
+		filesystem := strings.TrimSpace(fields[1])
+		device := strings.ReplaceAll(fields[2], `\040`, " ")
+		if !safeFilesystemMount.MatchString(mount) || !safeBtrfsDevice.MatchString(device) {
+			continue
+		}
+		key := device + "\x00" + mount
+		unique[key] = mountedFilesystem{path: mount, device: device, filesystem: filesystem}
+	}
+	out := make([]mountedFilesystem, 0, len(unique))
+	for _, item := range unique {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
+	return out, nil
+}
+
+func parseFilesystemDF(raw string, target mountedFilesystem, now time.Time) []protocol.MetricPoint {
+	fields := strings.Fields(strings.TrimSpace(raw))
+	if len(fields) < 5 {
+		return nil
+	}
+	size, sizeErr := strconv.ParseFloat(fields[1], 64)
+	available, availableErr := strconv.ParseFloat(fields[3], 64)
+	usage, usageErr := strconv.ParseFloat(strings.TrimSuffix(fields[4], "%"), 64)
+	if sizeErr != nil || availableErr != nil || usageErr != nil || size <= 0 {
+		return nil
+	}
+	labels := map[string]string{
+		"mount": target.path, "backing_device": target.device,
+		"filesystem": target.filesystem, "source": "lazycat-docker-helper",
+	}
+	return []protocol.MetricPoint{
+		{Name: "filesystem.volume.size", Value: size, Unit: "bytes", Labels: labels, CollectedAt: now},
+		{Name: "filesystem.volume.available", Value: available, Unit: "bytes", Labels: labels, CollectedAt: now},
+		{Name: "filesystem.volume.usage", Value: usage, Unit: "%", Labels: labels, CollectedAt: now},
+	}
+}
+
+func (d *DockerCollector) CollectMountedFilesystems(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {
+	if !d.Available() {
+		return nil, []string{"docker filesystem: Docker socket unavailable"}
+	}
+	image, err := d.helperImage(ctx)
+	if err != nil {
+		return nil, []string{"docker filesystem: " + err.Error()}
+	}
+	mounts, err := d.discoverMountedFilesystems(ctx, image)
+	if err != nil {
+		return nil, []string{"docker filesystem: " + err.Error()}
+	}
+	var points []protocol.MetricPoint
+	var warnings []string
+	for _, target := range mounts {
+		cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", `df -P -B1 /volume | tail -n 1`})
+		cfg.HostConfig.Binds = []string{target.path + ":/volume:ro"}
+		raw, code, runErr := d.runHelper(ctx, cfg)
+		if runErr != nil || code != 0 {
+			warnings = append(warnings, fmt.Sprintf("docker filesystem %s exited %d: %v", target.path, code, runErr))
+			continue
+		}
+		parsed := parseFilesystemDF(string(raw), target, now)
+		if len(parsed) == 0 {
+			warnings = append(warnings, "docker filesystem "+target.path+": invalid df output")
+			continue
+		}
+		points = append(points, parsed...)
+	}
+	return points, warnings
 }
 
 func (d *DockerCollector) CollectBtrfs(ctx context.Context, now time.Time) ([]protocol.MetricPoint, []string) {

@@ -94,6 +94,29 @@ Scrub status for fb3c3a32
 	t.Fatal("missing btrfs.device_missing metric")
 }
 
+func TestParseFilesystemDF(t *testing.T) {
+	now := time.Now().UTC()
+	target := mountedFilesystem{path: "/lzcsys/run/media/sda1", device: "/dev/sda1", filesystem: "ntfs"}
+	points := parseFilesystemDF("/dev/sda1 644247191552 540878835712 103368351744 84% /volume\n", target, now)
+	if len(points) != 3 {
+		t.Fatalf("points=%+v", points)
+	}
+	if points[0].Name != "filesystem.volume.size" || points[0].Value != 644247191552 {
+		t.Fatalf("size=%+v", points[0])
+	}
+	if points[1].Name != "filesystem.volume.available" || points[1].Value != 103368351744 {
+		t.Fatalf("available=%+v", points[1])
+	}
+	if points[2].Name != "filesystem.volume.usage" || points[2].Value != 84 {
+		t.Fatalf("usage=%+v", points[2])
+	}
+	for _, point := range points {
+		if point.Labels["backing_device"] != "/dev/sda1" || point.Labels["filesystem"] != "ntfs" {
+			t.Fatalf("labels=%v", point.Labels)
+		}
+	}
+}
+
 func TestSummarizeUnusedImagesExcludesAllContainerReferences(t *testing.T) {
 	images := []dockerImage{
 		{ID: "sha256:used-running", RepoTags: []string{"running:1"}, Size: 10},

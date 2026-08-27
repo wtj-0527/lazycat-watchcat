@@ -26,6 +26,7 @@ func defaultAlertRules() []alertRule {
 		{Metric: "system.cpu.usage", Label: "CPU 使用率", Warning: 85, Critical: 95, Enabled: true},
 		{Metric: "system.memory.usage", Label: "内存使用率", Warning: 90, Critical: 95, Enabled: true},
 		{Metric: "filesystem.root.usage", Label: "文件系统使用率", Warning: 85, Critical: 95, Enabled: true},
+		{Metric: "filesystem.volume.usage", Label: "存储分区使用率", Warning: 85, Critical: 95, Enabled: true},
 		{Metric: "btrfs.usage", Label: "Btrfs 使用率", Warning: 85, Critical: 95, Enabled: true},
 		{Metric: "disk.temperature", Label: "磁盘温度", Warning: 70, Critical: 80, Enabled: true},
 		{Metric: "container.memory.usage_percent", Label: "容器内存使用率", Warning: 90, Critical: 95, Enabled: true},
