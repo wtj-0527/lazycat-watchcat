@@ -10,6 +10,7 @@ import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import SmartSelect, { type SmartOption } from '@/components/SmartSelect.vue'
+import { appConfirm } from '@/dialog'
 
 interface RuntimeUser { id: string; name: string }
 interface Payload { items: ApplicationItem[]; users: RuntimeUser[]; source: string; stale: boolean; updatedAt?: string }
@@ -48,6 +49,15 @@ interface ComparisonPayload {
   items: ComparisonItem[]
   updatedAt: string
 }
+interface ApplicationOperation {
+  id?: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  error?: string
+  instanceStatus?: string
+  autostart?: boolean | null
+}
+
+const emit = defineEmits<{ toast: [message: string] }>()
 
 const query = ref(sessionStorage.getItem('watchcatSearch') || '')
 const statusFilter = ref('all')
@@ -73,6 +83,7 @@ const comparisons = ref<Partial<Record<ComparisonMetric, ComparisonPayload>>>({}
 const comparisonLoading = ref(false)
 const comparisonError = ref('')
 const comparisonInstanceKey = ref('all')
+const instanceAction = ref('')
 let historyRequest = 0
 let comparisonRequest = 0
 const { data, loading, error, refresh } = usePolling(() => api<Payload>('/api/v1/applications'))
@@ -191,6 +202,53 @@ watch(selectedInstanceKey, loadHistory)
 watch(historyHours, () => {
   if (historyMode.value === 'preset') loadCurrentView()
 })
+const selectedInstanceBusy = computed(() => instanceAction.value !== '')
+const autostartLabel = computed(() => selectedInstance.value?.autostart === true
+  ? '开机自启动已开启'
+  : selectedInstance.value?.autostart === false ? '开机自启动已关闭' : '设置开机自启动')
+
+async function waitForApplicationOperation(id: string) {
+  const deadline = Date.now() + 45_000
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1000))
+    const operation = await api<ApplicationOperation>(`/api/v1/application-operations/${encodeURIComponent(id)}`)
+    if (operation.status === 'succeeded') return operation
+    if (operation.status === 'failed') throw new Error(operation.error || '远端设备拒绝了应用操作')
+  }
+  throw new Error('操作已发送到远端设备，但状态回读超时；请稍后刷新确认')
+}
+
+async function controlSelectedInstance(action: 'start' | 'stop' | 'set_autostart', autostart?: boolean) {
+  const instance = selectedInstance.value
+  const application = selectedApp.value
+  if (!instance || !application || selectedInstanceBusy.value) return
+  if (instance.controllable === false) {
+    emit('toast', '该系统或监控实例不允许在 WatchCat 中修改运行状态')
+    return
+  }
+  const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : `${autostart ? '开启' : '关闭'}开机自启动`
+  const confirmed = await appConfirm({
+    title: `${actionLabel}应用实例`,
+    message: `${application.title || application.id}\n设备：${instance.deviceName || instance.deviceId}\n用户：${instance.userName || instance.userId || '未知'}\n实例：${instance.deployId}`,
+    confirmText: actionLabel,
+    danger: action === 'stop',
+  })
+  if (!confirmed) return
+  instanceAction.value = action
+  try {
+    const result = await api<ApplicationOperation>(
+      `/api/v1/applications/${encodeURIComponent(application.id)}/instances/${encodeURIComponent(instance.deployId)}/actions`,
+      { method: 'POST', body: JSON.stringify({ deviceId: instance.deviceId, action, autostart }) },
+    )
+    if (result.id && (result.status === 'pending' || result.status === 'running')) await waitForApplicationOperation(result.id)
+    emit('toast', `${actionLabel}成功`)
+    await refresh()
+  } catch (reason) {
+    emit('toast', reason instanceof Error ? reason.message : String(reason))
+  } finally {
+    instanceAction.value = ''
+  }
+}
 async function loadHistory() {
   if (!selectedAppId.value) return
   const request = ++historyRequest
@@ -462,6 +520,33 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
               <StatusPill v-if="selectedInstance" :status="runtimeStatusTone(selectedInstance.status)" :label="runtimeStatusLabel(selectedInstance.status)" />
               <StatusPill v-else :status="appStatus(selectedApp)" :label="applicationRuntimeLabel(selectedApp)" />
             </div>
+          </div>
+          <div v-if="selectedInstance" class="instance-control-bar">
+            <div class="instance-control-identity">
+              <span>{{ selectedInstance.deviceName || selectedInstance.deviceId }}</span>
+              <b>{{ selectedInstance.userName || selectedInstance.userId || '未知用户' }}</b>
+              <code>{{ selectedInstance.deployId }}</code>
+            </div>
+            <div v-if="selectedInstance.controllable !== false" class="instance-control-actions">
+              <button
+                v-if="selectedInstance.status === 'paused' || selectedInstance.status === 'error'"
+                class="primary-button"
+                :disabled="selectedInstanceBusy"
+                @click="controlSelectedInstance('start')"
+              >{{ instanceAction === 'start' ? '启动中…' : '启动实例' }}</button>
+              <button
+                v-else
+                class="danger-button"
+                :disabled="selectedInstanceBusy || selectedInstance.status !== 'running'"
+                @click="controlSelectedInstance('stop')"
+              >{{ instanceAction === 'stop' ? '停止中…' : '停止实例' }}</button>
+              <button
+                :class="selectedInstance.autostart === true ? 'autostart-button active' : 'autostart-button'"
+                :disabled="selectedInstanceBusy"
+                @click="controlSelectedInstance('set_autostart', selectedInstance.autostart !== true)"
+              ><i aria-hidden="true" />{{ instanceAction === 'set_autostart' ? '保存中…' : autostartLabel }}</button>
+            </div>
+            <span v-else class="protected-instance-note">受保护实例，仅监控</span>
           </div>
           <div class="app-resource-kpis">
             <div><span>当前 CPU</span><strong>{{ formatNumber(activeResources?.cpuPercent ?? 0) }}%</strong><small>{{ activeResources?.containers ?? 0 }} 个容器</small></div>

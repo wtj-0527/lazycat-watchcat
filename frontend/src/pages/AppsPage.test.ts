@@ -5,6 +5,7 @@ import AppsPage from './AppsPage.vue'
 
 const apiMock = vi.hoisted(() => vi.fn())
 vi.mock('@/api', () => ({ api: apiMock }))
+vi.mock('@/dialog', () => ({ appConfirm: vi.fn(async () => true) }))
 
 const resources = {
   containers: 0,
@@ -289,6 +290,53 @@ describe('AppsPage', () => {
     expect(wrapper.text()).toContain('该实例当前未运行')
     expect(wrapper.text()).toContain('已暂停')
     expect(wrapper.find('.app-instance-table').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('starts a paused instance and configures autostart through the instance controls', async () => {
+    let status = 'paused'
+    let autostart: boolean | null = null
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path.includes('/instances/') && options?.method === 'POST') {
+        const body = JSON.parse(String(options.body))
+        if (body.action === 'start') status = 'running'
+        if (body.action === 'set_autostart') autostart = body.autostart
+        return { status: 'succeeded', instanceStatus: status, autostart }
+      }
+      if (path.includes('/metrics')) return {
+        appId: 'managed', from: '2026-08-26T00:00:00Z', to: '2026-08-27T00:00:00Z',
+        bucketSeconds: 300, updatedAt: new Date().toISOString(),
+        summary: { networkReceiveRateBytes: 0, networkTransmitRateBytes: 0, networkTotalBytes: 0, blockReadRateBytes: 0, blockWriteRateBytes: 0, blockTotalBytes: 0 },
+        series: { cpuPercent: [], memoryUsage: [], networkReceiveRate: [], networkTransmitRate: [], blockReadRate: [], blockWriteRate: [] },
+      }
+      return {
+        items: [application({
+          id: 'managed', title: '可管理应用', instances: 1, healthy: status === 'running' ? 1 : 0, paused: status === 'paused' ? 1 : 0,
+          devices: [device({ deployId: 'managed-1', status, healthy: status === 'running', controllable: true, autostart })],
+        })],
+        users: [{ id: 'user-1', name: '用户一' }],
+        source: 'lazycat', stale: false, updatedAt: new Date().toISOString(),
+      }
+    })
+
+    const wrapper = mount(AppsPage)
+    await flushPromises()
+    await wrapper.get('[aria-label="应用实例"]').trigger('click')
+    await wrapper.findAll('.smart-select-options > button').find((item) => item.text().includes('managed-1'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.instance-control-actions .primary-button').text()).toContain('启动实例')
+
+    await wrapper.get('.instance-control-actions .primary-button').trigger('click')
+    await flushPromises()
+    expect(apiMock.mock.calls.some(([path, options]) =>
+      String(path).includes('/applications/managed/instances/managed-1/actions') &&
+      JSON.parse(String((options as RequestInit).body)).action === 'start')).toBe(true)
+
+    await wrapper.get('.autostart-button').trigger('click')
+    await flushPromises()
+    expect(apiMock.mock.calls.some(([path, options]) =>
+      String(path).includes('/applications/managed/instances/managed-1/actions') &&
+      JSON.parse(String((options as RequestInit).body)).action === 'set_autostart')).toBe(true)
     wrapper.unmount()
   })
 })

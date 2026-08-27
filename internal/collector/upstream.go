@@ -1,9 +1,12 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -39,6 +42,61 @@ type Upstream struct {
 	credentials     Credentials
 	lastSuccessAt   time.Time
 	lastError       string
+	commandExecutor func(context.Context, protocol.ApplicationCommand) protocol.ApplicationCommandResult
+}
+
+func (u *Upstream) SetCommandExecutor(executor func(context.Context, protocol.ApplicationCommand) protocol.ApplicationCommandResult) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.commandExecutor = executor
+}
+
+func (u *Upstream) RunCommands(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		u.runOneCommand(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (u *Upstream) runOneCommand(ctx context.Context) {
+	u.mu.Lock()
+	hubURL, credentials, executor := u.config.HubURL, u.credentials, u.commandExecutor
+	u.mu.Unlock()
+	if hubURL == "" || credentials.DeviceID == "" || executor == nil {
+		return
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	defer cancel()
+	command, err := fetchApplicationCommand(callCtx, upstreamHTTPClient, hubURL, credentials)
+	if err != nil {
+		if errors.Is(err, ErrCredentialsRejected) {
+			_ = u.Disconnect()
+		}
+		u.mu.Lock()
+		u.lastError = err.Error()
+		u.mu.Unlock()
+		return
+	}
+	if command == nil {
+		return
+	}
+	result := executor(callCtx, *command)
+	result.ID = command.ID
+	if err := submitApplicationCommandResult(callCtx, upstreamHTTPClient, hubURL, credentials, result); err != nil {
+		u.mu.Lock()
+		u.lastError = err.Error()
+		u.mu.Unlock()
+		return
+	}
+	u.mu.Lock()
+	u.lastSuccessAt, u.lastError = time.Now().UTC(), ""
+	u.mu.Unlock()
 }
 
 var upstreamHTTPClient = &http.Client{
@@ -218,4 +276,58 @@ func saveUpstreamConfig(path string, config upstreamConfig) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func fetchApplicationCommand(ctx context.Context, client *http.Client, hubURL string, credentials Credentials) (*protocol.ApplicationCommand, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(hubURL, "/")+"/api/v1/collectors/commands/next", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+credentials.Token)
+	req.Header.Set("X-WatchCat-Device-ID", credentials.DeviceID)
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("%w: command fetch failed: %s: %s", ErrCredentialsRejected, response.Status, body)
+		}
+		return nil, fmt.Errorf("command fetch failed: %s: %s", response.Status, body)
+	}
+	var command protocol.ApplicationCommand
+	if err := json.NewDecoder(response.Body).Decode(&command); err != nil {
+		return nil, err
+	}
+	return &command, nil
+}
+
+func submitApplicationCommandResult(ctx context.Context, client *http.Client, hubURL string, credentials Credentials, result protocol.ApplicationCommandResult) error {
+	body, _ := json.Marshal(result)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(hubURL, "/")+"/api/v1/collectors/commands/"+result.ID+"/result", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+credentials.Token)
+	req.Header.Set("X-WatchCat-Device-ID", credentials.DeviceID)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("%w: command result failed: %s: %s", ErrCredentialsRejected, response.Status, responseBody)
+	}
+	return fmt.Errorf("command result failed: %s: %s", response.Status, responseBody)
 }

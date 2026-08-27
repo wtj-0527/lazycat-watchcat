@@ -960,6 +960,19 @@ body { font-size: 12px; }
 .app-instance-switcher { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .app-instance-switcher label { color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .app-instance-switcher select { min-width: 260px; max-width: 420px; }
+.instance-control-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 4px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft, #f8fafc); }
+.instance-control-identity { display: flex; min-width: 0; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
+.instance-control-identity b { color: var(--text); }
+.instance-control-identity code { overflow: hidden; max-width: 220px; padding: 3px 7px; border-radius: 6px; background: rgba(148,163,184,.14); color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.instance-control-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.instance-control-actions button { min-height: 36px; }
+.autostart-button { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface, #fff); color: var(--secondary); font-weight: 700; }
+.autostart-button i { position: relative; width: 28px; height: 16px; border-radius: 999px; background: #cbd5e1; transition: background .16s ease; }
+.autostart-button i::after { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.3); content: ""; transition: transform .16s ease; }
+.autostart-button.active { border-color: rgba(37,99,235,.35); color: var(--primary); }
+.autostart-button.active i { background: var(--primary); }
+.autostart-button.active i::after { transform: translateX(12px); }
+.protected-instance-note { color: var(--muted); font-size: 12px; font-weight: 700; }
 .app-instance-table tbody tr { cursor: pointer; }
 .app-instance-table tbody tr.selected td { background: #eff6ff; }
 .app-resource-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -1007,6 +1020,9 @@ body { font-size: 12px; }
   .app-history-card .section-title, .app-resource-heading { align-items: stretch; flex-direction: column; }
   .app-instance-switcher { align-items: stretch; flex-direction: column; }
   .app-instance-switcher select { min-width: 0; max-width: none; width: 100%; }
+  .instance-control-bar { align-items: stretch; flex-direction: column; }
+  .instance-control-identity { flex-wrap: wrap; }
+  .instance-control-actions { flex-wrap: wrap; }
   .custom-history-range { grid-template-columns: 1fr; }
   .custom-history-range > small { grid-column: 1; }
 }

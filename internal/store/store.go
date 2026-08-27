@@ -227,6 +227,29 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(device_id,deploy_id)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_application_runtime_app ON application_runtime_state(app_id,instance_status);`,
+		`CREATE TABLE IF NOT EXISTS application_instance_preferences (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			deploy_id TEXT NOT NULL,
+			autostart INTEGER,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(device_id,deploy_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS application_commands (
+			id TEXT PRIMARY KEY,
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			deploy_id TEXT NOT NULL,
+			app_id TEXT NOT NULL,
+			user_id TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL,
+			autostart INTEGER,
+			status TEXT NOT NULL DEFAULT 'pending',
+			error TEXT NOT NULL DEFAULT '',
+			observed_status TEXT NOT NULL DEFAULT '',
+			requested_at TEXT NOT NULL,
+			started_at TEXT,
+			completed_at TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_application_commands_device_status ON application_commands(device_id,status,requested_at);`,
 		`CREATE TABLE IF NOT EXISTS user_runtime_state (
 			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
 			user_id TEXT NOT NULL,

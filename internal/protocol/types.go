@@ -117,3 +117,21 @@ type RuntimeApplication struct {
 	UserID         string `json:"userId"`
 	UserName       string `json:"userName"`
 }
+
+type ApplicationCommand struct {
+	ID        string `json:"id"`
+	DeviceID  string `json:"deviceId"`
+	DeployID  string `json:"deployId"`
+	AppID     string `json:"appId"`
+	UserID    string `json:"userId,omitempty"`
+	Action    string `json:"action"`
+	Autostart *bool  `json:"autostart,omitempty"`
+}
+
+type ApplicationCommandResult struct {
+	ID             string `json:"id"`
+	Success        bool   `json:"success"`
+	Error          string `json:"error,omitempty"`
+	InstanceStatus string `json:"instanceStatus,omitempty"`
+	Autostart      *bool  `json:"autostart,omitempty"`
+}

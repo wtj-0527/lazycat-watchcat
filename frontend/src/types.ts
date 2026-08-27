@@ -159,6 +159,8 @@ export interface ApplicationDevice {
   version: string
   domain: string
   builtin: boolean
+  controllable?: boolean
+  autostart?: boolean | null
   userId: string
   userName: string
   collectedAt: string

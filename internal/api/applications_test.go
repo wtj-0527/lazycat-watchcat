@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestAggregateApplicationResourcesIgnoresStaleContainers(t *testing.T) {
@@ -115,7 +117,10 @@ func TestTemperatureAlertsUseStableSensorClasses(t *testing.T) {
 }
 
 type fakeRuntimePackageManager struct {
-	uid string
+	uid       string
+	action    string
+	deployID  string
+	autostart *bool
 }
 
 func (f *fakeRuntimePackageManager) QueryApplication(ctx context.Context, _ *sys.QueryApplicationRequest, _ ...grpc.CallOption) (*sys.QueryApplicationResponse, error) {
@@ -130,6 +135,21 @@ func (f *fakeRuntimePackageManager) QueryApplication(ctx context.Context, _ *sys
 		{Appid: "community.lazycat.app.watchcat", DeployId: "watchcat6", Version: &v1, Title: &title1, Status: sys.AppStatus_Installed, InstanceStatus: &running},
 		{Appid: "cloud.lazycat.app.files", DeployId: "files6", Version: &v2, Title: &title2, Status: sys.AppStatus_Installed, InstanceStatus: &paused},
 	}}, nil
+}
+
+func (f *fakeRuntimePackageManager) Pause(_ context.Context, instance *sys.AppInstance, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	f.action, f.deployID = "stop", instance.GetDeployId()
+	return &emptypb.Empty{}, nil
+}
+
+func (f *fakeRuntimePackageManager) Resume(_ context.Context, instance *sys.AppInstance, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	f.action, f.deployID = "start", instance.GetDeployId()
+	return &emptypb.Empty{}, nil
+}
+
+func (f *fakeRuntimePackageManager) ChangeDeployCfg(_ context.Context, request *sys.ChangeDeployCfgRequest, _ ...grpc.CallOption) (*sys.ChangeDeployCfgResponse, error) {
+	f.action, f.deployID, f.autostart = "set_autostart", request.GetDeployId(), request.Autostart
+	return &sys.ChangeDeployCfgResponse{Result: sys.ChangeDeployCfgResponse_OK}, nil
 }
 
 func TestApplicationsUsePackageManagerAndPersistSnapshot(t *testing.T) {
@@ -191,6 +211,42 @@ func TestApplicationsUsePackageManagerAndPersistSnapshot(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("runtime capability not available: %+v", capabilities)
+	}
+}
+
+func TestLocalApplicationInstanceControlUsesPackageManagerAndAudits(t *testing.T) {
+	root := t.TempDir()
+	st, err := store.Open(filepath.Join(root, "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	deviceID, err := st.EnsureLocalDevice(context.Background(), "node", "node", "linux/amd64", "1.4.7", []string{"collector.embedded"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeRuntimePackageManager{}
+	source := runtimeapps.NewWithClient(client, time.Minute)
+	server := New(st, nil, "../../web", time.Minute)
+	server.ConfigureRuntimeApps(source, deviceID)
+	if _, err := server.SyncRuntimeApplications(context.Background(), "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"deviceId":"` + deviceID + `","action":"stop"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/applications/cloud.lazycat.app.files/instances/files6/actions", bytes.NewReader(body))
+	request.Header.Set("X-Hc-User-Id", "admin")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if client.action != "stop" || client.deployID != "files6" {
+		t.Fatalf("client=%+v", client)
+	}
+	audit, err := st.ListAudit(context.Background(), 10)
+	if err != nil || len(audit) == 0 || audit[0].Action != "application.instance.stop" {
+		t.Fatalf("audit=%+v error=%v", audit, err)
 	}
 }
 

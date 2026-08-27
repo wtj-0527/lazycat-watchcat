@@ -8,10 +8,49 @@ import (
 	"gitee.com/linakesi/lzc-sdk/lang/go/common"
 	"gitee.com/linakesi/lzc-sdk/lang/go/sys"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type fakePackageManager struct {
 	calls int
+}
+
+type fakePackageController struct {
+	fakePackageManager
+	action    string
+	deployID  string
+	autostart *bool
+}
+
+func (f *fakePackageController) Pause(_ context.Context, instance *sys.AppInstance, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	f.action, f.deployID = "stop", instance.GetDeployId()
+	return &emptypb.Empty{}, nil
+}
+
+func (f *fakePackageController) Resume(_ context.Context, instance *sys.AppInstance, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	f.action, f.deployID = "start", instance.GetDeployId()
+	return &emptypb.Empty{}, nil
+}
+
+func (f *fakePackageController) ChangeDeployCfg(_ context.Context, request *sys.ChangeDeployCfgRequest, _ ...grpc.CallOption) (*sys.ChangeDeployCfgResponse, error) {
+	f.action, f.deployID, f.autostart = "set_autostart", request.GetDeployId(), request.Autostart
+	return &sys.ChangeDeployCfgResponse{Result: sys.ChangeDeployCfgResponse_OK}, nil
+}
+
+func TestControlUsesOfficialPackageManagerOperations(t *testing.T) {
+	client := &fakePackageController{}
+	source := NewWithClient(client, time.Minute)
+	if result, err := source.Control(context.Background(), "admin", "deploy-1", "stop", nil); err != nil || result.InstanceStatus != "paused" {
+		t.Fatalf("stop result=%+v error=%v", result, err)
+	}
+	if result, err := source.Control(context.Background(), "admin", "deploy-1", "start", nil); err != nil || result.InstanceStatus != "running" {
+		t.Fatalf("start result=%+v error=%v", result, err)
+	}
+	enabled := true
+	result, err := source.Control(context.Background(), "admin", "deploy-1", "set_autostart", &enabled)
+	if err != nil || result.Autostart == nil || !*result.Autostart || client.action != "set_autostart" || client.deployID != "deploy-1" {
+		t.Fatalf("autostart result=%+v client=%+v error=%v", result, client, err)
+	}
 }
 
 func (f *fakePackageManager) QueryApplication(_ context.Context, _ *sys.QueryApplicationRequest, _ ...grpc.CallOption) (*sys.QueryApplicationResponse, error) {

@@ -234,6 +234,7 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	}
 	var updatedAt time.Time
 	users := map[string]string{}
+	autostart, _ := s.store.ApplicationAutostartMap(r.Context())
 	for _, state := range states {
 		a := apps[state.AppID]
 		if a == nil {
@@ -281,6 +282,8 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 			"installStatus": state.InstallStatus, "version": state.Version, "domain": state.Domain,
 			"builtin": state.Builtin, "userId": userID, "userName": userName,
 			"collectedAt": state.UpdatedAt, "resources": instanceResource,
+			"autostart": autostart[state.DeviceID+"\x00"+state.DeployID],
+			"controllable": !applicationControlRestricted(state),
 		})
 		if state.UpdatedAt.After(updatedAt) {
 			updatedAt = state.UpdatedAt

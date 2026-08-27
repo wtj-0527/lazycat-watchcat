@@ -17,6 +17,7 @@ import (
 	"github.com/wtj-0527/lazycat-watchcat/internal/config"
 	"github.com/wtj-0527/lazycat-watchcat/internal/notify"
 	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeapps"
 	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeusers"
 	"github.com/wtj-0527/lazycat-watchcat/internal/scheduler"
@@ -88,6 +89,21 @@ func main() {
 	} else {
 		defer runtimeSource.Close()
 		handlers.ConfigureRuntimeApps(runtimeSource, embedded.DeviceID())
+		upstream.SetCommandExecutor(func(ctx context.Context, command protocol.ApplicationCommand) protocol.ApplicationCommandResult {
+			result, err := runtimeSource.Control(ctx, runtimeSource.LastUID(), command.DeployID, command.Action, command.Autostart)
+			if err != nil {
+				return protocol.ApplicationCommandResult{ID: command.ID, Error: err.Error()}
+			}
+			if _, syncErr := handlers.SyncRuntimeApplications(ctx, runtimeSource.LastUID()); syncErr != nil {
+				logger.Warn("refresh runtime state after remote command", "command_id", command.ID, "error", syncErr)
+			}
+			if result.Autostart != nil {
+				_ = st.SetApplicationAutostart(ctx, embedded.DeviceID(), command.DeployID, *result.Autostart)
+			}
+			return protocol.ApplicationCommandResult{
+				ID: command.ID, Success: true, InstanceStatus: result.InstanceStatus, Autostart: result.Autostart,
+			}
+		})
 		go func() {
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
@@ -104,6 +120,7 @@ func main() {
 			}
 		}()
 	}
+	go upstream.RunCommands(context.Background())
 	userCtx, userCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	userSource, userErr := runtimeusers.NewPersistent(userCtx, filepath.Join(cfg.DataDir, "runtime-user-id"))
 	userCancel()

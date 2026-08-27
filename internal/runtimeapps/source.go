@@ -13,10 +13,17 @@ import (
 	"gitee.com/linakesi/lzc-sdk/lang/go/common"
 	"gitee.com/linakesi/lzc-sdk/lang/go/sys"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type packageManager interface {
 	QueryApplication(context.Context, *sys.QueryApplicationRequest, ...grpc.CallOption) (*sys.QueryApplicationResponse, error)
+}
+
+type packageController interface {
+	Pause(context.Context, *sys.AppInstance, ...grpc.CallOption) (*emptypb.Empty, error)
+	Resume(context.Context, *sys.AppInstance, ...grpc.CallOption) (*emptypb.Empty, error)
+	ChangeDeployCfg(context.Context, *sys.ChangeDeployCfgRequest, ...grpc.CallOption) (*sys.ChangeDeployCfgResponse, error)
 }
 
 type userManager interface {
@@ -184,6 +191,60 @@ func (s *Source) LastUID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lastUID
+}
+
+type ControlResult struct {
+	DeployID       string
+	InstanceStatus string
+	Autostart      *bool
+}
+
+func (s *Source) Control(ctx context.Context, uid, deployID, action string, autostart *bool) (ControlResult, error) {
+	uid, deployID = strings.TrimSpace(uid), strings.TrimSpace(deployID)
+	if uid == "" {
+		return ControlResult{}, errors.New("LazyCat user identity is missing")
+	}
+	if deployID == "" {
+		return ControlResult{}, errors.New("deploy id is missing")
+	}
+	callCtx := gohelper.WithRealUID(ctx, uid)
+	instance := &sys.AppInstance{DeployId: deployID}
+	result := ControlResult{DeployID: deployID}
+	controller, ok := s.client.(packageController)
+	if !ok {
+		return ControlResult{}, errors.New("LazyCat Package Manager control API is unavailable")
+	}
+	switch action {
+	case "start":
+		if _, err := controller.Resume(callCtx, instance); err != nil {
+			return ControlResult{}, err
+		}
+		result.InstanceStatus = "running"
+	case "stop":
+		if _, err := controller.Pause(callCtx, instance); err != nil {
+			return ControlResult{}, err
+		}
+		result.InstanceStatus = "paused"
+	case "set_autostart":
+		if autostart == nil {
+			return ControlResult{}, errors.New("autostart is required")
+		}
+		response, err := controller.ChangeDeployCfg(callCtx, &sys.ChangeDeployCfgRequest{DeployId: deployID, Autostart: autostart})
+		if err != nil {
+			return ControlResult{}, err
+		}
+		if response.GetResult() != sys.ChangeDeployCfgResponse_OK {
+			return ControlResult{}, errors.New("LazyCat Package Manager rejected deploy configuration: " + response.GetResult().String())
+		}
+		value := *autostart
+		result.Autostart = &value
+	default:
+		return ControlResult{}, errors.New("unsupported application action")
+	}
+	s.mu.Lock()
+	s.cache = map[string]cachedResult{}
+	s.mu.Unlock()
+	return result, nil
 }
 
 func (s *Source) persistUID(uid string) {

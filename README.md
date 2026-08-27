@@ -22,13 +22,15 @@ WatchCat 是单 LPK 安装、单镜像 Service 运行的 LazyCat 设备健康监
 
 ```bash
 docker build \
-  --label org.opencontainers.image.version=1.4.6 \
-  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.6 .
-docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.6
+  --label org.opencontainers.image.version=1.4.7 \
+  -t registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.7 .
+docker push registry.cn-shanghai.aliyuncs.com/wtjking/lazycat-watchcat:1.4.7
 # 将 lzc-manifest.yml 的 image 固定为 push 返回的 sha256 digest
 lzc-cli project lint .
 lzc-cli project deploy --release
 ```
+
+- 应用实例支持通过官方 LazyCat Package Manager 安全启动、停止（休眠）和设置开机自启动；远端设备操作通过配对凭据队列执行并回传审计结果。
 
 ## 生产运维能力
 
