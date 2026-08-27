@@ -121,7 +121,15 @@ describe('DevicesPage detail tabs', () => {
       if (path === '/api/v1/devices/d1') return detailed
       if (path.includes('/events')) return { items: [{ id: 'e1', type: 'alert', title: '告警触发', detail: { severity: 'critical' }, createdAt: collectedAt }] }
       if (path === '/api/v1/operations') return { capabilities: [] }
-      if (path.includes('/metrics')) return { items: [{ name: 'system.cpu.usage', value: 18, unit: '%', labels: {}, collectedAt }] }
+      if (path.includes('/metrics')) {
+        const name = new URL(`https://watchcat.test${path}`).searchParams.get('name') || ''
+        const counter = name.includes('operations') ? 120 : name.includes('bytes_total') ? 10 * 1024 ** 2 : 18
+        const unit = name.includes('operations') ? 'count' : name.includes('bytes_total') ? 'bytes' : '%'
+        return { items: [
+          { name, value: counter, unit, labels: { device: 'sda', interface: 'eth0' }, collectedAt: '2026-08-25T09:59:30Z' },
+          { name, value: counter + (name.includes('operations') ? 60 : name.includes('bytes_total') ? 30 * 1024 ** 2 : 0), unit, labels: { device: 'sda', interface: 'eth0' }, collectedAt },
+        ] }
+      }
       return detailed
     })
 
@@ -133,6 +141,12 @@ describe('DevicesPage detail tabs', () => {
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('hours=24'))).toBe(true)
     const overviewText = wrapper.get('.device-overview-grid').text()
     expect(overviewText.indexOf('资源趋势')).toBeLessThan(overviewText.indexOf('活动风险'))
+    expect(wrapper.get('.resource-trend-card').text()).toContain('磁盘吞吐')
+    expect(wrapper.get('.resource-trend-card').text()).toContain('磁盘 IOPS')
+    expect(wrapper.get('.resource-trend-card').text()).toContain('网络吞吐')
+    expect(wrapper.findAll('.resource-throughput-grid .line-chart')).toHaveLength(3)
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('name=disk.io.read.bytes_total'))).toBe(true)
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('name=disk.io.write.operations_total'))).toBe(true)
 
     await wrapper.get('#device-tab-system').trigger('click')
     expect(wrapper.find('.raw-metrics').exists()).toBe(false)

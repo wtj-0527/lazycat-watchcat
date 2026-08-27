@@ -195,6 +195,8 @@ async function loadTrend(id = selected.value?.id || detailDeviceId.value) {
     const metricNames = [
       'system.cpu.usage', 'system.memory.usage', 'system.swap.usage', 'system.load.1m',
       'filesystem.root.usage', 'btrfs.usage', 'disk.temperature',
+      'disk.io.read.bytes_total', 'disk.io.write.bytes_total',
+      'disk.io.read.operations_total', 'disk.io.write.operations_total',
       'network.interface.receive.bytes_total', 'network.interface.transmit.bytes_total',
     ]
     const histories = await Promise.all(metricNames.map(async (name) => {
@@ -496,7 +498,7 @@ const btrfsEvidence = computed(() => selected.value ? latestByResource(categoryM
     point.name.includes('errors') || point.name === 'btrfs.device_missing'
   ))) : [])
 
-function counterRateSeries(points: Metric[], label: string, color: string): ChartSeries {
+function counterRateSeries(points: Metric[], label: string, color: string, divisor = 1024 ** 2): ChartSeries {
   const totals = new Map<string, number>()
   for (const point of points) totals.set(point.collectedAt, (totals.get(point.collectedAt) || 0) + point.value)
   const ordered = [...totals.entries()].sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
@@ -504,7 +506,7 @@ function counterRateSeries(points: Metric[], label: string, color: string): Char
   for (let index = 1; index < ordered.length; index += 1) {
     const seconds = (new Date(ordered[index][0]).getTime() - new Date(ordered[index - 1][0]).getTime()) / 1000
     if (seconds <= 0) continue
-    const rate = Math.max(0, ordered[index][1] - ordered[index - 1][1]) / seconds / 1024 ** 2
+    const rate = Math.max(0, ordered[index][1] - ordered[index - 1][1]) / seconds / divisor
     result.push({
       value: rate,
       at: dateTime(ordered[index][0]),
@@ -513,6 +515,14 @@ function counterRateSeries(points: Metric[], label: string, color: string): Char
   }
   return { name: label, color, points: result }
 }
+const diskRateSeries = computed<ChartSeries[]>(() => [
+  counterRateSeries(trend.value['disk.io.read.bytes_total'] || [], '读取', '#2563eb'),
+  counterRateSeries(trend.value['disk.io.write.bytes_total'] || [], '写入', '#c05600'),
+].filter((item) => item.points.length))
+const diskOperationSeries = computed<ChartSeries[]>(() => [
+  counterRateSeries(trend.value['disk.io.read.operations_total'] || [], '读 IOPS', '#7c3aed', 1),
+  counterRateSeries(trend.value['disk.io.write.operations_total'] || [], '写 IOPS', '#118847', 1),
+].filter((item) => item.points.length))
 const networkRateSeries = computed<ChartSeries[]>(() => [
   counterRateSeries(trend.value['network.interface.receive.bytes_total'] || [], '下载', '#2563eb'),
   counterRateSeries(trend.value['network.interface.transmit.bytes_total'] || [], '上传', '#118847'),
@@ -733,7 +743,26 @@ watch(selectedTab, (tab) => {
               </div>
               <p v-if="trendError" class="operation-evidence warning">{{ trendError }}</p>
               <div v-if="trendLoading" class="inline-empty">正在读取资源历史…</div>
-              <LineChart v-else :series="trendSeries" :min="0" :max="100" unit="%" :height="230" />
+              <template v-else>
+                <div class="resource-trend-usage">
+                  <h3>使用率</h3>
+                  <LineChart :series="trendSeries" :min="0" :max="100" unit="%" :height="220" />
+                </div>
+                <div class="resource-throughput-grid">
+                  <section>
+                    <div><h3>磁盘吞吐</h3><span>累计读写差值换算</span></div>
+                    <LineChart :series="diskRateSeries" :min="0" unit=" MiB/s" :height="190" />
+                  </section>
+                  <section>
+                    <div><h3>磁盘 IOPS</h3><span>每秒读写操作次数</span></div>
+                    <LineChart :series="diskOperationSeries" :min="0" unit=" IOPS" :height="190" />
+                  </section>
+                  <section>
+                    <div><h3>网络吞吐</h3><span>物理接口累计流量差值换算</span></div>
+                    <LineChart :series="networkRateSeries" :min="0" unit=" MiB/s" :height="190" />
+                  </section>
+                </div>
+              </template>
             </section>
             <section class="card active-risk-card">
               <div class="section-title"><div><h2>活动风险</h2></div><span class="pill critical">{{ riskMetrics.length }} 个严重</span></div>
