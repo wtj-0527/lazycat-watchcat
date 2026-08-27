@@ -168,10 +168,7 @@ onBeforeUnmount(() => {
         <span>采集状态</span>
         <b><i /> {{ onlineCount }} 台在线 · {{ staleCount }} 台陈旧</b>
         <small>数据新鲜度 {{ freshness }}</small>
-      </div>
-      <div class="operator-card">
-        <span class="operator-avatar">王</span>
-        <div><b>设备管理员</b><small>可处置告警 · v{{ version }}</small></div>
+        <small>WatchCat v{{ version }}</small>
       </div>
     </div>
   </aside>
@@ -206,7 +203,6 @@ onBeforeUnmount(() => {
           <AppIcon name="bell" :size="18" />
           <span v-if="activeAlertCount" class="notification-badge">{{ activeAlertCount > 99 ? '99+' : activeAlertCount }}</span>
         </button>
-        <button class="user-avatar" type="button" aria-label="当前用户设置" @click="navigate('settings')">王</button>
       </div>
     </header>
     <section id="content" :class="`page-${page}`">
