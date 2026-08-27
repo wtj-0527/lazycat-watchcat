@@ -68,6 +68,8 @@ describe('UsersPage', () => {
   })
 
   it('renders complete endpoint data and manages local endpoints through real APIs', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/applications') return { items: [] }
       if (path === '/api/v1/users' && !options) {
@@ -94,6 +96,8 @@ describe('UsersPage', () => {
     expect(wrapper.get('.endpoint-card').text()).toContain('mac.example.test')
     expect(wrapper.get('.endpoint-card').text()).toContain('Asia/Shanghai')
     expect(wrapper.get('.session-timeline').text()).toContain('工作电脑')
+    await wrapper.get('.endpoint-copy').trigger('click')
+    expect(writeText).toHaveBeenCalledWith('mac.example.test')
 
     await wrapper.get('.endpoint-actions .secondary-button').trigger('click')
     const dialog = await import('@/dialog')

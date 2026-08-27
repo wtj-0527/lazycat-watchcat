@@ -53,6 +53,15 @@ function endpointHost(endpoint:Endpoint){
   if(raw){try{return new URL(raw).hostname||endpoint.id}catch{/* SDK may return a host without a URL scheme. */}if(/^[a-z0-9.-]+(?::\d+)?$/i.test(raw))return raw.split(':')[0]}
   return endpoint.id
 }
+async function copyEndpointHost(endpoint:Endpoint){
+  const value=endpointHost(endpoint)
+  try{
+    await navigator.clipboard.writeText(value)
+    emit('toast','设备域名已复制')
+  }catch{
+    emit('toast','复制失败，请检查浏览器剪贴板权限')
+  }
+}
 const endpointForSession=(session:Session)=>selectedEndpoints.value.find(endpoint=>endpoint.id===session.endDeviceId)
 const sessionEndpointName=(session:Session)=>{const endpoint=endpointForSession(session);return endpoint?endpointDisplayName(endpoint):session.endDeviceId||'未知终端'}
 function toggleApp(id:string){allowedAppIds.value=allowedAppIds.value.includes(id)?allowedAppIds.value.filter(x=>x!==id):[...allowedAppIds.value,id]}
@@ -106,7 +115,7 @@ async function removeEndpoint(item:UserItem,endpoint:Endpoint){if(!await appConf
               <div><span>设备型号</span><b>{{endpoint.model||'未知'}}</b></div>
               <div><span>最近登录</span><b>{{dateTime(endpoint.loginTime)}}</b></div>
               <div><span>首次绑定</span><b>{{dateTime(endpoint.bindingTime)}}</b></div>
-              <div><span>设备标识</span><b class="endpoint-id">{{endpointHost(endpoint)}}</b></div>
+              <div class="endpoint-identity"><span>{{endpoint.deviceApiUrl?'设备域名':'设备标识'}}</span><button class="endpoint-copy" :aria-label="`复制 ${endpointHost(endpoint)}`" @click="copyEndpointHost(endpoint)"><b class="endpoint-id">{{endpointHost(endpoint)}}</b><em>复制</em></button></div>
             </div>
             <div v-if="endpoint.timeZone||endpoint.lang||endpoint.isWifi!==undefined" class="endpoint-details">
               <span v-if="endpoint.timeZone">时区 {{endpoint.timeZone}}</span><span v-if="endpoint.lang">语言 {{endpoint.lang}}</span><span v-if="endpoint.isWifi!==undefined">{{endpoint.isWifi?'Wi-Fi 连接':'非 Wi-Fi 连接'}}</span>
