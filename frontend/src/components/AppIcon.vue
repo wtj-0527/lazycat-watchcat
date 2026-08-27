@@ -25,6 +25,22 @@ defineProps<{ name: string; size?: number }>()
       <rect x="4" y="3" width="16" height="14" rx="2" />
       <path d="M8 21h8M12 17v4M8 7h8M8 11h5" />
     </template>
+    <template v-else-if="name === 'laptop'">
+      <rect x="4" y="4" width="16" height="12" rx="2" />
+      <path d="M2.5 19h19M9 19h6" />
+    </template>
+    <template v-else-if="name === 'mobile'">
+      <rect x="7" y="2" width="10" height="20" rx="2.5" />
+      <path d="M10 5h4M11.5 18.5h1" />
+    </template>
+    <template v-else-if="name === 'tablet'">
+      <rect x="5" y="2" width="14" height="20" rx="2.5" />
+      <path d="M9 5h6M11.5 18.5h1" />
+    </template>
+    <template v-else-if="name === 'tv'">
+      <rect x="3" y="5" width="18" height="13" rx="2" />
+      <path d="m9 2 3 3 3-3M8 22h8M12 18v4" />
+    </template>
     <template v-else-if="name === 'apps'">
       <rect x="3" y="3" width="7" height="7" rx="2" />
       <rect x="14" y="3" width="7" height="7" rx="2" />

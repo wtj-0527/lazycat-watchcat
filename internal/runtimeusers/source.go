@@ -25,6 +25,8 @@ type userManager interface {
 }
 type deviceManager interface {
 	ListEndDevices(context.Context, *common.ListEndDeviceRequest, ...grpc.CallOption) (*common.ListEndDeviceReply, error)
+	RemoveEndDevice(context.Context, *common.RemoveEndDeviceRequest, ...grpc.CallOption) (*emptypb.Empty, error)
+	SetDeviceRemarkName(context.Context, *common.SetDeviceRemarkNameRequest, ...grpc.CallOption) (*emptypb.Empty, error)
 }
 type accessController interface {
 	QueryAppAccessPolicy(context.Context, *sys.AppAccessPolicyRequest, ...grpc.CallOption) (*sys.AppAccessPolicy, error)
@@ -98,7 +100,15 @@ func (s *Source) Query(ctx context.Context, actor string) ([]store.RuntimeUser, 
 			u.Nickname = uid
 		}
 		for _, d := range endpoints.GetDevices() {
-			item := store.RuntimeUserDevice{ID: d.GetUniqueDeivceId(), Name: d.GetName(), Model: d.GetModel(), RemarkName: d.GetRemarkName(), Online: d.GetIsOnline()}
+			item := store.RuntimeUserDevice{
+				ID: d.GetUniqueDeivceId(), Name: d.GetName(), Model: d.GetModel(), RemarkName: d.GetRemarkName(),
+				DeviceAPIURL: d.GetDeviceApiUrl(), IsMobile: d.GetIsMobile(), IsTV: d.GetIsTv(),
+				Lang: d.GetLang(), TimeZone: d.GetTimeZone(), Online: d.GetIsOnline(),
+			}
+			if d.IsWifi != nil {
+				value := d.GetIsWifi()
+				item.IsWifi = &value
+			}
 			if d.GetBindingTime() != nil {
 				item.BindingTime = d.GetBindingTime().AsTime()
 			}
@@ -165,6 +175,26 @@ func (s *Source) Delete(ctx context.Context, actor, uid string, clear bool) erro
 		return e
 	}
 	_, e = s.users.DeleteUser(q, &common.DeleteUserRequest{Uid: uid, ClearUserData: clear})
+	return e
+}
+
+func (s *Source) RenameDevice(ctx context.Context, actor, uid, endpointID, remarkName string) error {
+	q, e := s.actor(ctx, actor)
+	if e != nil {
+		return e
+	}
+	_, e = s.devices.SetDeviceRemarkName(q, &common.SetDeviceRemarkNameRequest{
+		Uid: uid, UniqueDeviceId: endpointID, RemarkName: strings.TrimSpace(remarkName),
+	})
+	return e
+}
+
+func (s *Source) RemoveDevice(ctx context.Context, actor, uid, endpointID string) error {
+	q, e := s.actor(ctx, actor)
+	if e != nil {
+		return e
+	}
+	_, e = s.devices.RemoveEndDevice(q, &common.RemoveEndDeviceRequest{Uid: uid, UniqueDeivceId: endpointID})
 	return e
 }
 

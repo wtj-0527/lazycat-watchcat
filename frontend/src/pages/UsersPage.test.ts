@@ -66,4 +66,61 @@ describe('UsersPage', () => {
     expect(wrapper.find('.app-access-list').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it('renders complete endpoint data and manages local endpoints through real APIs', async () => {
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/applications') return { items: [] }
+      if (path === '/api/v1/users' && !options) {
+        return {
+          count: 1,
+          updatedAt: new Date().toISOString(),
+          items: [{
+            deviceId: 'd1', deviceName: 'nasw', local: true, userId: 'u1', nickname: '用户一', role: 'normal',
+            appInstallPermission: false, appAccessNoLimit: true, allowedAppIds: [], online: true,
+            activeDevices: 1, totalDevices: 1, applicationCount: 0, instanceCount: 0, firstObservedAt: '', updatedAt: '',
+            onlineSeconds24h: 60, onlineSeconds7d: 60, onlineSeconds30d: 60, loginCount: 1,
+            devices: [{ id: 'endpoint-1', name: 'MacBook-Air.local', model: 'darwin', remarkName: '工作电脑', deviceApiUrl: 'https://mac.example.test:443', online: true, bindingTime: '2026-07-21T01:30:40Z', loginTime: '2026-08-27T03:21:38Z', timeZone: 'Asia/Shanghai', lang: 'zh-CN', isWifi: true }],
+            sessions: [{ endDeviceId: 'endpoint-1', loginAt: '2026-08-27T03:21:38Z', durationSeconds: 120 }],
+          }],
+        }
+      }
+      return {}
+    })
+    const wrapper = mount(UsersPage)
+    await flushPromises()
+
+    expect(wrapper.get('.endpoint-card').text()).toContain('工作电脑')
+    expect(wrapper.get('.endpoint-card').text()).toContain('MacBook-Air.local')
+    expect(wrapper.get('.endpoint-card').text()).toContain('mac.example.test')
+    expect(wrapper.get('.endpoint-card').text()).toContain('Asia/Shanghai')
+    expect(wrapper.get('.session-timeline').text()).toContain('工作电脑')
+
+    await wrapper.get('.endpoint-actions .secondary-button').trigger('click')
+    const dialog = await import('@/dialog')
+    dialog.dialogState.value = '新备注'
+    dialog.resolveDialog(true)
+    await flushPromises()
+    expect(apiMock.mock.calls.some(([path, options]) => String(path).endsWith('/end-devices/endpoint-1/remark') && options?.body === JSON.stringify({ remarkName: '新备注' }))).toBe(true)
+
+    await wrapper.get('.endpoint-actions .danger-button').trigger('click')
+    dialog.resolveDialog(true)
+    await flushPromises()
+    expect(apiMock.mock.calls.some(([path, options]) => String(path).endsWith('/end-devices/endpoint-1') && options?.method === 'DELETE')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps remote endpoints read-only', async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/applications') return { items: [] }
+      return {
+        count: 1, updatedAt: new Date().toISOString(),
+        items: [{ deviceId: 'remote', deviceName: 'canway', local: false, userId: 'u1', nickname: '远端用户', role: 'normal', appInstallPermission: false, appAccessNoLimit: true, allowedAppIds: [], online: false, activeDevices: 0, totalDevices: 1, applicationCount: 0, instanceCount: 0, firstObservedAt: '', updatedAt: '', onlineSeconds24h: 0, onlineSeconds7d: 0, onlineSeconds30d: 0, loginCount: 0, devices: [{ id: 'e1', name: 'iPhone', model: 'iPhone', remarkName: '', isMobile: true, online: false }], sessions: [] }],
+      }
+    })
+    const wrapper = mount(UsersPage)
+    await flushPromises()
+    expect(wrapper.find('.endpoint-actions').exists()).toBe(false)
+    expect(wrapper.text()).toContain('远端登录终端为只读')
+    wrapper.unmount()
+  })
 })

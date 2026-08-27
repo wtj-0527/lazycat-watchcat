@@ -307,3 +307,103 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.RecordAudit(r.Context(), "user.deleted", "lazycat_user", uid, map[string]any{"clearData": clear})
 	w.WriteHeader(204)
 }
+
+func (s *Server) renameUserEndDevice(w http.ResponseWriter, r *http.Request) {
+	uid := strings.TrimSpace(r.PathValue("id"))
+	endDeviceID := strings.TrimSpace(r.PathValue("deviceId"))
+	actor := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
+	if s.runtimeUsers == nil {
+		problem(w, http.StatusServiceUnavailable, "user_manager_unavailable", "用户管理服务不可用")
+		return
+	}
+	if uid == "" || endDeviceID == "" {
+		problem(w, http.StatusBadRequest, "invalid_end_device", "用户 ID 和终端 ID 必填")
+		return
+	}
+	if !s.isLocalUserEndDevice(r, uid, endDeviceID) {
+		problem(w, http.StatusNotFound, "end_device_not_found", "本机用户中未找到该登录终端")
+		return
+	}
+	var req struct {
+		RemarkName string `json:"remarkName"`
+	}
+	if decodeJSON(r, &req) != nil {
+		problem(w, http.StatusBadRequest, "invalid_remark_name", "终端备注格式无效")
+		return
+	}
+	req.RemarkName = strings.TrimSpace(req.RemarkName)
+	if len([]rune(req.RemarkName)) > 64 {
+		problem(w, http.StatusBadRequest, "invalid_remark_name", "终端备注不能超过 64 个字符")
+		return
+	}
+	if err := s.runtimeUsers.RenameDevice(r.Context(), actor, uid, endDeviceID, req.RemarkName); err != nil {
+		problem(w, http.StatusBadGateway, "end_device_rename_failed", "修改终端备注失败："+err.Error())
+		return
+	}
+	users, err := s.runtimeUsers.Query(r.Context(), actor)
+	if err != nil {
+		problem(w, http.StatusBadGateway, "end_device_verify_failed", "备注已提交，但服务端回读失败："+err.Error())
+		return
+	}
+	if err = s.store.ObserveRuntimeUsers(r.Context(), s.localDeviceID, users); err != nil {
+		problem(w, http.StatusInternalServerError, "end_device_persist_failed", "备注已提交，但保存回读结果失败")
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "user.end_device.renamed", "lazycat_end_device", endDeviceID, map[string]any{"userId": uid, "remarkName": req.RemarkName})
+	writeJSON(w, http.StatusOK, map[string]any{"updated": true, "remarkName": req.RemarkName})
+}
+
+func (s *Server) removeUserEndDevice(w http.ResponseWriter, r *http.Request) {
+	uid := strings.TrimSpace(r.PathValue("id"))
+	endDeviceID := strings.TrimSpace(r.PathValue("deviceId"))
+	actor := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
+	if s.runtimeUsers == nil {
+		problem(w, http.StatusServiceUnavailable, "user_manager_unavailable", "用户管理服务不可用")
+		return
+	}
+	if uid == "" || endDeviceID == "" {
+		problem(w, http.StatusBadRequest, "invalid_end_device", "用户 ID 和终端 ID 必填")
+		return
+	}
+	if !s.isLocalUserEndDevice(r, uid, endDeviceID) {
+		problem(w, http.StatusNotFound, "end_device_not_found", "本机用户中未找到该登录终端")
+		return
+	}
+	if err := s.runtimeUsers.RemoveDevice(r.Context(), actor, uid, endDeviceID); err != nil {
+		problem(w, http.StatusBadGateway, "end_device_remove_failed", "删除登录终端失败："+err.Error())
+		return
+	}
+	users, err := s.runtimeUsers.Query(r.Context(), actor)
+	if err != nil {
+		problem(w, http.StatusBadGateway, "end_device_verify_failed", "终端已删除，但服务端回读失败："+err.Error())
+		return
+	}
+	if err = s.store.ObserveRuntimeUsers(r.Context(), s.localDeviceID, users); err != nil {
+		problem(w, http.StatusInternalServerError, "end_device_persist_failed", "终端已删除，但保存回读结果失败")
+		return
+	}
+	if err = s.store.DeleteRuntimeUserDevice(r.Context(), s.localDeviceID, uid, endDeviceID); err != nil && !store.IsNotFound(err) {
+		problem(w, http.StatusInternalServerError, "end_device_persist_failed", "终端已删除，但清理本地终端状态失败")
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "user.end_device.removed", "lazycat_end_device", endDeviceID, map[string]any{"userId": uid})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) isLocalUserEndDevice(r *http.Request, uid, endDeviceID string) bool {
+	users, err := s.store.ListRuntimeUsers(r.Context())
+	if err != nil {
+		return false
+	}
+	for _, user := range users {
+		if user.DeviceID != s.localDeviceID || user.UserID != uid {
+			continue
+		}
+		for _, endpoint := range user.Devices {
+			if endpoint.ID == endDeviceID {
+				return true
+			}
+		}
+	}
+	return false
+}

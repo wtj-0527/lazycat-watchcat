@@ -288,7 +288,11 @@ func (e *Embedded) attachRuntimeUsers(ctx context.Context, batch *protocol.Metri
 		}
 		item := protocol.RuntimeUser{UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, AppAccessNoLimit: u.AppAccessNoLimit, AllowedAppIDs: u.AllowedAppIDs, Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices}
 		for _, d := range u.Devices {
-			item.Devices = append(item.Devices, protocol.RuntimeUserDevice{ID: d.ID, Name: d.Name, Model: d.Model, RemarkName: d.RemarkName, Online: d.Online, BindingTime: d.BindingTime, LoginTime: d.LoginTime})
+			item.Devices = append(item.Devices, protocol.RuntimeUserDevice{
+				ID: d.ID, Name: d.Name, Model: d.Model, RemarkName: d.RemarkName, DeviceAPIURL: d.DeviceAPIURL,
+				IsMobile: d.IsMobile, IsTV: d.IsTV, Lang: d.Lang, TimeZone: d.TimeZone, IsWifi: d.IsWifi,
+				Online: d.Online, BindingTime: d.BindingTime, LoginTime: d.LoginTime,
+			})
 		}
 		batch.Users = append(batch.Users, item)
 	}

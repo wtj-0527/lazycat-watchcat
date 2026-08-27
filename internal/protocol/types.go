@@ -96,13 +96,19 @@ type RuntimeUser struct {
 }
 
 type RuntimeUserDevice struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Model       string    `json:"model"`
-	RemarkName  string    `json:"remarkName"`
-	Online      bool      `json:"online"`
-	BindingTime time.Time `json:"bindingTime,omitempty"`
-	LoginTime   time.Time `json:"loginTime,omitempty"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Model        string    `json:"model"`
+	RemarkName   string    `json:"remarkName"`
+	DeviceAPIURL string    `json:"deviceApiUrl,omitempty"`
+	IsMobile     bool      `json:"isMobile"`
+	IsTV         bool      `json:"isTv"`
+	Lang         string    `json:"lang,omitempty"`
+	TimeZone     string    `json:"timeZone,omitempty"`
+	IsWifi       *bool     `json:"isWifi,omitempty"`
+	Online       bool      `json:"online"`
+	BindingTime  time.Time `json:"bindingTime,omitempty"`
+	LoginTime    time.Time `json:"loginTime,omitempty"`
 }
 
 type RuntimeApplication struct {

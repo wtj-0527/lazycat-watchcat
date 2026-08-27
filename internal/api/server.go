@@ -97,6 +97,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/v1/users/{id}/role", s.changeUserRole)
 	s.mux.HandleFunc("PUT /api/v1/users/{id}/password", s.resetUserPassword)
 	s.mux.HandleFunc("PUT /api/v1/users/{id}/app-access", s.updateUserAppAccess)
+	s.mux.HandleFunc("PUT /api/v1/users/{id}/end-devices/{deviceId}/remark", s.renameUserEndDevice)
+	s.mux.HandleFunc("DELETE /api/v1/users/{id}/end-devices/{deviceId}", s.removeUserEndDevice)
 	s.mux.HandleFunc("DELETE /api/v1/users/{id}", s.deleteUser)
 	s.mux.HandleFunc("GET /api/v1/applications/metrics/compare", s.applicationMetricsComparison)
 	s.mux.HandleFunc("GET /api/v1/applications/{id}/metrics", s.applicationMetrics)
@@ -320,7 +322,11 @@ func (s *Server) ingestRuntimeUsers(ctx context.Context, batch protocol.MetricBa
 	for _, u := range batch.Users {
 		item := store.RuntimeUser{DeviceID: batch.DeviceID, UserID: u.UserID, Nickname: u.Nickname, Role: u.Role, AppInstallPermission: u.AppInstallPermission, AppAccessNoLimit: u.AppAccessNoLimit, AllowedAppIDs: u.AllowedAppIDs, Online: u.Online, ActiveDevices: u.ActiveDevices, TotalDevices: u.TotalDevices}
 		for _, d := range u.Devices {
-			item.Devices = append(item.Devices, store.RuntimeUserDevice{ID: d.ID, Name: d.Name, Model: d.Model, RemarkName: d.RemarkName, Online: d.Online, BindingTime: d.BindingTime, LoginTime: d.LoginTime})
+			item.Devices = append(item.Devices, store.RuntimeUserDevice{
+				ID: d.ID, Name: d.Name, Model: d.Model, RemarkName: d.RemarkName, DeviceAPIURL: d.DeviceAPIURL,
+				IsMobile: d.IsMobile, IsTV: d.IsTV, Lang: d.Lang, TimeZone: d.TimeZone, IsWifi: d.IsWifi,
+				Online: d.Online, BindingTime: d.BindingTime, LoginTime: d.LoginTime,
+			})
 		}
 		items = append(items, item)
 	}

@@ -8,13 +8,19 @@ import (
 )
 
 type RuntimeUserDevice struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Model       string    `json:"model"`
-	RemarkName  string    `json:"remarkName"`
-	Online      bool      `json:"online"`
-	BindingTime time.Time `json:"bindingTime,omitempty"`
-	LoginTime   time.Time `json:"loginTime,omitempty"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Model        string    `json:"model"`
+	RemarkName   string    `json:"remarkName"`
+	DeviceAPIURL string    `json:"deviceApiUrl,omitempty"`
+	IsMobile     bool      `json:"isMobile"`
+	IsTV         bool      `json:"isTv"`
+	Lang         string    `json:"lang,omitempty"`
+	TimeZone     string    `json:"timeZone,omitempty"`
+	IsWifi       *bool     `json:"isWifi,omitempty"`
+	Online       bool      `json:"online"`
+	BindingTime  time.Time `json:"bindingTime,omitempty"`
+	LoginTime    time.Time `json:"loginTime,omitempty"`
 }
 
 type RuntimeUser struct {
@@ -90,10 +96,21 @@ func (s *Store) ObserveRuntimeUsers(ctx context.Context, deviceID string, users 
 			if !endpoint.BindingTime.IsZero() {
 				bindingRaw = endpoint.BindingTime.UTC().Format(time.RFC3339Nano)
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO user_device_state(device_id,user_id,end_device_id,name,model,remark_name,online,binding_time,login_time,updated_at)
-				VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,user_id,end_device_id) DO UPDATE SET name=excluded.name,model=excluded.model,
-				remark_name=excluded.remark_name,online=excluded.online,binding_time=excluded.binding_time,login_time=excluded.login_time,updated_at=excluded.updated_at`,
-				deviceID, user.UserID, endpoint.ID, endpoint.Name, endpoint.Model, endpoint.RemarkName, endpoint.Online, bindingRaw, loginRaw, nowRaw)
+			wifi := -1
+			if endpoint.IsWifi != nil {
+				if *endpoint.IsWifi {
+					wifi = 1
+				} else {
+					wifi = 0
+				}
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO user_device_state(device_id,user_id,end_device_id,name,model,remark_name,device_api_url,is_mobile,is_tv,lang,time_zone,is_wifi,online,binding_time,login_time,updated_at)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,user_id,end_device_id) DO UPDATE SET name=excluded.name,model=excluded.model,
+				remark_name=excluded.remark_name,device_api_url=excluded.device_api_url,is_mobile=excluded.is_mobile,is_tv=excluded.is_tv,
+				lang=excluded.lang,time_zone=excluded.time_zone,is_wifi=excluded.is_wifi,online=excluded.online,
+				binding_time=excluded.binding_time,login_time=excluded.login_time,updated_at=excluded.updated_at`,
+				deviceID, user.UserID, endpoint.ID, endpoint.Name, endpoint.Model, endpoint.RemarkName, endpoint.DeviceAPIURL,
+				endpoint.IsMobile, endpoint.IsTV, endpoint.Lang, endpoint.TimeZone, wifi, endpoint.Online, bindingRaw, loginRaw, nowRaw)
 			if err != nil {
 				return err
 			}
@@ -164,17 +181,23 @@ func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
 		u.Online = online != 0
 		u.FirstObservedAt = parseTime(first)
 		u.UpdatedAt = parseTime(updated)
-		drows, qerr := s.db.QueryContext(ctx, `SELECT end_device_id,name,model,remark_name,online,binding_time,login_time FROM user_device_state WHERE device_id=? AND user_id=? ORDER BY online DESC,name`, u.DeviceID, u.UserID)
+		drows, qerr := s.db.QueryContext(ctx, `SELECT end_device_id,name,model,remark_name,device_api_url,is_mobile,is_tv,lang,time_zone,is_wifi,online,binding_time,login_time FROM user_device_state WHERE device_id=? AND user_id=? ORDER BY online DESC,name`, u.DeviceID, u.UserID)
 		if qerr != nil {
 			return nil, qerr
 		}
 		for drows.Next() {
 			var d RuntimeUserDevice
-			var on int
+			var mobile, tv, wifi, on int
 			var binding, login string
-			if qerr = drows.Scan(&d.ID, &d.Name, &d.Model, &d.RemarkName, &on, &binding, &login); qerr != nil {
+			if qerr = drows.Scan(&d.ID, &d.Name, &d.Model, &d.RemarkName, &d.DeviceAPIURL, &mobile, &tv, &d.Lang, &d.TimeZone, &wifi, &on, &binding, &login); qerr != nil {
 				drows.Close()
 				return nil, qerr
+			}
+			d.IsMobile = mobile != 0
+			d.IsTV = tv != 0
+			if wifi >= 0 {
+				value := wifi != 0
+				d.IsWifi = &value
 			}
 			d.Online = on != 0
 			d.BindingTime = parseTime(binding)
@@ -209,4 +232,38 @@ func (s *Store) ListUserLoginSessions(ctx context.Context, since time.Time) ([]U
 		out = append(out, x)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) DeleteRuntimeUserDevice(ctx context.Context, deviceID, userID, endDeviceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, `UPDATE user_login_sessions SET logout_at=? WHERE device_id=? AND user_id=? AND end_device_id=? AND logout_at IS NULL`,
+		now, deviceID, userID, endDeviceID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM user_device_state WHERE device_id=? AND user_id=? AND end_device_id=?`,
+		deviceID, userID, endDeviceID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE user_runtime_state SET
+		online=EXISTS(SELECT 1 FROM user_device_state d WHERE d.device_id=? AND d.user_id=? AND d.online=1),
+		active_devices=(SELECT count(*) FROM user_device_state d WHERE d.device_id=? AND d.user_id=? AND d.online=1),
+		total_devices=(SELECT count(*) FROM user_device_state d WHERE d.device_id=? AND d.user_id=?)
+		WHERE device_id=? AND user_id=?`,
+		deviceID, userID, deviceID, userID, deviceID, userID, deviceID, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -272,6 +272,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			name TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',
 			remark_name TEXT NOT NULL DEFAULT '',
+			device_api_url TEXT NOT NULL DEFAULT '',
+			is_mobile INTEGER NOT NULL DEFAULT 0,
+			is_tv INTEGER NOT NULL DEFAULT 0,
+			lang TEXT NOT NULL DEFAULT '',
+			time_zone TEXT NOT NULL DEFAULT '',
+			is_wifi INTEGER NOT NULL DEFAULT -1,
 			online INTEGER NOT NULL DEFAULT 0,
 			binding_time TEXT NOT NULL DEFAULT '',
 			login_time TEXT NOT NULL DEFAULT '',
@@ -353,6 +359,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("migration user allowed app ids: %w", err)
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(11, datetime('now'))`)
+	userDeviceColumns := []struct {
+		name string
+		sql  string
+	}{
+		{"device_api_url", `ALTER TABLE user_device_state ADD COLUMN device_api_url TEXT NOT NULL DEFAULT ''`},
+		{"is_mobile", `ALTER TABLE user_device_state ADD COLUMN is_mobile INTEGER NOT NULL DEFAULT 0`},
+		{"is_tv", `ALTER TABLE user_device_state ADD COLUMN is_tv INTEGER NOT NULL DEFAULT 0`},
+		{"lang", `ALTER TABLE user_device_state ADD COLUMN lang TEXT NOT NULL DEFAULT ''`},
+		{"time_zone", `ALTER TABLE user_device_state ADD COLUMN time_zone TEXT NOT NULL DEFAULT ''`},
+		{"is_wifi", `ALTER TABLE user_device_state ADD COLUMN is_wifi INTEGER NOT NULL DEFAULT -1`},
+	}
+	for _, column := range userDeviceColumns {
+		if _, err := s.db.ExecContext(ctx, column.sql); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migration user device %s: %w", column.name, err)
+		}
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(12, datetime('now'))`)
 	return nil
 }
 

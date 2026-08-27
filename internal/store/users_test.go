@@ -19,7 +19,11 @@ func TestObserveRuntimeUsersCreatesAndClosesLoginSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	login := time.Now().UTC().Add(-time.Hour)
-	user := RuntimeUser{UserID: "user-1", Nickname: "User", AppAccessNoLimit: false, AllowedAppIDs: []string{"app.one", "app.two"}, Online: true, ActiveDevices: 1, TotalDevices: 1, Devices: []RuntimeUserDevice{{ID: "client-1", Online: true, LoginTime: login}}}
+	wifi := true
+	user := RuntimeUser{UserID: "user-1", Nickname: "User", AppAccessNoLimit: false, AllowedAppIDs: []string{"app.one", "app.two"}, Online: true, ActiveDevices: 1, TotalDevices: 1, Devices: []RuntimeUserDevice{{
+		ID: "client-1", Name: "iPad", Model: "iPad Air", DeviceAPIURL: "https://device.d.heiyu.space:443",
+		IsMobile: true, Lang: "zh-Hans", TimeZone: "Asia/Shanghai", IsWifi: &wifi, Online: true, LoginTime: login,
+	}}}
 	if err = st.ObserveRuntimeUsers(ctx, deviceID, []RuntimeUser{user}); err != nil {
 		t.Fatal(err)
 	}
@@ -29,6 +33,10 @@ func TestObserveRuntimeUsersCreatesAndClosesLoginSession(t *testing.T) {
 	}
 	if len(users) != 1 || users[0].AppAccessNoLimit || len(users[0].AllowedAppIDs) != 2 || users[0].AllowedAppIDs[1] != "app.two" {
 		t.Fatalf("users=%+v", users)
+	}
+	endpoint := users[0].Devices[0]
+	if endpoint.DeviceAPIURL != "https://device.d.heiyu.space:443" || !endpoint.IsMobile || endpoint.TimeZone != "Asia/Shanghai" || endpoint.IsWifi == nil || !*endpoint.IsWifi {
+		t.Fatalf("endpoint=%+v", endpoint)
 	}
 	sessions, err := st.ListUserLoginSessions(ctx, time.Now().Add(-24*time.Hour))
 	if err != nil {

@@ -31,14 +31,42 @@ func (*fakeUsers) DeleteUser(context.Context, *common.DeleteUserRequest, ...grpc
 	return &emptypb.Empty{}, nil
 }
 
-type fakeDevices struct{}
+type fakeDevices struct {
+	remove *common.RemoveEndDeviceRequest
+	rename *common.SetDeviceRemarkNameRequest
+}
 
 func (*fakeDevices) ListEndDevices(context.Context, *common.ListEndDeviceRequest, ...grpc.CallOption) (*common.ListEndDeviceReply, error) {
 	return &common.ListEndDeviceReply{}, nil
 }
+func (f *fakeDevices) RemoveEndDevice(_ context.Context, req *common.RemoveEndDeviceRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	f.remove = req
+	return &emptypb.Empty{}, nil
+}
+func (f *fakeDevices) SetDeviceRemarkName(_ context.Context, req *common.SetDeviceRemarkNameRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	f.rename = req
+	return &emptypb.Empty{}, nil
+}
 
 type fakeAccess struct {
 	set *sys.AppAccessPolicyRequest
+}
+
+func TestRenameAndRemoveEndDevice(t *testing.T) {
+	devices := &fakeDevices{}
+	source := &Source{users: &fakeUsers{}, devices: devices, access: &fakeAccess{}}
+	if err := source.RenameDevice(context.Background(), "admin", "user-1", "device-1", "工作电脑"); err != nil {
+		t.Fatal(err)
+	}
+	if devices.rename == nil || devices.rename.GetUid() != "user-1" || devices.rename.GetUniqueDeviceId() != "device-1" || devices.rename.GetRemarkName() != "工作电脑" {
+		t.Fatalf("rename request=%+v", devices.rename)
+	}
+	if err := source.RemoveDevice(context.Background(), "admin", "user-1", "device-1"); err != nil {
+		t.Fatal(err)
+	}
+	if devices.remove == nil || devices.remove.GetUid() != "user-1" || devices.remove.GetUniqueDeivceId() != "device-1" {
+		t.Fatalf("remove request=%+v", devices.remove)
+	}
 }
 
 func (*fakeAccess) QueryAppAccessPolicy(context.Context, *sys.AppAccessPolicyRequest, ...grpc.CallOption) (*sys.AppAccessPolicy, error) {

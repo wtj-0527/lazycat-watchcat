@@ -4,10 +4,11 @@ import { api } from '@/api'
 import { usePagination, usePolling } from '@/composables'
 import { ago, dateTime } from '@/utils'
 import AppPagination from '@/components/AppPagination.vue'
+import AppIcon from '@/components/AppIcon.vue'
 import PageState from '@/components/PageState.vue'
 import { appConfirm, appPrompt } from '@/dialog'
 
-interface Endpoint { id:string; name:string; model:string; remarkName:string; online:boolean; bindingTime?:string; loginTime?:string }
+interface Endpoint { id:string; name:string; model:string; remarkName:string; deviceApiUrl?:string; isMobile?:boolean; isTv?:boolean; lang?:string; timeZone?:string; isWifi?:boolean; online:boolean; bindingTime?:string; loginTime?:string }
 interface Session { endDeviceId:string; loginAt:string; logoutAt?:string; durationSeconds:number }
 interface UserItem { deviceId:string;deviceName:string;local:boolean;userId:string;nickname:string;role:string;appInstallPermission:boolean;appAccessNoLimit:boolean;allowedAppIds:string[]|null;online:boolean;activeDevices:number;totalDevices:number;applicationCount:number;instanceCount:number;firstObservedAt:string;updatedAt:string;lastLoginAt?:string;lastLogoutAt?:string;onlineSeconds24h:number;onlineSeconds7d:number;onlineSeconds30d:number;loginCount:number;devices:Endpoint[]|null;sessions:Session[]|null }
 interface Payload {items:UserItem[];count:number;recordingSince?:string;updatedAt:string}
@@ -38,12 +39,30 @@ const onlineCount=computed(()=>(data.value?.items||[]).filter(x=>x.online).lengt
 const duration=(seconds?:number)=>{const value=Number.isFinite(seconds)?Number(seconds):0;const h=Math.floor(value/3600),m=Math.floor((value%3600)/60);return h?`${h} 小时 ${m} 分钟`:`${m} 分钟`}
 const presence=(item:UserItem)=>item.online?'在线':item.totalDevices>0?'离线':'未发现终端'
 const presenceClass=(item:UserItem)=>item.online?'healthy':'unknown'
+const endpointDisplayName=(endpoint:Endpoint)=>endpoint.remarkName||endpoint.name||endpoint.model||'未知终端'
+function endpointIcon(endpoint:Endpoint){
+  const value=`${endpoint.model} ${endpoint.name}`.toLowerCase()
+  if(endpoint.isTv||/\btv\b/.test(value))return 'tv'
+  if(/ipad|tablet/.test(value))return 'tablet'
+  if(endpoint.isMobile||/iphone|android|mobile|phone/.test(value))return 'mobile'
+  if(/darwin|mac|windows|linux|desktop|laptop|notebook/.test(value))return 'laptop'
+  return 'devices'
+}
+function endpointHost(endpoint:Endpoint){
+  const raw=endpoint.deviceApiUrl?.trim()
+  if(raw){try{return new URL(raw).hostname||endpoint.id}catch{/* SDK may return a host without a URL scheme. */}if(/^[a-z0-9.-]+(?::\d+)?$/i.test(raw))return raw.split(':')[0]}
+  return endpoint.id
+}
+const endpointForSession=(session:Session)=>selectedEndpoints.value.find(endpoint=>endpoint.id===session.endDeviceId)
+const sessionEndpointName=(session:Session)=>{const endpoint=endpointForSession(session);return endpoint?endpointDisplayName(endpoint):session.endDeviceId||'未知终端'}
 function toggleApp(id:string){allowedAppIds.value=allowedAppIds.value.includes(id)?allowedAppIds.value.filter(x=>x!==id):[...allowedAppIds.value,id]}
 async function createUser(){busy.value=true;try{await api('/api/v1/users',{method:'POST',body:JSON.stringify(newUser.value)});emit('toast','用户已创建');showCreate.value=false;newUser.value={userId:'',password:'',role:'normal'};await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{busy.value=false}}
 async function changeRole(item:UserItem){if(!await appConfirm({title:'调整用户角色',message:`确认将 ${item.nickname} 调整为${item.role==='admin'?'普通用户':'管理员'}？`,confirmText:'确认调整'}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/role`,{method:'PUT',body:JSON.stringify({role:item.role==='admin'?'normal':'admin'})});emit('toast','角色已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function resetPassword(item:UserItem){const password=await appPrompt({title:'重置用户密码',message:`为 ${item.nickname} 设置新密码，至少 8 位。`,inputType:'password',inputPlaceholder:'输入新密码',confirmText:'确认重置'});if(!password)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/password`,{method:'PUT',body:JSON.stringify({password})});emit('toast','密码已重置')}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function removeUser(item:UserItem){if(!await appConfirm({title:'删除用户',message:`确认删除用户 ${item.nickname}？本次不会清理用户数据。`,confirmText:'删除用户',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}`,{method:'DELETE'});emit('toast','用户已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/app-access`,{method:'PUT',body:JSON.stringify({noLimit:item.appInstallPermission||accessMode.value==='all',allowedAppIds:item.appInstallPermission?[]:allowedAppIds.value})});emit('toast','应用可见范围已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{accessBusy.value=false}}
+async function renameEndpoint(item:UserItem,endpoint:Endpoint){const remarkName=await appPrompt({title:'修改终端备注',message:`为 ${endpointDisplayName(endpoint)} 设置便于识别的备注名。留空可清除备注。`,inputPlaceholder:'输入终端备注',inputValue:endpoint.remarkName||'',confirmText:'保存备注'});if(remarkName===null)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/end-devices/${encodeURIComponent(endpoint.id)}/remark`,{method:'PUT',body:JSON.stringify({remarkName})});emit('toast','终端备注已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
+async function removeEndpoint(item:UserItem,endpoint:Endpoint){if(!await appConfirm({title:'删除登录终端',message:`确认从 ${item.nickname} 的账户中删除“${endpointDisplayName(endpoint)}”？该终端需要重新登录后才能再次访问。`,confirmText:'删除终端',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/end-devices/${encodeURIComponent(endpoint.id)}`,{method:'DELETE'});emit('toast','登录终端已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 </script>
 
 <template>
@@ -77,8 +96,29 @@ async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(
         <div v-if="selected.local" class="app-access-footer"><span v-if="accessMode==='selected'">已选择 {{allowedAppIds.length}} 个应用</span><span v-else>不限制应用访问</span><button class="primary-button" :disabled="accessBusy" @click="saveAppAccess(selected)">{{accessBusy?'保存中…':'保存可见范围'}}</button></div>
         <p v-else class="muted">远端用户的权限为只读；请在 {{selected.deviceName}} 上修改。</p>
       </div>
-      <div class="section-title compact"><div><h3>登录终端</h3></div></div><div class="user-endpoints"><div v-for="endpoint in endpointPagination.pagedItems.value" :key="endpoint.id"><i :class="{online:endpoint.online}"/><span><b>{{endpoint.remarkName||endpoint.name||endpoint.model||'未知终端'}}</b><small>{{endpoint.model||endpoint.id}} · {{endpoint.online?'登录于 '+dateTime(endpoint.loginTime):'当前离线'}}</small></span></div></div><AppPagination v-model:page="endpointPagination.page.value" v-model:page-size="endpointPagination.pageSize.value" :total="endpointPagination.total.value" :page-count="endpointPagination.pageCount.value" :range-start="endpointPagination.rangeStart.value" :range-end="endpointPagination.rangeEnd.value" label="登录终端分页" />
-      <div class="section-title compact"><div><h3>登录历史</h3></div></div><div class="session-timeline"><div v-for="session in sessionPagination.pagedItems.value" :key="`${session.endDeviceId}-${session.loginAt}`"><i :class="{open:!session.logoutAt}"/><span><b>{{dateTime(session.loginAt)}}</b><small>{{session.logoutAt?'退出 '+dateTime(session.logoutAt):'当前在线'}} · {{duration(session.durationSeconds)}}</small></span></div><p v-if="!selectedSessions.length" class="inline-empty">从开始记录以来尚未观察到登录会话。</p></div><AppPagination v-model:page="sessionPagination.page.value" v-model:page-size="sessionPagination.pageSize.value" :total="sessionPagination.total.value" :page-count="sessionPagination.pageCount.value" :range-start="sessionPagination.rangeStart.value" :range-end="sessionPagination.rangeEnd.value" label="登录历史分页" />
+      <div class="section-title compact"><div><h3>登录终端</h3></div></div>
+      <div class="user-endpoints">
+        <article v-for="endpoint in endpointPagination.pagedItems.value" :key="endpoint.id" class="endpoint-card">
+          <div class="endpoint-device-icon"><AppIcon :name="endpointIcon(endpoint)" :size="24"/></div>
+          <div class="endpoint-main">
+            <div class="endpoint-title"><div><b>{{endpointDisplayName(endpoint)}}</b><small v-if="endpoint.remarkName&&endpoint.name">{{endpoint.name}}</small></div><span class="pill" :class="endpoint.online?'healthy':'offline'">{{endpoint.online?'在线':'离线'}}</span></div>
+            <div class="endpoint-meta">
+              <div><span>设备型号</span><b>{{endpoint.model||'未知'}}</b></div>
+              <div><span>最近登录</span><b>{{dateTime(endpoint.loginTime)}}</b></div>
+              <div><span>首次绑定</span><b>{{dateTime(endpoint.bindingTime)}}</b></div>
+              <div><span>设备标识</span><b class="endpoint-id">{{endpointHost(endpoint)}}</b></div>
+            </div>
+            <div v-if="endpoint.timeZone||endpoint.lang||endpoint.isWifi!==undefined" class="endpoint-details">
+              <span v-if="endpoint.timeZone">时区 {{endpoint.timeZone}}</span><span v-if="endpoint.lang">语言 {{endpoint.lang}}</span><span v-if="endpoint.isWifi!==undefined">{{endpoint.isWifi?'Wi-Fi 连接':'非 Wi-Fi 连接'}}</span>
+            </div>
+          </div>
+          <div v-if="selected.local" class="endpoint-actions"><button class="secondary-button" @click="renameEndpoint(selected,endpoint)">修改备注</button><button class="danger-button" @click="removeEndpoint(selected,endpoint)">删除终端</button></div>
+        </article>
+        <p v-if="!selectedEndpoints.length" class="inline-empty">该用户当前没有已绑定的登录终端。</p>
+      </div>
+      <p v-if="!selected.local&&selectedEndpoints.length" class="muted">远端登录终端为只读；请在 {{selected.deviceName}} 上修改。</p>
+      <AppPagination v-model:page="endpointPagination.page.value" v-model:page-size="endpointPagination.pageSize.value" :total="endpointPagination.total.value" :page-count="endpointPagination.pageCount.value" :range-start="endpointPagination.rangeStart.value" :range-end="endpointPagination.rangeEnd.value" label="登录终端分页" />
+      <div class="section-title compact"><div><h3>登录历史</h3></div></div><div class="session-timeline"><div v-for="session in sessionPagination.pagedItems.value" :key="`${session.endDeviceId}-${session.loginAt}`"><i :class="{open:!session.logoutAt}"/><span><b>{{sessionEndpointName(session)}}</b><small>登录 {{dateTime(session.loginAt)}} · {{session.logoutAt?'退出 '+dateTime(session.logoutAt):'当前在线'}} · {{duration(session.durationSeconds)}}</small></span></div><p v-if="!selectedSessions.length" class="inline-empty">从开始记录以来尚未观察到登录会话。</p></div><AppPagination v-model:page="sessionPagination.page.value" v-model:page-size="sessionPagination.pageSize.value" :total="sessionPagination.total.value" :page-count="sessionPagination.pageCount.value" :range-start="sessionPagination.rangeStart.value" :range-end="sessionPagination.rangeEnd.value" label="登录历史分页" />
     </section>
   </div>
 </PageState>
