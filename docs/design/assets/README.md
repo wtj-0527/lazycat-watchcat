@@ -4,7 +4,7 @@
 
 | File | Size | Purpose |
 |---|---:|---|
-| `watchcat-logo.png` | 512 × 512 | 用户批准的蓝色猫与 NAS 监控图像 |
+| `watchcat-logo.png` | 512 × 512 | 用户批准的橙色猫与 NAS 监控图像 |
 | `watchcat-logo-64.png` | 64 × 64 | Sidebar、导航和紧凑 UI 使用的 PNG |
 
 ## Usage
