@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/api'
-import { usePagination, usePolling } from '@/composables'
+import { usePolling } from '@/composables'
 import type { Capability, Metric } from '@/types'
 import { ago, bytes, dateTime, formatMetricValue, metricLabel, monthDay, parseBeijingDateTimeInput, storageRiskAdvice, storageRiskStatus, toBeijingDateTimeInput } from '@/utils'
 import PageState from '@/components/PageState.vue'
-import AppPagination from '@/components/AppPagination.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -192,6 +191,7 @@ const btrfsVolumes = computed(() => volumes.value.filter((item) => item.filesyst
   const scrubKnown = atMount('btrfs.scrub.known')?.value === 1
   return { ...volume, allocated: atMount('btrfs.allocated')?.value || 0, unallocated: atMount('btrfs.unallocated')?.value || 0, errors, missing, scrubKnown, status: errors || missing ? 'critical' : volume.usage.value >= 90 ? 'warning' : 'healthy' }
 }))
+const btrfsByVolume = computed(() => new Map(btrfsVolumes.value.map((volume) => [volume.key, volume])))
 
 const riskItems = computed(() => {
   const latest = new Map<string, Metric>()
@@ -202,9 +202,36 @@ const riskItems = computed(() => {
   }
   return [...latest.values()].sort((a, b) => Number(riskStatus(a) === 'warning') - Number(riskStatus(b) === 'warning') || b.value - a.value)
 })
-const btrfsPagination = usePagination(btrfsVolumes, 10)
-const riskPagination = usePagination(riskItems, 20)
 const capabilityStatus = (name: string) => data.value?.capabilities.find((item) => item.capability.includes(name))
+function statusRank(status: string) {
+  return status === 'critical' ? 3 : status === 'warning' ? 2 : status === 'healthy' ? 1 : 0
+}
+function combinedStatus(...statuses: string[]) {
+  return statuses.sort((left, right) => statusRank(right) - statusRank(left))[0] || 'unknown'
+}
+function volumeStatus(volume: VolumeResource, diskStatus = 'healthy') {
+  const btrfs = btrfsByVolume.value.get(volume.key)
+  return combinedStatus(diskStatus, btrfs?.status || 'healthy', volume.usage.value >= 90 ? 'warning' : 'healthy')
+}
+function btrfsFor(volume: VolumeResource) {
+  return btrfsByVolume.value.get(volume.key)
+}
+function volumeStatusReason(volume: VolumeResource, diskStatus = 'healthy') {
+  const btrfs = btrfsFor(volume)
+  if (diskStatus === 'critical') return '物理磁盘存在严重告警'
+  if (diskStatus === 'warning') return '物理磁盘存在告警'
+  if (btrfs?.errors || btrfs?.missing) return 'Btrfs 存在设备错误'
+  if (volume.usage.value >= 90) return '容量使用率超过 90%'
+  return ''
+}
+function risksForDisk(deviceId: string, device: string) {
+  return riskItems.value.filter((item) =>
+    item.deviceId === deviceId && String(item.labels?.device || '').replace('/dev/', '') === device)
+}
+function risksForVolume(volume: VolumeResource) {
+  return riskItems.value.filter((item) =>
+    item.deviceId === volume.deviceId && item.labels?.mount === volume.mount)
+}
 watch(() => data.value?.updatedAt, () => { if (data.value?.updatedAt) loadAllHistory() })
 
 function historyRange() {
@@ -326,31 +353,53 @@ async function runStorageCheck() {
             <StatusPill :status="disk.status" />
           </div>
           <div class="storage-detail-stats"><span><small>容量</small><b>{{ bytes(disk.base.value) }}</b></span><span><small>介质 / 接口</small><b>{{ (disk.base.labels?.media || '未知').toUpperCase() }} / {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</b></span><span><small>温度</small><b>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</b></span><span><small>通电时间</small><b>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</b></span></div>
+          <div v-if="risksForDisk(disk.deviceId, disk.device).length" class="embedded-storage-risks">
+            <div class="embedded-risk-title"><b>需要处理的磁盘风险</b><span>{{ risksForDisk(disk.deviceId, disk.device).length }} 项</span></div>
+            <div v-for="risk in risksForDisk(disk.deviceId, disk.device)" :key="`${risk.name}-${risk.collectedAt}`" class="embedded-risk-row">
+              <StatusPill :status="riskStatus(risk) || 'unknown'" />
+              <span><b>{{ metricLabel(risk) }}</b><small>{{ risk.name }} · {{ ago(risk.collectedAt) }}</small></span>
+              <strong>{{ formatMetricValue(risk.value, risk.unit) }}</strong>
+              <p>{{ storageRiskAdvice(risk) }}</p>
+            </div>
+          </div>
           <div class="storage-expanded-charts" :class="{ single: !disk.volumes.length }">
             <section class="storage-history-panel"><div><h4>磁盘 I/O 趋势</h4><span class="muted">读取 / 写入平均速率</span></div><LineChart :series="diskHistory[disk.key] || []" :min="0" unit=" MiB/s" :height="190" /></section>
             <section v-for="volume in disk.volumes" :key="volume.key" class="storage-history-panel volume-panel">
-              <div class="storage-volume-heading"><div><h4>{{ volumeName(volume.mount) }} · 使用趋势</h4><span class="muted">{{ volume.mount }}</span></div><StatusPill :status="volume.usage.value >= 90 ? 'warning' : 'healthy'" /></div>
+              <div class="storage-volume-heading">
+                <div><h4>{{ volumeName(volume.mount) }} · 容量与 Btrfs</h4><span class="muted">{{ volume.mount }}</span></div>
+                <div class="storage-volume-state">
+                  <StatusPill :status="volumeStatus(volume, disk.status)" />
+                  <small v-if="volumeStatusReason(volume, disk.status)">{{ volumeStatusReason(volume, disk.status) }}</small>
+                </div>
+              </div>
               <div class="storage-volume-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
+              <div v-if="btrfsFor(volume)" class="embedded-btrfs-summary">
+                <span><small>已分配</small><b>{{ bytes(btrfsFor(volume)?.allocated || 0) }}</b></span>
+                <span><small>未分配</small><b>{{ bytes(btrfsFor(volume)?.unallocated || 0) }}</b></span>
+                <span><small>设备错误</small><b>{{ btrfsFor(volume)?.errors || 0 }}</b></span>
+                <span><small>缺失空间</small><b>{{ btrfsFor(volume)?.missing ? bytes(btrfsFor(volume)?.missing || 0) : '0 B' }}</b></span>
+              </div>
+              <p v-if="btrfsFor(volume) && !btrfsFor(volume)?.scrubKnown" class="embedded-scrub-note">尚无 Scrub 历史，不能判定最近校验时间</p>
+              <div v-if="risksForVolume(volume).length" class="embedded-volume-risks">
+                <p v-for="risk in risksForVolume(volume)" :key="`${risk.name}-${risk.collectedAt}`"><StatusPill :status="riskStatus(risk) || 'unknown'" /><span>{{ storageRiskAdvice(risk) }}</span><b>{{ formatMetricValue(risk.value, risk.unit) }}</b></p>
+              </div>
               <LineChart :series="volumeHistory[volume.key] || []" :min="0" :max="100" unit="%" :height="190" />
             </section>
           </div>
           <p v-if="!disk.volumes.length" class="storage-unmounted-note">该磁盘当前没有已挂载卷，仍展示物理磁盘 I/O 历史。</p>
         </article>
         <article v-for="volume in orphanVolumes" :key="`orphan-${volume.key}`" class="storage-expanded-disk orphan-volume-card">
-          <div class="storage-expanded-disk-heading"><div class="storage-expanded-identity"><span class="storage-device-icon">VOL</span><div><small>{{ volume.usage.deviceName || '未知设备' }} · 尚未关联物理磁盘</small><h3>{{ volumeName(volume.mount) }}</h3><p>{{ volume.mount }}</p></div></div><StatusPill :status="volume.usage.value >= 90 ? 'warning' : 'healthy'" /></div>
+          <div class="storage-expanded-disk-heading"><div class="storage-expanded-identity"><span class="storage-device-icon">VOL</span><div><small>{{ volume.usage.deviceName || '未知设备' }} · 尚未关联物理磁盘</small><h3>{{ volumeName(volume.mount) }}</h3><p>{{ volume.mount }}</p></div></div><div class="storage-volume-state"><StatusPill :status="volumeStatus(volume)" /><small v-if="volumeStatusReason(volume)">{{ volumeStatusReason(volume) }}</small></div></div>
           <div class="storage-volume-summary orphan-summary"><span>使用率 <b>{{ volume.usage.value.toFixed(1) }}%</b></span><span>已用 <b>{{ bytes(Math.max(0, volume.size - volume.free)) }}</b></span><span>可用 <b>{{ bytes(volume.free) }}</b></span><span>总容量 <b>{{ bytes(volume.size) }}</b></span></div>
+          <div v-if="btrfsFor(volume)" class="embedded-btrfs-summary">
+            <span><small>已分配</small><b>{{ bytes(btrfsFor(volume)?.allocated || 0) }}</b></span><span><small>未分配</small><b>{{ bytes(btrfsFor(volume)?.unallocated || 0) }}</b></span><span><small>设备错误</small><b>{{ btrfsFor(volume)?.errors || 0 }}</b></span><span><small>缺失空间</small><b>{{ btrfsFor(volume)?.missing ? bytes(btrfsFor(volume)?.missing || 0) : '0 B' }}</b></span>
+          </div>
+          <div v-if="risksForVolume(volume).length" class="embedded-volume-risks"><p v-for="risk in risksForVolume(volume)" :key="`${risk.name}-${risk.collectedAt}`"><StatusPill :status="riskStatus(risk) || 'unknown'" /><span>{{ storageRiskAdvice(risk) }}</span><b>{{ formatMetricValue(risk.value, risk.unit) }}</b></p></div>
           <section class="storage-history-panel volume-panel"><div><h4>存储卷使用趋势</h4><span class="muted">等待底层设备身份后将自动归入对应物理磁盘</span></div><LineChart :series="volumeHistory[volume.key] || []" :min="0" :max="100" unit="%" :height="190" /></section>
         </article>
         <div v-if="!physicalDisks.length && !orphanVolumes.length" class="inline-empty">尚未获得物理磁盘清单。</div>
       </div>
     </section>
-
-    <section class="card btrfs-health-card"><div class="section-title"><div><h2>Btrfs 健康中心</h2></div><StatusPill :status="capabilityStatus('btrfs')?.status || 'unknown'" /></div>
-      <div class="btrfs-grid"><article v-for="volume in btrfsPagination.pagedItems.value" :key="volume.key" class="btrfs-volume"><div><b>{{ volumeName(volume.mount) }}</b><StatusPill :status="volume.status" /></div><small class="muted">{{ volume.usage.deviceName || '未知设备' }} · {{ volume.mount }}</small><dl><span><dt>整体使用率</dt><dd>{{ volume.usage.value.toFixed(1) }}%</dd></span><span><dt>预计可用</dt><dd>{{ bytes(volume.free) }}</dd></span><span><dt>已分配</dt><dd>{{ bytes(volume.allocated) }}</dd></span><span><dt>未分配</dt><dd>{{ bytes(volume.unallocated) }}</dd></span><span><dt>设备错误</dt><dd>{{ volume.errors }}</dd></span><span><dt>缺失设备空间</dt><dd>{{ volume.missing ? bytes(volume.missing) : '0 B' }}</dd></span></dl><p :class="volume.scrubKnown ? 'muted' : 'operation-evidence warning'">{{ volume.scrubKnown ? '已有 Scrub 状态记录' : '尚无 Scrub 历史，不能判定最近校验时间' }}</p></article><div v-if="!btrfsVolumes.length" class="inline-empty">Btrfs 只读采集尚未返回；点击“立即只读检查”。</div></div>
-      <AppPagination v-model:page="btrfsPagination.page.value" v-model:page-size="btrfsPagination.pageSize.value" :total="btrfsPagination.total.value" :page-count="btrfsPagination.pageCount.value" :range-start="btrfsPagination.rangeStart.value" :range-end="btrfsPagination.rangeEnd.value" label="Btrfs 卷分页" />
-    </section>
-
-    <section class="card storage-risk-card"><div class="section-title"><div><h2>需要处理的存储风险</h2></div></div><div v-if="riskItems.length" class="table-scroll"><table class="fleet-table"><thead><tr><th>设备</th><th>资源</th><th>风险</th><th>当前值</th><th>采集时间</th><th>建议</th></tr></thead><tbody><tr v-for="item in riskPagination.pagedItems.value" :key="`${item.deviceId}-${item.name}-${metricLabel(item)}`"><td>{{ item.deviceName || '未知设备' }}</td><td>{{ metricLabel(item) }}<small><code>{{ item.name }}</code></small></td><td><StatusPill :status="riskStatus(item) || 'unknown'" /></td><td><b>{{ formatMetricValue(item.value, item.unit) }}</b></td><td>{{ ago(item.collectedAt) }}</td><td>{{ storageRiskAdvice(item) }}</td></tr></tbody></table></div><div v-else class="healthy-empty horizontal"><span>✓</span><div><b>当前没有达到阈值的存储风险</b></div></div><AppPagination v-model:page="riskPagination.page.value" v-model:page-size="riskPagination.pageSize.value" :total="riskPagination.total.value" :page-count="riskPagination.pageCount.value" :range-start="riskPagination.rangeStart.value" :range-end="riskPagination.rangeEnd.value" label="存储风险分页" /></section>
 
     <section class="card capability-card"><div class="section-title"><div><h2>存储采集能力</h2></div></div><div class="capability-grid"><div v-for="name in ['filesystem','btrfs','smart','nvme']" :key="name"><span>{{ name.toUpperCase() }}</span><StatusPill :status="capabilityStatus(name)?.status || 'unknown'" /><small>{{ capabilityStatus(name)?.detail || '当前 API 未返回此能力状态' }}</small></div></div></section>
   </PageState>

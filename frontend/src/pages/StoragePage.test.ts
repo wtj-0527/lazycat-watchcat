@@ -45,13 +45,14 @@ describe('StoragePage', () => {
     const wrapper = mount(StoragePage)
     await flushPromises()
 
-    const rows = wrapper.findAll('.storage-risk-card tbody tr')
+    const rows = wrapper.findAll('.embedded-risk-row')
     expect(rows).toHaveLength(3)
-    expect(rows[0].find('.pill').classes()).toContain('critical')
-    expect(rows[1].find('.pill').classes()).toContain('critical')
-    expect(rows[2].find('.pill').classes()).toContain('warning')
-    expect(wrapper.get('.storage-risk-card').text()).toContain('disk.nvme.critical_warning')
-    expect(wrapper.get('.storage-risk-card').text()).toContain('disk.ata.reallocated_sectors')
+    expect(rows.filter((row) => row.find('.pill').classes().includes('critical'))).toHaveLength(2)
+    expect(rows.filter((row) => row.find('.pill').classes().includes('warning'))).toHaveLength(1)
+    expect(wrapper.get('.storage-resource-card').text()).toContain('disk.nvme.critical_warning')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('disk.ata.reallocated_sectors')
+    expect(wrapper.find('.storage-risk-card').exists()).toBe(false)
+    expect(wrapper.find('.btrfs-health-card').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -112,7 +113,36 @@ describe('StoragePage', () => {
     expect(wrapper.text()).not.toContain('最高使用率卷 · 14 天趋势')
     expect(wrapper.findAll('.storage-history-panel')).toHaveLength(2)
     expect(wrapper.get('.storage-resource-card').text()).toContain('磁盘 I/O 趋势')
-    expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · 使用趋势')
+    expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · 容量与 Btrfs')
+    wrapper.unmount()
+  })
+
+  it('uses the worst physical disk, Btrfs, and capacity state for a volume', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [
+          { deviceId: 'd1', deviceName: 'nasw', name: 'disk.capacity', value: 1_000_000_000_000, unit: 'bytes', labels: { device: 'sda', model: 'ST1000LM048', serial: 'SERIAL', media: 'hdd' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'disk.ata.pending_sectors', value: 2, unit: 'count', labels: { device: '/dev/sda' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'btrfs.usage', value: 40, unit: '%', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'btrfs.size', value: 1_000_000_000_000, unit: 'bytes', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'btrfs.free_estimated', value: 600_000_000_000, unit: 'bytes', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+          { deviceId: 'd1', deviceName: 'nasw', name: 'btrfs.scrub.known', value: 1, unit: 'bool', labels: { mount: '/lzcsys/data' }, collectedAt },
+        ],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+
+    const volumePanel = wrapper.get('.volume-panel')
+    expect(volumePanel.get('.pill').classes()).toContain('critical')
+    expect(volumePanel.text()).toContain('物理磁盘存在严重告警')
+    expect(volumePanel.text()).not.toContain('尚无 Scrub 历史')
     wrapper.unmount()
   })
 
