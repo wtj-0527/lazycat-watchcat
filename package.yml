@@ -10,3 +10,6 @@ locales:
   zh:
     name: WatchCat
     description: LazyCat 设备集群健康监控与巡检中心
+  en:
+    name: WatchCat
+    description: Fleet monitoring, storage health, alerts, and inspections for LazyCat devices
