@@ -93,7 +93,7 @@ async function resetPassword(item:UserItem){const password=await appPrompt({titl
 async function removeUser(item:UserItem){if(!await appConfirm({title:'删除用户',message:`确认删除用户 ${item.nickname}？本次不会清理用户数据。`,confirmText:'删除用户',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}`,{method:'DELETE'});emit('toast','用户已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/app-access`,{method:'PUT',body:JSON.stringify({noLimit:item.appInstallPermission||accessMode.value==='all',allowedAppIds:item.appInstallPermission?[]:allowedAppIds.value})});emit('toast','应用可见范围已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{accessBusy.value=false}}
 async function renameEndpoint(item:UserItem,endpoint:Endpoint){const remarkName=await appPrompt({title:'修改终端备注',message:`为 ${endpointDisplayName(endpoint)} 设置便于识别的备注名。留空可清除备注。`,inputPlaceholder:'输入终端备注',inputValue:endpoint.remarkName||'',confirmText:'保存备注'});if(remarkName===null)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/end-devices/${encodeURIComponent(endpoint.id)}/remark`,{method:'PUT',body:JSON.stringify({remarkName})});emit('toast','终端备注已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
-async function removeEndpoint(item:UserItem,endpoint:Endpoint){if(!await appConfirm({title:'删除登录终端',message:`确认从 ${item.nickname} 的账户中删除“${endpointDisplayName(endpoint)}”？该终端需要重新登录后才能再次访问。`,confirmText:'删除终端',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/end-devices/${encodeURIComponent(endpoint.id)}`,{method:'DELETE'});emit('toast','登录终端已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
+async function removeEndpoint(item:UserItem,endpoint:Endpoint){if(!await appConfirm({title:'删除登录终端',message:`确认从 ${item.deviceName} 设备上 ${item.nickname} 的账户中删除“${endpointDisplayName(endpoint)}”？该终端需要重新登录后才能再次访问。`,confirmText:'删除终端',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/end-devices/${encodeURIComponent(endpoint.id)}?deviceId=${encodeURIComponent(item.deviceId)}`,{method:'DELETE'});emit('toast',item.local?'登录终端已删除':'删除操作已发送到远端设备');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 onMounted(()=>{syncUserRoute();window.addEventListener('hashchange',syncUserRoute)})
 onBeforeUnmount(()=>window.removeEventListener('hashchange',syncUserRoute))
 </script>
@@ -157,11 +157,11 @@ onBeforeUnmount(()=>window.removeEventListener('hashchange',syncUserRoute))
                 <span v-if="endpoint.timeZone">时区 {{endpoint.timeZone}}</span><span v-if="endpoint.lang">语言 {{endpoint.lang}}</span><span v-if="endpoint.isWifi!==undefined">{{endpoint.isWifi?'Wi-Fi 连接':'非 Wi-Fi 连接'}}</span>
               </div>
             </div>
-            <div v-if="selected.local" class="endpoint-actions"><button class="secondary-button" @click="renameEndpoint(selected,endpoint)">修改备注</button><button class="danger-button" @click="removeEndpoint(selected,endpoint)">删除终端</button></div>
+            <div class="endpoint-actions"><button v-if="selected.local" class="secondary-button" @click="renameEndpoint(selected,endpoint)">修改备注</button><button class="danger-button" @click="removeEndpoint(selected,endpoint)">删除终端</button></div>
           </article>
           <p v-if="!selectedEndpoints.length" class="inline-empty">该用户当前没有已绑定的登录终端。</p>
         </div>
-        <p v-if="!selected.local&&selectedEndpoints.length" class="muted">远端登录终端为只读；请在 {{selected.deviceName}} 上修改。</p>
+        <p v-if="!selected.local&&selectedEndpoints.length" class="muted">远端终端备注为只读；删除操作将通过已配对的设备通道发送到 {{selected.deviceName}}。</p>
         <AppPagination v-model:page="endpointPagination.page.value" v-model:page-size="endpointPagination.pageSize.value" :total="endpointPagination.total.value" :page-count="endpointPagination.pageCount.value" :range-start="endpointPagination.rangeStart.value" :range-end="endpointPagination.rangeEnd.value" label="登录终端分页" />
       </section>
 

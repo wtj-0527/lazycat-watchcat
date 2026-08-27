@@ -81,6 +81,7 @@ func main() {
 	embedded.SetUpstream(upstream)
 	handlers.ConfigureUpstream(upstream)
 	handlers.ConfigureDockerMaintenance(embedded.Docker(), embedded.DeviceID())
+	var runtimeSource *runtimeapps.Source
 	runtimeCtx, runtimeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	runtimeSource, runtimeErr := runtimeapps.NewPersistent(runtimeCtx, filepath.Join(cfg.DataDir, "runtime-user-id"))
 	runtimeCancel()
@@ -89,21 +90,6 @@ func main() {
 	} else {
 		defer runtimeSource.Close()
 		handlers.ConfigureRuntimeApps(runtimeSource, embedded.DeviceID())
-		upstream.SetCommandExecutor(func(ctx context.Context, command protocol.ApplicationCommand) protocol.ApplicationCommandResult {
-			result, err := runtimeSource.Control(ctx, runtimeSource.LastUID(), command.DeployID, command.Action, command.Autostart)
-			if err != nil {
-				return protocol.ApplicationCommandResult{ID: command.ID, Error: err.Error()}
-			}
-			if _, syncErr := handlers.SyncRuntimeApplications(ctx, runtimeSource.LastUID()); syncErr != nil {
-				logger.Warn("refresh runtime state after remote command", "command_id", command.ID, "error", syncErr)
-			}
-			if result.Autostart != nil {
-				_ = st.SetApplicationAutostart(ctx, embedded.DeviceID(), command.DeployID, *result.Autostart)
-			}
-			return protocol.ApplicationCommandResult{
-				ID: command.ID, Success: true, InstanceStatus: result.InstanceStatus, Autostart: result.Autostart,
-			}
-		})
 		go func() {
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
@@ -121,6 +107,7 @@ func main() {
 		}()
 	}
 	go upstream.RunCommands(context.Background())
+	var userSource *runtimeusers.Source
 	userCtx, userCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	userSource, userErr := runtimeusers.NewPersistent(userCtx, filepath.Join(cfg.DataDir, "runtime-user-id"))
 	userCancel()
@@ -147,6 +134,44 @@ func main() {
 			}
 		}()
 	}
+	upstream.SetCommandExecutor(func(ctx context.Context, command protocol.ApplicationCommand) protocol.ApplicationCommandResult {
+		if command.Action == "remove_user_end_device" {
+			if userSource == nil {
+				return protocol.ApplicationCommandResult{ID: command.ID, Error: "LazyCat user manager is unavailable"}
+			}
+			actor := userSource.LastUID()
+			if err := userSource.RemoveDevice(ctx, actor, command.UserID, command.DeployID); err != nil {
+				return protocol.ApplicationCommandResult{ID: command.ID, Error: err.Error()}
+			}
+			users, err := userSource.Query(ctx, actor)
+			if err != nil {
+				return protocol.ApplicationCommandResult{ID: command.ID, Error: "终端已删除，但服务端回读失败：" + err.Error()}
+			}
+			if err = st.ObserveRuntimeUsers(ctx, embedded.DeviceID(), users); err != nil {
+				return protocol.ApplicationCommandResult{ID: command.ID, Error: "终端已删除，但保存回读结果失败：" + err.Error()}
+			}
+			if err = st.DeleteRuntimeUserDevice(ctx, embedded.DeviceID(), command.UserID, command.DeployID); err != nil && !store.IsNotFound(err) {
+				return protocol.ApplicationCommandResult{ID: command.ID, Error: "终端已删除，但清理本地状态失败：" + err.Error()}
+			}
+			return protocol.ApplicationCommandResult{ID: command.ID, Success: true}
+		}
+		if runtimeSource == nil {
+			return protocol.ApplicationCommandResult{ID: command.ID, Error: "LazyCat Package Manager control API is unavailable"}
+		}
+		result, err := runtimeSource.Control(ctx, runtimeSource.LastUID(), command.DeployID, command.Action, command.Autostart)
+		if err != nil {
+			return protocol.ApplicationCommandResult{ID: command.ID, Error: err.Error()}
+		}
+		if _, syncErr := handlers.SyncRuntimeApplications(ctx, runtimeSource.LastUID()); syncErr != nil {
+			logger.Warn("refresh runtime state after remote command", "command_id", command.ID, "error", syncErr)
+		}
+		if result.Autostart != nil {
+			_ = st.SetApplicationAutostart(ctx, embedded.DeviceID(), command.DeployID, *result.Autostart)
+		}
+		return protocol.ApplicationCommandResult{
+			ID: command.ID, Success: true, InstanceStatus: result.InstanceStatus, Autostart: result.Autostart,
+		}
+	})
 	go embedded.Run(context.Background())
 	notifier := notify.NewLazyCat(st, logger)
 	inspectionScheduler := scheduler.NewInspectionScheduler(handlers, st, logger)

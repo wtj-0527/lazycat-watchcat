@@ -114,15 +114,16 @@ describe('UsersPage', () => {
     await wrapper.get('.endpoint-actions .danger-button').trigger('click')
     dialog.resolveDialog(true)
     await flushPromises()
-    expect(apiMock.mock.calls.some(([path, options]) => String(path).endsWith('/end-devices/endpoint-1') && options?.method === 'DELETE')).toBe(true)
+    expect(apiMock.mock.calls.some(([path, options]) => String(path).endsWith('/end-devices/endpoint-1?deviceId=d1') && options?.method === 'DELETE')).toBe(true)
     await wrapper.findAll('.user-detail-tabs button')[3].trigger('click')
     expect(wrapper.get('.session-timeline').text()).toContain('工作电脑')
     wrapper.unmount()
   })
 
-  it('keeps remote endpoints read-only', async () => {
-    apiMock.mockImplementation(async (path: string) => {
+  it('allows deleting remote endpoints through the paired device command channel', async () => {
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/applications') return { items: [] }
+      if (options?.method === 'DELETE') return { id: 'command-1', status: 'pending' }
       return {
         count: 1, updatedAt: new Date().toISOString(),
         items: [{ deviceId: 'remote', deviceName: 'canway', local: false, userId: 'u1', nickname: '远端用户', role: 'normal', appInstallPermission: false, appAccessNoLimit: true, allowedAppIds: [], online: false, activeDevices: 0, totalDevices: 1, applicationCount: 0, instanceCount: 0, firstObservedAt: '', updatedAt: '', onlineSeconds24h: 0, onlineSeconds7d: 0, onlineSeconds30d: 0, loginCount: 0, devices: [{ id: 'e1', name: 'iPhone', model: 'iPhone', remarkName: '', isMobile: true, online: false }], sessions: [] }],
@@ -131,8 +132,13 @@ describe('UsersPage', () => {
     const wrapper = mount(UsersPage)
     await flushPromises()
     await wrapper.findAll('.user-detail-tabs button')[2].trigger('click')
-    expect(wrapper.find('.endpoint-actions').exists()).toBe(false)
-    expect(wrapper.text()).toContain('远端登录终端为只读')
+    expect(wrapper.find('.endpoint-actions').exists()).toBe(true)
+    expect(wrapper.find('.endpoint-actions .secondary-button').exists()).toBe(false)
+    await wrapper.get('.endpoint-actions .danger-button').trigger('click')
+    const dialog = await import('@/dialog')
+    dialog.resolveDialog(true)
+    await flushPromises()
+    expect(apiMock.mock.calls.some(([path, options]) => String(path).includes('/end-devices/e1?deviceId=remote') && options?.method === 'DELETE')).toBe(true)
     wrapper.unmount()
   })
 

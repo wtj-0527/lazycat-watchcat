@@ -145,6 +145,11 @@ func (s *Server) completeCollectorCommand(w http.ResponseWriter, r *http.Request
 		problem(w, http.StatusBadRequest, "invalid_application_command_result", "应用操作结果无效")
 		return
 	}
+	command, commandErr := s.store.ApplicationCommandByID(r.Context(), result.ID)
+	if commandErr != nil || command.DeviceID != deviceID {
+		problem(w, http.StatusNotFound, "application_command_not_found", "设备操作不存在")
+		return
+	}
 	if err := s.store.CompleteApplicationCommand(r.Context(), deviceID, result); err != nil {
 		if store.IsNotFound(err) {
 			problem(w, http.StatusNotFound, "application_command_not_found", "应用操作不存在")
@@ -153,9 +158,21 @@ func (s *Server) completeCollectorCommand(w http.ResponseWriter, r *http.Request
 		problem(w, http.StatusInternalServerError, "application_command_complete_failed", "无法保存应用操作结果")
 		return
 	}
+	if result.Success && command.Action == removeUserEndDeviceAction {
+		if err := s.store.DeleteRuntimeUserDevice(r.Context(), deviceID, command.UserID, command.DeployID); err != nil && !store.IsNotFound(err) {
+			problem(w, http.StatusInternalServerError, "end_device_persist_failed", "终端已删除，但中心状态清理失败")
+			return
+		}
+	}
 	action := "application.instance.command_failed"
 	if result.Success {
 		action = "application.instance.command_succeeded"
+	}
+	if command.Action == removeUserEndDeviceAction {
+		action = "user.end_device.remove_failed"
+		if result.Success {
+			action = "user.end_device.removed"
+		}
 	}
 	_ = s.store.RecordAudit(r.Context(), action, "application_command", result.ID,
 		map[string]any{"deviceId": deviceID, "instanceStatus": result.InstanceStatus, "autostart": result.Autostart, "error": result.Error})

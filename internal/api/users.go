@@ -6,8 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 )
+
+const removeUserEndDeviceAction = "remove_user_end_device"
 
 func (s *Server) usersView(w http.ResponseWriter, r *http.Request) {
 	actor := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
@@ -356,17 +359,38 @@ func (s *Server) renameUserEndDevice(w http.ResponseWriter, r *http.Request) {
 func (s *Server) removeUserEndDevice(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimSpace(r.PathValue("id"))
 	endDeviceID := strings.TrimSpace(r.PathValue("deviceId"))
+	targetDeviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
 	actor := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
-	if s.runtimeUsers == nil {
-		problem(w, http.StatusServiceUnavailable, "user_manager_unavailable", "用户管理服务不可用")
-		return
-	}
 	if uid == "" || endDeviceID == "" {
 		problem(w, http.StatusBadRequest, "invalid_end_device", "用户 ID 和终端 ID 必填")
 		return
 	}
-	if !s.isLocalUserEndDevice(r, uid, endDeviceID) {
-		problem(w, http.StatusNotFound, "end_device_not_found", "本机用户中未找到该登录终端")
+	if targetDeviceID == "" {
+		targetDeviceID = s.localDeviceID
+	}
+	if !s.hasUserEndDevice(r, targetDeviceID, uid, endDeviceID) {
+		problem(w, http.StatusNotFound, "end_device_not_found", "指定设备的用户中未找到该登录终端")
+		return
+	}
+	if targetDeviceID != s.localDeviceID {
+		created, err := s.store.CreateApplicationCommand(r.Context(), protocol.ApplicationCommand{
+			DeviceID: targetDeviceID,
+			DeployID: endDeviceID,
+			AppID:    "community.lazycat.app.watchcat.user-end-device",
+			UserID:   uid,
+			Action:   removeUserEndDeviceAction,
+		})
+		if err != nil {
+			problem(w, http.StatusInternalServerError, "end_device_command_failed", "无法创建远端终端删除操作")
+			return
+		}
+		_ = s.store.RecordAudit(r.Context(), "user.end_device.remove_queued", "lazycat_end_device", endDeviceID,
+			map[string]any{"commandId": created.ID, "deviceId": targetDeviceID, "userId": uid})
+		writeJSON(w, http.StatusAccepted, created)
+		return
+	}
+	if s.runtimeUsers == nil {
+		problem(w, http.StatusServiceUnavailable, "user_manager_unavailable", "用户管理服务不可用")
 		return
 	}
 	if err := s.runtimeUsers.RemoveDevice(r.Context(), actor, uid, endDeviceID); err != nil {
@@ -390,13 +414,13 @@ func (s *Server) removeUserEndDevice(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) isLocalUserEndDevice(r *http.Request, uid, endDeviceID string) bool {
+func (s *Server) hasUserEndDevice(r *http.Request, deviceID, uid, endDeviceID string) bool {
 	users, err := s.store.ListRuntimeUsers(r.Context())
 	if err != nil {
 		return false
 	}
 	for _, user := range users {
-		if user.DeviceID != s.localDeviceID || user.UserID != uid {
+		if user.DeviceID != deviceID || user.UserID != uid {
 			continue
 		}
 		for _, endpoint := range user.Devices {
@@ -406,4 +430,8 @@ func (s *Server) isLocalUserEndDevice(r *http.Request, uid, endDeviceID string) 
 		}
 	}
 	return false
+}
+
+func (s *Server) isLocalUserEndDevice(r *http.Request, uid, endDeviceID string) bool {
+	return s.hasUserEndDevice(r, s.localDeviceID, uid, endDeviceID)
 }
