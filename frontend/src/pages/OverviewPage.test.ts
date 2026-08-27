@@ -50,7 +50,17 @@ describe('OverviewPage', () => {
           'disk.io.write.bytes_total': [{ name: 'disk.io.write.bytes_total', value: 8 * 1024 ** 4, unit: 'bytes', labels: { device: 'sda' }, collectedAt }],
         },
       }],
-      alerts: [],
+      alerts: [{
+        fingerprint: 'btrfs-data',
+        deviceId: 'd1',
+        deviceName: '猫盒',
+        severity: 'critical',
+        status: 'firing',
+        resource: '/data',
+        message: 'Btrfs 使用率 96.0%',
+        value: 96,
+        unit: '%',
+      }],
       updatedAt: collectedAt,
     })
 
@@ -70,6 +80,9 @@ describe('OverviewPage', () => {
     expect(wrapper.get('.fleet-realtime-section').text()).toContain('18.0%')
     expect(wrapper.get('.fleet-realtime-section').text()).toContain('CPU 封装温度')
     expect(wrapper.get('.fleet-realtime-section').text()).toContain('51.0 ℃')
+    expect(wrapper.get('.device-health-evidence').text()).toContain('严重原因')
+    expect(wrapper.get('.device-health-evidence').text()).toContain('Btrfs 使用率 96.0%')
+    expect(wrapper.get('.device-health-evidence').text()).toContain('/data')
     const metricCards = wrapper.findAll('.realtime-metric')
     expect(metricCards[6].text()).toContain('收2.0 KiB')
     expect(metricCards[6].text()).toContain('发4.0 KiB')
@@ -79,6 +92,32 @@ describe('OverviewPage', () => {
     await metricCards[7].trigger('mouseenter')
     expect(metricCards[7].get('[role="tooltip"]').text()).toContain('disk.io.read.bytes_total')
     expect(wrapper.get('.capability-summary-hover').attributes('title')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('shows the exact hidden SMART metric that makes a device critical', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockResolvedValue({
+      stats: { devices: 1, online: 1, offline: 0, critical: 1, warning: 0 },
+      devices: [{
+        id: 'd1', name: 'nasw', hostname: 'nasw', collectorVersion: '1.4.20',
+        status: 'online', lastSeenAt: collectedAt, online: true, stale: false, health: 'critical',
+        latest: {
+          'system.cpu.usage': [{ name: 'system.cpu.usage', value: 5.4, unit: '%', labels: {}, collectedAt }],
+          'disk.ata.pending_sectors': [{ name: 'disk.ata.pending_sectors', value: 8, unit: 'count', labels: { device: 'sda' }, collectedAt, risk: 'critical' }],
+        },
+      }],
+      alerts: [],
+      updatedAt: collectedAt,
+    })
+
+    const wrapper = mount(OverviewPage)
+    await flushPromises()
+    const evidence = wrapper.get('.device-health-evidence')
+    expect(evidence.text()).toContain('严重原因')
+    expect(evidence.text()).toContain('待处理扇区')
+    expect(evidence.text()).toContain('sda')
+    expect(evidence.get('a').attributes('href')).toBe('#alerts')
     wrapper.unmount()
   })
 

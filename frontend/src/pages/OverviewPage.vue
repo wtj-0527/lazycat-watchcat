@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
-import type { Device, Metric, Overview } from '@/types'
+import type { Alert, Device, Metric, Overview } from '@/types'
 import { ago, bytes, deviceState, formatMetricValue, statusRank, storageRiskAdvice, storageRiskStatus, storageUsageMetrics } from '@/utils'
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
@@ -38,6 +38,12 @@ interface RealtimeMetric {
   parts?: Array<{ label: string; value: string }>
   percent?: number
   status?: 'warning' | 'critical'
+}
+interface DeviceRiskEvidence {
+  key: string
+  severity: 'warning' | 'critical'
+  message: string
+  resource: string
 }
 function metricPoints(device: Device, names: string[]): Metric[] {
   for (const name of names) {
@@ -146,6 +152,60 @@ function realtimeMetrics(device: Device): RealtimeMetric[] {
     pairedCounter(device, '磁盘累计 I/O', ['disk.io.read.bytes_total', 'disk.io.read.bytes_total', '读'], ['disk.io.write.bytes_total', 'disk.io.write.bytes_total', '写']),
   ]
 }
+function metricRiskMessage(point: Metric): string {
+  const labels: Record<string, string> = {
+    'system.cpu.usage': 'CPU 使用率',
+    'system.memory.usage': '内存使用率',
+    'system.temperature': '硬件温度',
+    'filesystem.root.usage': '文件系统使用率',
+    'filesystem.volume.usage': '存储卷使用率',
+    'btrfs.usage': 'Btrfs 使用率',
+    'container.memory.usage_percent': '容器内存使用率',
+    'disk.temperature': '磁盘温度',
+    'disk.nvme.media_errors': 'NVMe 介质错误',
+    'disk.nvme.critical_warning': 'NVMe 严重警告',
+    'disk.ata.reallocated_sectors': '重映射扇区',
+    'disk.ata.pending_sectors': '待处理扇区',
+    'disk.ata.offline_uncorrectable': '离线不可校正扇区',
+    'disk.ata.reported_uncorrectable': '已报告不可校正错误',
+    'lpk.application.healthy': '应用状态异常',
+  }
+  if (point.name === 'disk.nvme.critical_warning') return `${labels[point.name]} 0x${Math.round(point.value).toString(16).toUpperCase()}`
+  if (point.name === 'lpk.application.healthy') return `${point.labels?.app || '应用'} 状态异常`
+  return `${labels[point.name] || point.name} ${formatMetricValue(point.value, point.unit)}`
+}
+function metricResource(point: Metric): string {
+  return point.labels?.device || point.labels?.mount || point.labels?.app || point.labels?.sensor || point.name
+}
+function alertEvidence(alert: Alert): DeviceRiskEvidence {
+  return {
+    key: alert.fingerprint,
+    severity: alert.severity === 'critical' ? 'critical' : 'warning',
+    message: alert.message || alert.resource,
+    resource: alert.resource,
+  }
+}
+function deviceRiskEvidence(device: Device): DeviceRiskEvidence[] {
+  const activeAlerts = (data.value?.alerts || [])
+    .filter((alert) => alert.status !== 'resolved'
+      && (alert.deviceId === device.id || (!alert.deviceId && alert.deviceName === device.name))
+      && (alert.severity === 'critical' || alert.severity === 'warning'))
+    .map(alertEvidence)
+  const metricEvidence = Object.values(device.latest || {}).flatMap((points) => points
+    .filter((point) => point.risk === 'critical' || point.risk === 'warning')
+    .map((point) => ({
+      key: `${point.name}:${metricResource(point)}`,
+      severity: point.risk as 'warning' | 'critical',
+      message: metricRiskMessage(point),
+      resource: metricResource(point),
+    })))
+  const unique = new Map<string, DeviceRiskEvidence>()
+  for (const item of [...activeAlerts, ...metricEvidence]) {
+    const key = `${item.severity}:${item.message}:${item.resource}`
+    if (!unique.has(key)) unique.set(key, item)
+  }
+  return [...unique.values()].sort((a, b) => statusRank(a.severity) - statusRank(b.severity))
+}
 function capabilitySummary(device: Device): string {
   const latest = Object.keys(device.latest || {})
   const available = ['system.', 'container.', 'filesystem.', 'disk.', 'btrfs.']
@@ -184,6 +244,15 @@ function capabilityDetail(device: Device): string {
             <div><i :class="deviceState(device)" /><span><b>{{ device.name }}</b><small>{{ device.hostname || device.id }} · {{ ago(device.lastSeenAt) }}</small></span></div>
             <StatusPill :status="deviceState(device)" />
           </header>
+          <div v-if="deviceRiskEvidence(device).length" class="device-health-evidence" :class="deviceState(device)">
+            <span class="device-health-evidence-label">{{ deviceState(device)==='critical'?'严重原因':'警告原因' }}</span>
+            <div>
+              <span v-for="item in deviceRiskEvidence(device).slice(0,3)" :key="item.key" class="device-health-evidence-item" :class="item.severity">
+                <b>{{ item.message }}</b><small>{{ item.resource }}</small>
+              </span>
+            </div>
+            <a href="#alerts">{{deviceRiskEvidence(device).length>3?`查看全部 ${deviceRiskEvidence(device).length} 项`:'查看告警'}}</a>
+          </div>
           <div class="realtime-metric-grid">
             <RealtimeMetricCard
               v-for="(item, index) in realtimeMetrics(device)"
