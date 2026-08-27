@@ -7,6 +7,7 @@ vi.mock('@/api', () => ({ api: apiMock }))
 
 afterEach(() => {
   vi.clearAllMocks()
+  location.hash = ''
 })
 
 describe('StoragePage', () => {
@@ -112,6 +113,29 @@ describe('StoragePage', () => {
     expect(wrapper.findAll('.storage-history-panel')).toHaveLength(2)
     expect(wrapper.get('.storage-resource-card').text()).toContain('磁盘 I/O 趋势')
     expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · 使用趋势')
+    wrapper.unmount()
+  })
+
+  it('highlights the physical disk selected by an alert deep link', async () => {
+    location.hash = '#storage?deviceId=d1&disk=sda'
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [{
+          deviceId: 'd1', deviceName: 'nasw', name: 'disk.capacity', value: 1_000_000_000_000,
+          unit: 'bytes', labels: { device: 'sda', model: 'ST1000LM048', serial: 'SERIAL', media: 'hdd' }, collectedAt,
+        }],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+    expect(wrapper.get('.storage-location-evidence').text()).toContain('已定位到 nasw · sda')
+    expect(wrapper.get('.storage-expanded-disk').classes()).toContain('targeted')
     wrapper.unmount()
   })
 

@@ -20,6 +20,7 @@ const alert = {
 
 afterEach(() => {
   vi.clearAllMocks()
+  location.hash = ''
 })
 
 describe('AlertsPage', () => {
@@ -109,6 +110,24 @@ describe('AlertsPage', () => {
 
     finishMutation()
     await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('links disk alerts directly to the matching storage device and disk', async () => {
+    apiMock.mockResolvedValue({ items: [{
+      ...alert,
+      fingerprint: 'disk-alert',
+      deviceId: 'device one',
+      resource: '/dev/sda',
+      message: '待处理扇区 4104',
+    }] })
+    const wrapper = mount(AlertsPage)
+    await flushPromises()
+
+    const link = wrapper.get('.storage-alert-link')
+    expect(link.text()).toContain('查看 sda 磁盘详情')
+    await link.trigger('click')
+    expect(location.hash).toBe('#storage?deviceId=device%20one&disk=sda')
     wrapper.unmount()
   })
 })

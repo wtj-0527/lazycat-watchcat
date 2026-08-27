@@ -75,6 +75,15 @@ const severityByTime = computed(() => {
   }))
 })
 
+function alertDiskName(alert: Alert) {
+  const resource = String(alert.resource || '').replace(/^\/dev\//, '')
+  return /^(sd[a-z]+|nvme\d+n\d+|mmcblk\d+)$/.test(resource) ? resource : ''
+}
+function openDiskDetail(alert: Alert) {
+  const disk = alertDiskName(alert)
+  if (!disk || !alert.deviceId) return
+  location.hash = `storage?deviceId=${encodeURIComponent(alert.deviceId)}&disk=${encodeURIComponent(disk)}`
+}
 
 async function action(fingerprint: string, name: string) {
   if (actionLoading.value) return
@@ -154,6 +163,11 @@ async function bulkAcknowledge() {
         <div class="evidence-box"><span>最新证据</span><strong>{{ selectedAlert.resource }} = {{ selectedAlert.unit ? formatMetricValue(selectedAlert.value, selectedAlert.unit) : '状态异常' }}</strong><small>采集于 {{ ago(selectedAlert.lastSeenAt || selectedAlert.observedAt || selectedAlert.collectedAt) }} · 来源：内置采集器</small></div>
         <div class="lifecycle"><b>生命周期</b><div><span class="done">触发中</span><span :class="{ done: selectedAlert.status === 'acknowledged' }">已确认</span><span>已恢复</span></div></div>
         <label class="owner-field"><span>负责人</span><input value="设备管理员" readonly></label>
+        <button v-if="alertDiskName(selectedAlert)" class="storage-alert-link" @click="openDiskDetail(selectedAlert)">
+          <AppIcon name="storage" :size="17" />
+          <span><b>查看 {{ alertDiskName(selectedAlert) }} 磁盘详情</b><small>定位到物理磁盘、型号、序列号、下属卷和历史趋势</small></span>
+          <i>→</i>
+        </button>
         <div v-if="selectedAlert.status !== 'resolved'" class="alert-detail-actions">
           <button class="secondary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'silence')">静默通知</button>
           <button class="primary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'acknowledge')">确认并回读</button>

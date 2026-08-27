@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePagination, usePolling } from '@/composables'
 import type { Capability, Metric } from '@/types'
@@ -36,6 +36,16 @@ const volumeHistory = ref<Record<string, ChartSeries[]>>({})
 const historyLoading = ref(false)
 const historyError = ref('')
 let historyRequest = 0
+const deepLink = (() => {
+  const query = location.hash.split('?')[1] || ''
+  const params = new URLSearchParams(query)
+  return {
+    deviceId: params.get('deviceId') || '',
+    disk: (params.get('disk') || '').replace(/^\/dev\//, ''),
+  }
+})()
+const highlightedDiskKey = ref('')
+const locatedDiskLabel = ref('')
 
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
   const [storage, operations] = await Promise.all([
@@ -161,6 +171,19 @@ const physicalDisks = computed(() => {
 const orphanVolumes = computed(() => volumes.value.filter((volume) =>
   !physicalDisks.value.some((disk) => disk.deviceId === volume.deviceId && disk.device === volume.physicalDevice)))
 
+function storageDiskID(key: string) {
+  return `storage-disk-${encodeURIComponent(key).replaceAll('%', '_')}`
+}
+watch(physicalDisks, async (disks) => {
+  if (!deepLink.deviceId || !deepLink.disk) return
+  const target = disks.find((disk) => disk.deviceId === deepLink.deviceId && disk.device === deepLink.disk)
+  if (!target) return
+  highlightedDiskKey.value = target.key
+  locatedDiskLabel.value = `${target.base.deviceName || target.deviceId} · ${target.device}`
+  await nextTick()
+  document.getElementById(storageDiskID(target.key))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}, { immediate: true })
+
 const btrfsVolumes = computed(() => volumes.value.filter((item) => item.filesystem === 'Btrfs').map((volume) => {
   const atMount = (name: string) => latestMetric(itemList.value.filter((item) =>
     item.deviceId === volume.deviceId && item.name === name && item.labels?.mount === volume.mount))
@@ -282,6 +305,7 @@ async function runStorageCheck() {
 <template>
   <PageState :loading="loading" :error="error" :empty="data?.items.length === 0" empty-title="尚无存储数据" empty-text="等待物理磁盘、文件系统与 SMART 指标。" @retry="refresh">
     <div class="page-intro"><div><h2>存储与 Btrfs</h2></div><div class="intro-actions"><span class="muted">更新 {{ ago(data?.updatedAt) }}</span><button class="secondary-button" :disabled="checking" @click="runStorageCheck">{{ checking ? '检查中…' : '立即只读检查' }}</button></div></div>
+    <p v-if="locatedDiskLabel" class="storage-location-evidence" role="status"><b>已定位到 {{ locatedDiskLabel }}</b><span>以下高亮卡片为告警对应的物理磁盘。</span></p>
     <p v-if="checkMessage" class="operation-evidence" role="status">{{ checkMessage }}</p>
     <div class="stats four">
       <StatCard label="物理磁盘" :value="physicalDisks.length" hint="不包含 dm 加密映射设备" />
@@ -296,7 +320,7 @@ async function runStorageCheck() {
       <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
       <div v-if="historyLoading" class="inline-empty">正在读取全部磁盘与卷的历史数据…</div>
       <div class="storage-expanded-list">
-        <article v-for="disk in physicalDisks" :key="disk.key" class="storage-expanded-disk">
+        <article v-for="disk in physicalDisks" :id="storageDiskID(disk.key)" :key="disk.key" class="storage-expanded-disk" :class="{ targeted: highlightedDiskKey === disk.key }">
           <div class="storage-expanded-disk-heading">
             <div class="storage-expanded-identity"><span class="storage-device-icon">{{ disk.base.labels?.media === 'ssd' ? 'SSD' : 'HDD' }}</span><div><small>{{ disk.base.deviceName || '未知设备' }} · {{ disk.purpose }}</small><h3>{{ disk.device }} · {{ disk.brand }}</h3><p>{{ disk.model || '型号待采集' }} · {{ disk.serial || '序列号未知' }}</p></div></div>
             <StatusPill :status="disk.status" />

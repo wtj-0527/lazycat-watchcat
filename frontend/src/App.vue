@@ -67,7 +67,7 @@ const currentTheme = computed(() => themes.find((item) => item.mode === themeMod
 const nextTheme = computed(() => themes[(themes.findIndex((item) => item.mode === themeMode.value) + 1) % themes.length])
 
 function pageFromHash(): Page {
-  const candidate = location.hash.slice(1) as Page
+  const candidate = location.hash.slice(1).split('?')[0] as Page
   return candidate in pages ? candidate : 'overview'
 }
 function navigate(next: Page) {
