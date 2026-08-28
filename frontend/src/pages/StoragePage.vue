@@ -8,6 +8,7 @@ import PageState from '@/components/PageState.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import { metricColors } from '@/metricColors'
 
 interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[]; summary: { totalBytes: number; fillWithin30Days: number } }
 interface VolumeResource {
@@ -316,13 +317,13 @@ async function loadAllHistory() {
       ])
       for (const disk of group.disks) {
         nextDisks[disk.key] = [
-          { name: '读取', color: '#2563eb', points: counterRates(read.items || [], deviceId, disk.device) },
-          { name: '写入', color: '#10b981', points: counterRates(write.items || [], deviceId, disk.device) },
+          { name: '读取', color: metricColors.read, points: counterRates(read.items || [], deviceId, disk.device) },
+          { name: '写入', color: metricColors.write, points: counterRates(write.items || [], deviceId, disk.device) },
         ]
       }
       const byName = new Map(volumeNames.map((name, index) => [name, volumeResults[index]?.items || []]))
       for (const volume of group.volumes) {
-        nextVolumes[volume.key] = [{ name: volumeName(volume.mount), color: '#2563eb', points: (byName.get(volume.usage.name) || []).filter((item) => (!item.deviceId || item.deviceId === deviceId) && item.labels?.mount === volume.mount).map(chartPoint) }]
+        nextVolumes[volume.key] = [{ name: volumeName(volume.mount), color: metricColors.storage, points: (byName.get(volume.usage.name) || []).filter((item) => (!item.deviceId || item.deviceId === deviceId) && item.labels?.mount === volume.mount).map(chartPoint) }]
       }
     }))
     if (request === historyRequest) { diskHistory.value = nextDisks; volumeHistory.value = nextVolumes }

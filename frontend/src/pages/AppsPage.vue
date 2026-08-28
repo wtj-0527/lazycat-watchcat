@@ -12,6 +12,7 @@ import StatusPill from '@/components/StatusPill.vue'
 import SmartSelect, { type SmartOption } from '@/components/SmartSelect.vue'
 import { appConfirm } from '@/dialog'
 import { globalRealtime } from '@/realtime'
+import { metricColors } from '@/metricColors'
 
 interface RuntimeUser { id: string; name: string }
 interface Payload { items: ApplicationItem[]; users: RuntimeUser[]; source: string; stale: boolean; updatedAt?: string }
@@ -388,15 +389,15 @@ function chartPoints(items: HistoryPoint[] | undefined, scale = 1) {
     label: timeOfDay(item.collectedAt),
   }))
 }
-const cpuSeries = computed<ChartSeries[]>(() => [{ name: 'CPU', color: '#2563eb', points: chartPoints(history.value?.series.cpuPercent) }])
-const memorySeries = computed<ChartSeries[]>(() => [{ name: '内存', color: '#7c3aed', points: chartPoints(history.value?.series.memoryUsage, 1024 * 1024) }])
+const cpuSeries = computed<ChartSeries[]>(() => [{ name: 'CPU', color: metricColors.cpu, points: chartPoints(history.value?.series.cpuPercent) }])
+const memorySeries = computed<ChartSeries[]>(() => [{ name: '内存', color: metricColors.memory, points: chartPoints(history.value?.series.memoryUsage, 1024 * 1024) }])
 const networkSeries = computed<ChartSeries[]>(() => [
-  { name: '接收', color: '#15803d', points: chartPoints(history.value?.series.networkReceiveRate, 1024) },
-  { name: '发送', color: '#c05600', points: chartPoints(history.value?.series.networkTransmitRate, 1024) },
+  { name: '接收', color: metricColors.receive, points: chartPoints(history.value?.series.networkReceiveRate, 1024) },
+  { name: '发送', color: metricColors.transmit, points: chartPoints(history.value?.series.networkTransmitRate, 1024) },
 ])
 const blockSeries = computed<ChartSeries[]>(() => [
-  { name: '读取', color: '#2563eb', points: chartPoints(history.value?.series.blockReadRate, 1024) },
-  { name: '写入', color: '#c51d23', points: chartPoints(history.value?.series.blockWriteRate, 1024) },
+  { name: '读取', color: metricColors.read, points: chartPoints(history.value?.series.blockReadRate, 1024) },
+  { name: '写入', color: metricColors.write, points: chartPoints(history.value?.series.blockWriteRate, 1024) },
 ])
 const customHistoryRangeLabel = computed(() => historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
   ? `${dateTime(appliedCustomFrom.value)} 至 ${dateTime(appliedCustomTo.value)}`

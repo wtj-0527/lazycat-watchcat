@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { bytes, formatNumber } from '@/utils'
+import { metricColors } from '@/metricColors'
 
 export interface ResourceRankingItem {
   id: string
@@ -26,10 +27,10 @@ const board = ref<HTMLDivElement>()
 const active = ref<{ item: ResourceRankingItem; metric: MetricKey }>()
 const tooltip = ref({ x: 0, y: 0 })
 const metrics: MetricDefinition[] = [
-  { key: 'cpu', label: 'CPU', caption: '当前使用率', color: '#2563eb' },
-  { key: 'memory', label: '内存', caption: '当前占用', color: '#7c3aed' },
-  { key: 'network', label: '网络', caption: '累计收发', color: '#118847' },
-  { key: 'io', label: '磁盘 I/O', caption: '累计读写', color: '#c05600' },
+  { key: 'cpu', label: 'CPU', caption: '当前使用率', color: metricColors.cpu },
+  { key: 'memory', label: '内存', caption: '当前占用', color: metricColors.memory },
+  { key: 'network', label: '网络', caption: '累计收发', color: metricColors.network },
+  { key: 'io', label: '磁盘 I/O', caption: '累计读写', color: metricColors.io },
 ]
 const running = computed(() => props.items.filter((item) => item.running).length)
 const stopped = computed(() => props.items.length - running.value)

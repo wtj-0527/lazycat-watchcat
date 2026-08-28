@@ -14,6 +14,7 @@ import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { appConfirm, appPrompt } from '@/dialog'
 import { globalRealtime } from '@/realtime'
+import { metricColors } from '@/metricColors'
 
 type DetailTab = 'overview' | 'system' | 'processes' | 'storage' | 'apps' | 'network' | 'events'
 const detailTabs: Array<[DetailTab, string]> = [
@@ -188,16 +189,16 @@ const processKpis = computed(() => ({
   memory: [...processItems.value].sort((a, b) => b.memoryRssBytes - a.memoryRssBytes)[0],
 }))
 const processCpuSeries = computed<ChartSeries[]>(() => selectedProcess.value ? [{
-  name: selectedProcess.value.name, color: '#2563eb',
+  name: selectedProcess.value.name, color: metricColors.cpu,
   points: processHistory.value.map((item) => ({ value: item.cpuPercent, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })),
 }] : [])
 const processMemorySeries = computed<ChartSeries[]>(() => selectedProcess.value ? [{
-  name: selectedProcess.value.name, color: '#7c3aed',
+  name: selectedProcess.value.name, color: metricColors.memory,
   points: processHistory.value.map((item) => ({ value: item.memoryRssBytes / 1024 ** 2, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })),
 }] : [])
 const processIoSeries = computed<ChartSeries[]>(() => selectedProcess.value ? [
-  { name: '读取', color: '#118847', points: processHistory.value.map((item) => ({ value: item.readRate / 1024, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })) },
-  { name: '写入', color: '#c05600', points: processHistory.value.map((item) => ({ value: item.writeRate / 1024, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })) },
+  { name: '读取', color: metricColors.read, points: processHistory.value.map((item) => ({ value: item.readRate / 1024, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })) },
+  { name: '写入', color: metricColors.write, points: processHistory.value.map((item) => ({ value: item.writeRate / 1024, at: dateTime(item.collectedAt), label: timeOfDay(item.collectedAt) })) },
 ] : [])
 function trendRangeQuery() {
   return trendMode.value === 'custom' && trendAppliedFrom.value && trendAppliedTo.value
@@ -366,12 +367,12 @@ function historySeries(name: string, label: string, color: string, transform: (v
   }
 }
 const systemUsageSeries = computed<ChartSeries[]>(() => [
-  historySeries('system.cpu.usage', 'CPU', '#2563eb'),
-  historySeries('system.memory.usage', '内存', '#7c3aed'),
-  historySeries('system.swap.usage', 'Swap', '#c05600'),
+  historySeries('system.cpu.usage', 'CPU', metricColors.cpu),
+  historySeries('system.memory.usage', '内存', metricColors.memory),
+  historySeries('system.swap.usage', 'Swap', metricColors.swap),
 ].filter((item) => item.points.length))
 const systemLoadSeries = computed<ChartSeries[]>(() => [
-  historySeries('system.load.1m', '1 分钟负载', '#118847'),
+  historySeries('system.load.1m', '1 分钟负载', metricColors.load),
 ].filter((item) => item.points.length))
 const temperatureSummary = computed(() => {
   const points = selected.value?.latest?.['system.temperature'] || []
@@ -512,7 +513,7 @@ const storageTrendSeries = computed<ChartSeries[]>(() => {
     !primaryVolumeMount.value || (point.labels?.mount || point.labels?.path) === primaryVolumeMount.value)
   return points.length ? [{
     name: primaryVolumeMount.value || '最高使用率卷',
-    color: '#2563eb',
+    color: metricColors.storage,
     points: points.map((point) => ({
       value: point.value,
       at: dateTime(point.collectedAt),
@@ -543,16 +544,16 @@ function counterRateSeries(points: Metric[], label: string, color: string, divis
   return { name: label, color, points: result }
 }
 const diskRateSeries = computed<ChartSeries[]>(() => [
-  counterRateSeries(trend.value['disk.io.read.bytes_total'] || [], '读取', '#2563eb'),
-  counterRateSeries(trend.value['disk.io.write.bytes_total'] || [], '写入', '#c05600'),
+  counterRateSeries(trend.value['disk.io.read.bytes_total'] || [], '读取', metricColors.read),
+  counterRateSeries(trend.value['disk.io.write.bytes_total'] || [], '写入', metricColors.write),
 ].filter((item) => item.points.length))
 const diskOperationSeries = computed<ChartSeries[]>(() => [
-  counterRateSeries(trend.value['disk.io.read.operations_total'] || [], '读 IOPS', '#7c3aed', 1),
-  counterRateSeries(trend.value['disk.io.write.operations_total'] || [], '写 IOPS', '#118847', 1),
+  counterRateSeries(trend.value['disk.io.read.operations_total'] || [], '读 IOPS', metricColors.read, 1),
+  counterRateSeries(trend.value['disk.io.write.operations_total'] || [], '写 IOPS', metricColors.write, 1),
 ].filter((item) => item.points.length))
 const networkRateSeries = computed<ChartSeries[]>(() => [
-  counterRateSeries(trend.value['network.interface.receive.bytes_total'] || [], '下载', '#2563eb'),
-  counterRateSeries(trend.value['network.interface.transmit.bytes_total'] || [], '上传', '#118847'),
+  counterRateSeries(trend.value['network.interface.receive.bytes_total'] || [], '下载', metricColors.receive),
+  counterRateSeries(trend.value['network.interface.transmit.bytes_total'] || [], '上传', metricColors.transmit),
 ].filter((item) => item.points.length))
 const currentNetworkRates = computed(() => Object.fromEntries(networkRateSeries.value.map((item) => [item.name, item.points.at(-1)?.value || 0])))
 const networkAppItems = computed<BarItem[]>(() => {
@@ -782,8 +783,8 @@ watch(selectedTab, (tab) => {
             </section>
             <section class="card resource-trend-card">
               <div class="section-title device-trend-title">
-                <div><h2>吞吐趋势</h2></div>
-                <div class="range-tabs" aria-label="设备吞吐趋势时间范围">
+                <div><h2>磁盘 I/O 趋势</h2></div>
+                <div class="range-tabs" aria-label="设备磁盘 I/O 趋势时间范围">
                   <button v-for="option in [{ h: 1, l: '1 小时' }, { h: 6, l: '6 小时' }, { h: 24, l: '24 小时' }, { h: 168, l: '7 天' }]" :key="option.h" :class="{ active: trendMode === 'preset' && trendHours === option.h }" @click="selectTrendPreset(option.h)">{{ option.l }}</button>
                   <button :class="{ active: trendMode === 'custom' }" @click="showTrendCustomRange">自定义</button>
                 </div>
@@ -794,7 +795,7 @@ watch(selectedTab, (tab) => {
                 <button class="secondary-button" @click="applyTrendCustomRange">应用</button>
               </div>
               <p v-if="trendError" class="operation-evidence warning">{{ trendError }}</p>
-              <div v-if="trendLoading" class="inline-empty">正在读取吞吐历史…</div>
+              <div v-if="trendLoading" class="inline-empty">正在读取磁盘 I/O 历史…</div>
               <template v-else>
                 <div class="resource-throughput-grid">
                   <section>
@@ -810,13 +811,6 @@ watch(selectedTab, (tab) => {
                       <div class="resource-throughput-legend"><span v-for="item in diskOperationSeries" :key="item.name"><i :style="{background:item.color}" />{{item.name}}</span></div>
                     </header>
                     <LineChart :series="diskOperationSeries" :min="0" unit=" IOPS" :height="190" :show-legend="false" />
-                  </section>
-                  <section>
-                    <header>
-                      <div><h3>网络吞吐</h3><small>物理接口累计流量差值换算</small></div>
-                      <div class="resource-throughput-legend"><span v-for="item in networkRateSeries" :key="item.name"><i :style="{background:item.color}" />{{item.name}}</span></div>
-                    </header>
-                    <LineChart :series="networkRateSeries" :min="0" unit=" MiB/s" :height="190" :show-legend="false" />
                   </section>
                 </div>
               </template>
