@@ -750,16 +750,25 @@ watch(selectedTab, (tab) => {
                 </div>
                 <div class="resource-throughput-grid">
                   <section>
-                    <div><h3>磁盘吞吐</h3><span>累计读写差值换算</span></div>
-                    <LineChart :series="diskRateSeries" :min="0" unit=" MiB/s" :height="190" />
+                    <header>
+                      <div><h3>磁盘吞吐</h3><small>累计读写差值换算</small></div>
+                      <div class="resource-throughput-legend"><span v-for="item in diskRateSeries" :key="item.name"><i :style="{background:item.color}" />{{item.name}}</span></div>
+                    </header>
+                    <LineChart :series="diskRateSeries" :min="0" unit=" MiB/s" :height="190" :show-legend="false" />
                   </section>
                   <section>
-                    <div><h3>磁盘 IOPS</h3><span>每秒读写操作次数</span></div>
-                    <LineChart :series="diskOperationSeries" :min="0" unit=" IOPS" :height="190" />
+                    <header>
+                      <div><h3>磁盘 IOPS</h3><small>每秒读写操作次数</small></div>
+                      <div class="resource-throughput-legend"><span v-for="item in diskOperationSeries" :key="item.name"><i :style="{background:item.color}" />{{item.name}}</span></div>
+                    </header>
+                    <LineChart :series="diskOperationSeries" :min="0" unit=" IOPS" :height="190" :show-legend="false" />
                   </section>
                   <section>
-                    <div><h3>网络吞吐</h3><span>物理接口累计流量差值换算</span></div>
-                    <LineChart :series="networkRateSeries" :min="0" unit=" MiB/s" :height="190" />
+                    <header>
+                      <div><h3>网络吞吐</h3><small>物理接口累计流量差值换算</small></div>
+                      <div class="resource-throughput-legend"><span v-for="item in networkRateSeries" :key="item.name"><i :style="{background:item.color}" />{{item.name}}</span></div>
+                    </header>
+                    <LineChart :series="networkRateSeries" :min="0" unit=" MiB/s" :height="190" :show-legend="false" />
                   </section>
                 </div>
               </template>

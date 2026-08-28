@@ -145,6 +145,8 @@ describe('DevicesPage detail tabs', () => {
     expect(wrapper.get('.resource-trend-card').text()).toContain('磁盘 IOPS')
     expect(wrapper.get('.resource-trend-card').text()).toContain('网络吞吐')
     expect(wrapper.findAll('.resource-throughput-grid .line-chart')).toHaveLength(3)
+    expect(wrapper.findAll('.resource-throughput-legend')).toHaveLength(3)
+    expect(wrapper.findAll('.resource-throughput-grid .chart-legend')).toHaveLength(0)
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('name=disk.io.read.bytes_total'))).toBe(true)
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('name=disk.io.write.operations_total'))).toBe(true)
 
