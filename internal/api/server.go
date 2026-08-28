@@ -21,24 +21,26 @@ import (
 	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeusers"
 	"github.com/wtj-0527/lazycat-watchcat/internal/stability"
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
+	"github.com/wtj-0527/lazycat-watchcat/internal/upgradecoord"
 )
 
 type Server struct {
-	store         *store.Store
-	ca            *pki.Authority
-	webDir        string
-	pairingTTL    time.Duration
-	mux           *http.ServeMux
-	backup        *backup.Manager
-	stability     *stability.Monitor
-	restart       func()
-	runtimeApps   *runtimeapps.Source
-	runtimeUsers  *runtimeusers.Source
-	localDeviceID string
-	analytics     chan struct{}
-	docker        dockerMaintenance
-	dockerPrune   chan struct{}
-	upstream      *collector.Upstream
+	store              *store.Store
+	ca                 *pki.Authority
+	webDir             string
+	pairingTTL         time.Duration
+	mux                *http.ServeMux
+	backup             *backup.Manager
+	stability          *stability.Monitor
+	restart            func()
+	runtimeApps        *runtimeapps.Source
+	runtimeUsers       *runtimeusers.Source
+	localDeviceID      string
+	analytics          chan struct{}
+	docker             dockerMaintenance
+	dockerPrune        chan struct{}
+	upstream           *collector.Upstream
+	upgradeCoordinator *upgradecoord.Manager
 }
 
 func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
@@ -62,7 +64,10 @@ func (s *Server) ConfigureDockerMaintenance(docker *collector.DockerCollector, l
 	s.docker, s.localDeviceID = docker, localDeviceID
 }
 func (s *Server) ConfigureUpstream(upstream *collector.Upstream) { s.upstream = upstream }
-func (s *Server) Handler() http.Handler                          { return securityHeaders(s.mux) }
+func (s *Server) ConfigureUpgradeCoordinator(manager *upgradecoord.Manager) {
+	s.upgradeCoordinator = manager
+}
+func (s *Server) Handler() http.Handler { return securityHeaders(s.mux) }
 func (s *Server) CollectorHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
@@ -140,6 +145,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/maintenance-windows/{id}", s.deleteMaintenanceWindow)
 	s.mux.HandleFunc("GET /api/v1/audit", s.auditView)
 	s.mux.HandleFunc("POST /api/v1/notifications/test", s.testNotification)
+	s.mux.HandleFunc("GET /api/v1/upgrade-coordinator", s.upgradeCoordinatorStatus)
+	s.mux.HandleFunc("POST /api/v1/upgrade-coordinator/acquire", s.acquireUpgradeLease)
+	s.mux.HandleFunc("POST /api/v1/upgrade-coordinator/renew", s.renewUpgradeLease)
+	s.mux.HandleFunc("POST /api/v1/upgrade-coordinator/release", s.releaseUpgradeLease)
 	s.mux.HandleFunc("/", s.static)
 }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

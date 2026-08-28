@@ -29,6 +29,7 @@ func defaultAlertRules() []alertRule {
 		{Metric: "filesystem.volume.usage", Label: "存储分区使用率", Warning: 85, Critical: 95, Enabled: true},
 		{Metric: "btrfs.usage", Label: "Btrfs 使用率", Warning: 85, Critical: 95, Enabled: true},
 		{Metric: "disk.temperature", Label: "磁盘温度", Warning: 70, Critical: 80, Enabled: true},
+		{Metric: "disk.io.busy_percent", Label: "磁盘繁忙度", Warning: 80, Critical: 95, Enabled: true},
 		{Metric: "container.memory.usage_percent", Label: "容器内存使用率", Warning: 90, Critical: 95, Enabled: true},
 	}
 }
@@ -38,8 +39,24 @@ func (s *Server) currentAlertRules(r *http.Request) []alertRule {
 }
 
 func (s *Server) loadAlertRules(ctx context.Context) []alertRule {
-	rules := defaultAlertRules()
+	defaults := defaultAlertRules()
+	rules := append([]alertRule(nil), defaults...)
 	if ok, _ := s.store.GetSystemState(ctx, "alert.rules", &rules); !ok {
+		_ = s.store.SetSystemState(ctx, "alert.rules", defaults)
+		return defaults
+	}
+	existing := make(map[string]struct{}, len(rules))
+	for _, rule := range rules {
+		existing[rule.Metric] = struct{}{}
+	}
+	changed := false
+	for _, rule := range defaults {
+		if _, ok := existing[rule.Metric]; !ok {
+			rules = append(rules, rule)
+			changed = true
+		}
+	}
+	if changed {
 		_ = s.store.SetSystemState(ctx, "alert.rules", rules)
 	}
 	return rules

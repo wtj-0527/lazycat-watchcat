@@ -55,6 +55,10 @@ export function storageRiskStatus(point: Metric): 'critical' | 'warning' | undef
       if (point.value >= 80) return 'critical'
       if (point.value >= 70) return 'warning'
       return undefined
+    case 'disk.io.busy_percent':
+      if (point.value >= 95) return 'critical'
+      if (point.value >= 80) return 'warning'
+      return undefined
     case 'disk.nvme.media_errors':
     case 'disk.nvme.critical_warning':
     case 'disk.ata.pending_sectors':
@@ -76,6 +80,7 @@ export function storageRiskAdvice(point: Metric): string {
   if (point.name === 'disk.ata.reported_uncorrectable') return '立即备份并检查磁盘与连接'
   if (point.name === 'disk.ata.reallocated_sectors') return '检查磁盘坏扇区趋势与备份'
   if (point.name === 'disk.temperature') return '检查散热和负载'
+  if (point.name === 'disk.io.busy_percent') return '检查高 I/O 进程、升级任务和 Btrfs 元数据压力'
   return '清理空间或扩容'
 }
 
@@ -212,6 +217,9 @@ export function formatMetricValue(value: unknown, unit = '', digits = 1): string
     case 'bool': return numeric >= 1 ? '是' : '否'
     case '%': return `${formatNumber(numeric, digits)}%`
     case 'rpm': return `${formatNumber(numeric, 0)} rpm`
+    case 'bytes/s': return `${bytes(numeric)}/s`
+    case 'iops': return `${formatNumber(numeric, digits)} IOPS`
+    case 'ms': return `${formatNumber(numeric, digits)} ms`
     case '': return formatNumber(numeric, digits)
     default: return `${formatNumber(numeric, digits)} ${unit}`
   }

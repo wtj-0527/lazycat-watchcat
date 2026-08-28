@@ -32,6 +32,7 @@ const customTo = ref('')
 const appliedCustomFrom = ref('')
 const appliedCustomTo = ref('')
 const diskHistory = ref<Record<string, ChartSeries[]>>({})
+const diskBusyHistory = ref<Record<string, ChartSeries[]>>({})
 const volumeHistory = ref<Record<string, ChartSeries[]>>({})
 const historyLoading = ref(false)
 const historyError = ref('')
@@ -174,6 +175,11 @@ const physicalDisks = computed(() => {
       || latestMetric(itemList.value.filter((item) => item.deviceId === deviceId && String(item.labels?.device || '').replace('/dev/', '') === device && item.labels?.model))
     const temperature = metricFor(deviceId, device, 'disk.temperature')
     const hours = metricFor(deviceId, device, 'disk.power_on_hours')
+    const busy = metricFor(deviceId, device, 'disk.io.busy_percent')
+    const readIOPS = metricFor(deviceId, device, 'disk.io.read.iops')
+    const writeIOPS = metricFor(deviceId, device, 'disk.io.write.iops')
+    const awaitMetric = metricFor(deviceId, device, 'disk.io.await')
+    const queueDepth = metricFor(deviceId, device, 'disk.io.average_queue_depth')
     const risks = itemList.value.filter((item) => item.deviceId === deviceId && String(item.labels?.device || '').replace('/dev/', '') === device && riskStatus(item))
     const diskVolumes = volumes.value.filter((volume) => volume.deviceId === deviceId && volume.physicalDevice === device)
     const status = risks.some((item) => riskStatus(item) === 'critical') ? 'critical' : risks.length ? 'warning' : 'healthy'
@@ -182,7 +188,7 @@ const physicalDisks = computed(() => {
       key, deviceId, device, base, model,
       brand: diskBrand(model, identity?.labels?.vendor || base.labels?.vendor),
       serial: identity?.labels?.serial || base.labels?.serial,
-      temperature, hours, risks, volumes: diskVolumes,
+      temperature, hours, busy, readIOPS, writeIOPS, awaitMetric, queueDepth, risks, volumes: diskVolumes,
       purpose: diskPurpose(device, diskVolumes), status,
     }
   }).sort((a, b) => Number(b.status === 'critical') - Number(a.status === 'critical') || Number(b.status === 'warning') - Number(a.status === 'warning') || b.base.value - a.base.value)
@@ -261,6 +267,7 @@ function riskTitle(item: Metric) {
     'disk.nvme.media_errors': 'NVMe 介质错误',
     'disk.nvme.critical_warning': 'NVMe 严重警告',
     'disk.temperature': '磁盘温度过高',
+    'disk.io.busy_percent': '磁盘 I/O 持续繁忙',
   }
   return labels[item.name] || metricLabel(item)
 }
@@ -300,19 +307,21 @@ async function loadAllHistory() {
     group.volumes.push(volume)
     groups.set(deviceId, group)
   }
-  if (!groups.size) { diskHistory.value = {}; volumeHistory.value = {}; return }
+  if (!groups.size) { diskHistory.value = {}; diskBusyHistory.value = {}; volumeHistory.value = {}; return }
   const request = ++historyRequest
   historyLoading.value = true
   historyError.value = ''
   try {
     const nextDisks: Record<string, ChartSeries[]> = {}
+    const nextBusy: Record<string, ChartSeries[]> = {}
     const nextVolumes: Record<string, ChartSeries[]> = {}
     await Promise.all([...groups.entries()].map(async ([deviceId, group]) => {
       const volumeNames = [...new Set(group.volumes.map((volume) => volume.usage.name))]
       const emptyHistory = Promise.resolve<{ items: Metric[] }>({ items: [] })
-      const [read, write, ...volumeResults] = await Promise.all([
+      const [read, write, busy, ...volumeResults] = await Promise.all([
         group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.read.bytes_total&${historyRange()}`) : emptyHistory,
         group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.write.bytes_total&${historyRange()}`) : emptyHistory,
+        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.busy_percent&${historyRange()}`) : emptyHistory,
         ...volumeNames.map((name) => api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=${encodeURIComponent(name)}&${historyRange()}`)),
       ])
       for (const disk of group.disks) {
@@ -320,15 +329,22 @@ async function loadAllHistory() {
           { name: '读取', color: metricColors.read, points: counterRates(read.items || [], deviceId, disk.device) },
           { name: '写入', color: metricColors.write, points: counterRates(write.items || [], deviceId, disk.device) },
         ]
+        nextBusy[disk.key] = [{
+          name: '磁盘繁忙度',
+          color: metricColors.cpu,
+          points: (busy.items || []).filter((item) =>
+            (!item.deviceId || item.deviceId === deviceId)
+            && String(item.labels?.device || '').replace('/dev/', '') === disk.device).map(chartPoint),
+        }]
       }
       const byName = new Map(volumeNames.map((name, index) => [name, volumeResults[index]?.items || []]))
       for (const volume of group.volumes) {
         nextVolumes[volume.key] = [{ name: volumeName(volume.mount), color: metricColors.storage, points: (byName.get(volume.usage.name) || []).filter((item) => (!item.deviceId || item.deviceId === deviceId) && item.labels?.mount === volume.mount).map(chartPoint) }]
       }
     }))
-    if (request === historyRequest) { diskHistory.value = nextDisks; volumeHistory.value = nextVolumes }
+    if (request === historyRequest) { diskHistory.value = nextDisks; diskBusyHistory.value = nextBusy; volumeHistory.value = nextVolumes }
   } catch (reason) {
-    if (request === historyRequest) { diskHistory.value = {}; volumeHistory.value = {}; historyError.value = reason instanceof Error ? reason.message : String(reason) }
+    if (request === historyRequest) { diskHistory.value = {}; diskBusyHistory.value = {}; volumeHistory.value = {}; historyError.value = reason instanceof Error ? reason.message : String(reason) }
   } finally {
     if (request === historyRequest) historyLoading.value = false
   }
@@ -384,7 +400,16 @@ async function runStorageCheck() {
             <div class="storage-expanded-identity"><span class="storage-device-icon">{{ disk.base.labels?.media === 'ssd' ? 'SSD' : 'HDD' }}</span><div><small>{{ disk.base.deviceName || '未知设备' }} · {{ disk.purpose }}</small><h3>{{ disk.device }} · {{ disk.brand }}</h3><p>{{ disk.model || '型号待采集' }} · {{ disk.serial || '序列号未知' }}</p></div></div>
             <StatusPill :status="disk.status" />
           </div>
-          <div class="storage-detail-stats"><span><small>容量</small><b>{{ bytes(disk.base.value) }}</b></span><span><small>介质 / 接口</small><b>{{ (disk.base.labels?.media || '未知').toUpperCase() }} / {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</b></span><span><small>温度</small><b>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</b></span><span><small>通电时间</small><b>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</b></span></div>
+          <div class="storage-detail-stats">
+            <span><small>容量</small><b>{{ bytes(disk.base.value) }}</b></span>
+            <span><small>介质 / 接口</small><b>{{ (disk.base.labels?.media || '未知').toUpperCase() }} / {{ (disk.base.labels?.transport || '未知').toUpperCase() }}</b></span>
+            <span><small>温度</small><b>{{ disk.temperature ? formatMetricValue(disk.temperature.value, disk.temperature.unit, 0) : '未知' }}</b></span>
+            <span><small>磁盘 Busy</small><b>{{ disk.busy ? formatMetricValue(disk.busy.value, disk.busy.unit) : '采样中' }}</b></span>
+            <span><small>读 / 写 IOPS</small><b>{{ disk.readIOPS ? disk.readIOPS.value.toFixed(1) : '—' }} / {{ disk.writeIOPS ? disk.writeIOPS.value.toFixed(1) : '—' }}</b></span>
+            <span><small>平均等待</small><b>{{ disk.awaitMetric ? formatMetricValue(disk.awaitMetric.value, disk.awaitMetric.unit) : '—' }}</b></span>
+            <span><small>平均队列</small><b>{{ disk.queueDepth ? disk.queueDepth.value.toFixed(2) : '—' }}</b></span>
+            <span><small>通电时间</small><b>{{ disk.hours ? formatMetricValue(disk.hours.value, disk.hours.unit, 0) : '未知' }}</b></span>
+          </div>
           <div v-if="risksForDisk(disk.deviceId, disk.device).length" class="embedded-storage-risks">
             <div class="embedded-risk-title"><b>磁盘健康风险</b><span>{{ risksForDisk(disk.deviceId, disk.device).length }} 项</span></div>
             <div class="embedded-risk-list">
@@ -398,6 +423,7 @@ async function runStorageCheck() {
           </div>
           <div class="storage-expanded-charts" :class="{ single: !disk.volumes.length }">
             <section class="storage-history-panel"><div><h4>磁盘 I/O 趋势</h4><span class="muted">读取 / 写入平均速率</span></div><LineChart :series="diskHistory[disk.key] || []" :min="0" unit=" MiB/s" :height="190" /></section>
+            <section class="storage-history-panel"><div><h4>磁盘繁忙度</h4><span class="muted">Busy 超过 80% 警告，超过 95% 严重</span></div><LineChart :series="diskBusyHistory[disk.key] || []" :min="0" :max="100" unit="%" :height="190" /></section>
             <section v-for="volume in disk.volumes" :key="volume.key" class="storage-history-panel volume-panel">
               <div class="storage-volume-heading">
                 <div><h4>{{ volumeTitle(volume) }}</h4><span class="muted">{{ volume.mount }}</span></div>

@@ -327,8 +327,10 @@ func (m *Manager) createOffline(ctx context.Context, kind, suffix string) (Manif
 	return item, nil
 }
 
-// FinalizePending verifies and hashes startup safety backups without delaying
-// service readiness. It is safe to call repeatedly.
+// FinalizePending verifies and hashes safety backups on explicit request.
+// It must not run automatically at startup: quick_check and SHA-256 scan the
+// complete database and can saturate a mechanical data disk for minutes when
+// several multi-gigabyte upgrade backups are pending.
 func (m *Manager) FinalizePending() error {
 	items, err := m.List()
 	if err != nil {

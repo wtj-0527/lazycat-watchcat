@@ -1316,6 +1316,7 @@ func isHealthMetric(name string) bool {
 	switch name {
 	case "system.cpu.usage", "filesystem.root.usage", "filesystem.volume.usage", "btrfs.usage", "system.memory.usage",
 		"system.temperature", "container.memory.usage_percent", "disk.temperature",
+		"disk.io.busy_percent",
 		"disk.nvme.media_errors", "disk.nvme.critical_warning", "disk.ata.reallocated_sectors",
 		"disk.ata.pending_sectors", "disk.ata.offline_uncorrectable", "disk.ata.reported_uncorrectable",
 		"lpk.application.healthy":

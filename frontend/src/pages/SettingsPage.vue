@@ -33,11 +33,15 @@ interface ImageDeleteResult { imageId: string; referencesUntagged: number; delet
 interface Payload {
   settings: Settings; operations: Operations; database: DatabaseStatus; backups: Backup[]; stability: Stability
   devices: Device[]; rules: AlertRule[]; windows: MaintenanceWindow[]; audit: AuditEntry[]; unusedImages: UnusedImages; upstream: UpstreamStatus
+  upgradeCoordinator: UpgradeCoordinator
 }
 interface PairingCode { code: string; expiresAt: string }
 interface UpstreamStatus { paired: boolean; hubUrl?: string; deviceId?: string; lastSuccessAt?: string; lastError?: string }
 interface RestoreResult { status: string; backup: string; message: string }
 interface OperationEvidence { status: 'success' | 'warning' | 'error'; message: string }
+interface UpgradeRequest { requestId: string; appId: string; instanceId: string; userId?: string; enqueuedAt: string; lastSeenAt: string }
+interface UpgradeLease extends UpgradeRequest { expiresAt: string }
+interface UpgradeCoordinator { active?: UpgradeLease; queue: UpgradeRequest[]; updatedAt: string }
 type Tab = 'onboarding' | 'groups' | 'capabilities' | 'thresholds' | 'notifications' | 'maintenance' | 'retention' | 'audit'
 const tabs: Array<[Tab, string]> = [
   ['groups', '设备组与标签'], ['capabilities', 'Collector 能力'], ['thresholds', '告警阈值'],
@@ -67,7 +71,7 @@ const maintenanceName = ref('')
 const maintenanceStart = ref('')
 const maintenanceEnd = ref('')
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
-  const [settings, operations, database, backups, stability, devices, rules, windows, audit, unusedImages, upstream] = await Promise.all([
+  const [settings, operations, database, backups, stability, devices, rules, windows, audit, unusedImages, upstream, upgradeCoordinator] = await Promise.all([
     api<Settings>('/api/v1/settings'), api<Operations>('/api/v1/operations'), api<DatabaseStatus>('/api/v1/database/status'),
     api<{ items: Backup[] }>('/api/v1/backups'), api<Stability>('/api/v1/stability'),
     api<{ items: Device[] }>('/api/v1/devices').catch(() => ({ items: [] })),
@@ -79,6 +83,7 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
       error: reason instanceof Error ? reason.message : String(reason),
     })),
     api<UpstreamStatus>('/api/v1/upstream').catch(() => ({ paired: false })),
+    api<UpgradeCoordinator>('/api/v1/upgrade-coordinator').catch(() => ({ queue: [], updatedAt: '' })),
   ])
   return {
     settings,
@@ -92,6 +97,7 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
     audit: audit.items || [],
     unusedImages: { ...unusedImages, items: unusedImages.items || [] },
     upstream,
+    upgradeCoordinator: { ...upgradeCoordinator, queue: upgradeCoordinator.queue || [] },
   }
 })
 const localCapability = computed(() => data.value?.operations.capabilities.filter((item) => !item.capability.startsWith('remote.')) || [])
@@ -598,6 +604,12 @@ async function deleteUnusedImage(image: UnusedImage) {
     <section v-else-if="data && tab === 'maintenance'" class="card">
       <div class="section-title"><div><h2>维护窗口与巡检计划</h2></div><button class="primary-button" @click="saveOperationalSettings">保存计划</button></div>
       <div class="settings-grid"><label><span>每日巡检小时</span><input v-model.number="data.settings.dailyInspectionHour" type="number" min="0" max="23"></label><label><span>每周日巡检小时</span><input v-model.number="data.settings.weeklyInspectionHour" type="number" min="0" max="23"></label><div><span>时区</span><b>{{ data.operations.schedule.timezone }}</b><StatusPill status="available" /></div></div>
+      <div class="settings-grid upgrade-coordinator-summary">
+        <div><span>升级串行协调</span><b>{{ data.upgradeCoordinator.active ? '正在执行' : '空闲' }}</b><StatusPill :status="data.upgradeCoordinator.active ? 'warning' : 'healthy'" /></div>
+        <div><span>当前实例</span><b>{{ data.upgradeCoordinator.active?.instanceId || '无' }}</b></div>
+        <div><span>等待队列</span><b>{{ data.upgradeCoordinator.queue.length }} 个实例</b></div>
+        <div><span>租约有效期</span><b>{{ data.upgradeCoordinator.active ? dateTime(data.upgradeCoordinator.active.expiresAt) : '—' }}</b></div>
+      </div>
       <div class="maintenance-form"><input v-model="maintenanceName" placeholder="窗口名称"><input v-model="maintenanceStart" type="datetime-local" aria-label="开始时间（北京时间）" title="北京时间"><input v-model="maintenanceEnd" type="datetime-local" aria-label="结束时间（北京时间）" title="北京时间"><button class="primary-button" @click="addMaintenanceWindow">创建窗口</button></div>
       <div class="backup-list"><div v-for="item in maintenancePagination.pagedItems.value" :key="item.id" class="backup-row"><div><b>{{ item.name }}</b><p>{{ dateTime(item.startsAt) }} — {{ dateTime(item.endsAt) }}</p></div><div><StatusPill :status="item.enabled ? 'available' : 'unknown'" /><button class="tiny danger-button" @click="deleteMaintenanceWindow(item.id)">删除</button></div></div><div v-if="!data.windows.length" class="inline-empty">尚无维护窗口。</div></div>
       <AppPagination v-model:page="maintenancePagination.page.value" v-model:page-size="maintenancePagination.pageSize.value" :total="maintenancePagination.total.value" :page-count="maintenancePagination.pageCount.value" :range-start="maintenancePagination.rangeStart.value" :range-end="maintenancePagination.rangeEnd.value" label="维护窗口分页" />
