@@ -31,6 +31,10 @@ func (f *fakeDockerMaintenance) PruneUnusedImages(context.Context) (collector.Im
 	return f.result, f.err
 }
 
+func (f *fakeDockerMaintenance) UpgradeQueue(context.Context) (*collector.UpgradeQueueEntry, []collector.UpgradeQueueEntry, error) {
+	return nil, nil, nil
+}
+
 func (f *fakeDockerMaintenance) DeleteUnusedImage(_ context.Context, imageID string) (collector.ImageDeleteResult, error) {
 	result := f.deleted
 	result.ImageID = imageID

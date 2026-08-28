@@ -57,6 +57,7 @@ type dockerContainer struct {
 	Names   []string          `json:"Names"`
 	Image   string            `json:"Image"`
 	ImageID string            `json:"ImageID"`
+	Created int64             `json:"Created"`
 	State   string            `json:"State"`
 	Status  string            `json:"Status"`
 	Labels  map[string]string `json:"Labels"`
@@ -113,6 +114,16 @@ type ImageDeleteResult struct {
 	ImageID            string `json:"imageId"`
 	ReferencesUntagged int    `json:"referencesUntagged"`
 	DeleteRecords      int    `json:"deleteRecords"`
+}
+
+type UpgradeQueueEntry struct {
+	RequestID  string    `json:"requestId"`
+	AppID      string    `json:"appId"`
+	InstanceID string    `json:"instanceId"`
+	UserID     string    `json:"userId,omitempty"`
+	Container  string    `json:"container"`
+	Active     bool      `json:"active"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 type dockerCreateResponse struct {
@@ -413,6 +424,46 @@ func (d *DockerCollector) Collect(ctx context.Context, now time.Time) ([]protoco
 		return nil, firstErr
 	}
 	return points, firstErr
+}
+
+func (d *DockerCollector) UpgradeQueue(ctx context.Context) (*UpgradeQueueEntry, []UpgradeQueueEntry, error) {
+	if !d.Available() {
+		return nil, nil, fmt.Errorf("docker socket unavailable: %s", d.socket)
+	}
+	var containers []dockerContainer
+	if err := d.getJSON(ctx, "/containers/json?all=1", &containers); err != nil {
+		return nil, nil, err
+	}
+	var active *UpgradeQueueEntry
+	queue := make([]UpgradeQueueEntry, 0)
+	for _, item := range containers {
+		isActive := item.Labels["community.lazycat.app.hermes.upgrade.active"] == "true"
+		isQueued := item.Labels["community.lazycat.app.hermes.upgrade.queue"] == "true"
+		if !isActive && !isQueued {
+			continue
+		}
+		name := ""
+		if len(item.Names) > 0 {
+			name = strings.TrimPrefix(item.Names[0], "/")
+		}
+		entry := UpgradeQueueEntry{
+			RequestID:  item.Labels["community.lazycat.app.hermes.upgrade.request"],
+			AppID:      "community.lazycat.app.hermes-studio",
+			InstanceID: item.Labels["community.lazycat.app.hermes.upgrade.instance"],
+			UserID:     item.Labels["community.lazycat.app.hermes.upgrade.user"],
+			Container:  name,
+			Active:     isActive,
+			CreatedAt:  time.Unix(item.Created, 0).UTC(),
+		}
+		if isActive {
+			copy := entry
+			active = &copy
+		} else {
+			queue = append(queue, entry)
+		}
+	}
+	sort.Slice(queue, func(i, j int) bool { return queue[i].CreatedAt.Before(queue[j].CreatedAt) })
+	return active, queue, nil
 }
 
 func (d *DockerCollector) CollectProcesses(ctx context.Context, now time.Time) ([]protocol.ProcessSample, error) {

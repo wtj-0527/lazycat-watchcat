@@ -14,6 +14,7 @@ type dockerMaintenance interface {
 	UnusedImages(context.Context) (collector.UnusedImageSummary, error)
 	PruneUnusedImages(context.Context) (collector.ImagePruneResult, error)
 	DeleteUnusedImage(context.Context, string) (collector.ImageDeleteResult, error)
+	UpgradeQueue(context.Context) (*collector.UpgradeQueueEntry, []collector.UpgradeQueueEntry, error)
 	CollectStorageInventory(context.Context, time.Time) ([]protocol.MetricPoint, []string)
 	CollectSMART(context.Context, time.Time) ([]protocol.MetricPoint, []string)
 }

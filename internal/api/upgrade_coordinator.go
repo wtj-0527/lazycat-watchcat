@@ -1,14 +1,27 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wtj-0527/lazycat-watchcat/internal/upgradecoord"
 )
 
 func (s *Server) upgradeCoordinatorStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.docker != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		active, queue, err := s.docker.UpgradeQueue(ctx)
+		cancel()
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "ok", "active": active, "queue": queue, "updatedAt": time.Now().UTC(),
+			})
+			return
+		}
+	}
 	if s.upgradeCoordinator == nil {
 		problem(w, http.StatusServiceUnavailable, "upgrade_coordinator_unavailable", "升级协调器不可用")
 		return
