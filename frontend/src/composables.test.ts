@@ -75,6 +75,30 @@ describe('usePolling', () => {
     wrapper.unmount()
     vi.useRealTimers()
   })
+
+  it('reschedules when a reactive polling interval changes', async () => {
+    vi.useFakeTimers()
+    const interval = ref(30_000)
+    const loader = vi.fn().mockResolvedValue('fresh')
+    const wrapper = mount(defineComponent({
+      setup() {
+        return usePolling(loader, interval)
+      },
+      template: '<span>{{ data }}</span>',
+    }))
+
+    await flushPromises()
+    expect(loader).toHaveBeenCalledTimes(1)
+
+    interval.value = 5_000
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(loader).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
 })
 
 describe('usePagination', () => {

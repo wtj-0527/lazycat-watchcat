@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { Alert, Device, Metric, Overview } from '@/types'
@@ -10,10 +10,23 @@ import PageState from '@/components/PageState.vue'
 import RealtimeMetricCard from '@/components/RealtimeMetricCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
+const realtime = ref(false)
+const pollingInterval = computed(() => realtime.value ? 5_000 : 30_000)
+let realtimeTimeout: number | undefined
 const { data, loading, error, refresh } = usePolling(async () => {
   const result = await api<Overview>('/api/v1/overview')
   return { ...result, devices: result.devices || [], alerts: result.alerts || [] }
-})
+}, pollingInterval)
+function toggleRealtime() {
+  realtime.value = !realtime.value
+  window.clearTimeout(realtimeTimeout)
+  if (realtime.value) {
+    realtimeTimeout = window.setTimeout(() => {
+      realtime.value = false
+    }, 10 * 60_000)
+  }
+}
+onBeforeUnmount(() => window.clearTimeout(realtimeTimeout))
 const orderedDevices = computed(() => [...(data.value?.devices || [])]
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
 const storageRows = computed(() => orderedDevices.value
@@ -238,6 +251,18 @@ function capabilityDetail(device: Device): string {
     </div>
 
     <section class="fleet-realtime-section">
+      <div class="realtime-mode-bar">
+        <button
+          class="realtime-mode-button"
+          :class="{ active: realtime }"
+          type="button"
+          :title="realtime ? '关闭后恢复每 30 秒刷新' : '每 5 秒读取一次最新数据，10 分钟后自动关闭'"
+          :aria-pressed="realtime"
+          @click="toggleRealtime"
+        >
+          <i />{{ realtime ? '实时 · 5 秒' : '开启实时' }}
+        </button>
+      </div>
       <div v-if="orderedDevices.length" class="fleet-realtime-grid">
         <article v-for="device in orderedDevices" :key="device.id" class="fleet-device-metrics">
           <header>

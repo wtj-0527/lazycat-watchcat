@@ -1,13 +1,14 @@
 import { computed, onBeforeUnmount, onMounted, ref, toValue, watch } from 'vue'
 import type { ComputedRef, MaybeRefOrGetter, Ref } from 'vue'
 
-export function usePolling<T>(loader: () => Promise<T>, interval = 30_000) {
+export function usePolling<T>(loader: () => Promise<T>, interval: MaybeRefOrGetter<number> = 30_000) {
   const data = ref<T>()
   const loading = ref(true)
   const error = ref('')
   let timer: number | undefined
   let latestRequest = 0
   let stopped = false
+  let polling = false
 
   async function refresh(): Promise<T | undefined> {
     const request = ++latestRequest
@@ -26,18 +27,45 @@ export function usePolling<T>(loader: () => Promise<T>, interval = 30_000) {
   }
 
   function schedule() {
-    if (stopped) return
+    if (stopped || document.hidden) return
+    window.clearTimeout(timer)
     timer = window.setTimeout(() => {
-      void refresh().finally(schedule)
-    }, interval)
+      polling = true
+      void refresh().finally(() => {
+        polling = false
+        schedule()
+      })
+    }, Math.max(1_000, Number(toValue(interval)) || 30_000))
+  }
+
+  function handleVisibilityChange() {
+    window.clearTimeout(timer)
+    timer = undefined
+    if (!document.hidden && !polling) {
+      polling = true
+      void refresh().finally(() => {
+        polling = false
+        schedule()
+      })
+    }
   }
 
   onMounted(() => {
-    void refresh().finally(schedule)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    polling = true
+    void refresh().finally(() => {
+      polling = false
+      schedule()
+    })
+  })
+  watch(() => toValue(interval), () => {
+    if (stopped || polling || document.hidden) return
+    schedule()
   })
   onBeforeUnmount(() => {
     stopped = true
     window.clearTimeout(timer)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   })
   return { data, loading, error, refresh }
 }
