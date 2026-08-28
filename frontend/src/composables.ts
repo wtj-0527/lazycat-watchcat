@@ -59,8 +59,17 @@ export function usePolling<T>(loader: () => Promise<T>, interval: MaybeRefOrGett
       schedule()
     })
   })
-  watch(() => toValue(interval), () => {
+  watch(() => toValue(interval), (next, previous) => {
     if (stopped || polling || document.hidden) return
+    if (Number(next) < Number(previous)) {
+      window.clearTimeout(timer)
+      polling = true
+      void refresh().finally(() => {
+        polling = false
+        schedule()
+      })
+      return
+    }
     schedule()
   })
   onBeforeUnmount(() => {

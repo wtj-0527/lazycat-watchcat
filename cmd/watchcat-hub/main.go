@@ -224,6 +224,14 @@ func main() {
 		}
 	}()
 	srv := &http.Server{Addr: cfg.Addr, Handler: handlers.Handler(), ReadHeaderTimeout: 5e9, IdleTimeout: 60e9, MaxHeaderBytes: 1 << 20}
+	go func() {
+		// Let readiness succeed before reading a potentially multi-gigabyte
+		// safety backup for quick_check and SHA-256 verification.
+		time.Sleep(10 * time.Second)
+		if err := backupManager.FinalizePending(); err != nil {
+			logger.Warn("finalize pending backups", "error", err)
+		}
+	}()
 	logger.Info("watchcat hub started", "addr", cfg.Addr, "database", cfg.DatabasePath(), "version", buildinfo.Version, "protocol", "v1")
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "error", err)

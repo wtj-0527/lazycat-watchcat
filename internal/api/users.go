@@ -14,7 +14,10 @@ const removeUserEndDeviceAction = "remove_user_end_device"
 
 func (s *Server) usersView(w http.ResponseWriter, r *http.Request) {
 	actor := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
-	if s.runtimeUsers != nil && s.localDeviceID != "" && actor != "" {
+	// Page polling must be read-only after the runtime source has been
+	// initialized. The background synchronizer owns periodic persistence.
+	if s.runtimeUsers != nil && s.localDeviceID != "" && actor != "" &&
+		(s.runtimeUsers.LastUID() == "" || s.runtimeUsers.LastUID() != actor) {
 		if users, err := s.runtimeUsers.Query(r.Context(), actor); err == nil {
 			_ = s.store.ObserveRuntimeUsers(r.Context(), s.localDeviceID, users)
 		}

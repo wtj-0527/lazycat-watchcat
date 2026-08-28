@@ -192,8 +192,16 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	runtimeError := ""
 	if s.runtimeApps != nil && s.localDeviceID != "" {
 		uid := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
-		if _, err := s.SyncRuntimeApplications(r.Context(), uid); err != nil {
-			runtimeError = err.Error()
+		// Keep GET polling read-only once the source is initialized. Runtime
+		// state is refreshed by the background synchronizer and explicitly
+		// after application control operations.
+		if (s.runtimeApps.LastUID() == "" || s.runtimeApps.LastUID() != uid) && uid != "" {
+			if _, err := s.SyncRuntimeApplications(r.Context(), uid); err != nil {
+				runtimeError = err.Error()
+			}
+		}
+		if s.runtimeApps.LastUID() == "" && uid == "" {
+			runtimeError = "LazyCat user identity is missing"
 		}
 	}
 	states, err := s.store.ListRuntimeApplications(r.Context())

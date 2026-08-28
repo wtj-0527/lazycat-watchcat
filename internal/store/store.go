@@ -28,14 +28,17 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepathDir(path), 0o700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
-	// WAL permits concurrent readers. Keeping a small pool prevents an
-	// analytical history query from blocking overview and health reads.
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(4)
+	// Keep one connection available for a nested/read-side query while
+	// strongly limiting competing SQLite writers. A single connection
+	// deadlocks methods that intentionally query while rows are still open;
+	// two connections plus a long busy timeout gives WAL one reader and one
+	// serialized writer without the four-writer SQLITE_BUSY storm.
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
 	s := &Store{db: db}
 	if err := s.migrate(context.Background()); err != nil {
 		db.Close()

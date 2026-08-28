@@ -11,6 +11,7 @@ import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import SmartSelect, { type SmartOption } from '@/components/SmartSelect.vue'
 import { appConfirm } from '@/dialog'
+import { globalRealtime } from '@/realtime'
 
 interface RuntimeUser { id: string; name: string }
 interface Payload { items: ApplicationItem[]; users: RuntimeUser[]; source: string; stale: boolean; updatedAt?: string }
@@ -167,6 +168,18 @@ const selectedInstanceOptions = computed<SmartOption[]>(() => sortedVisibleSelec
   meta: `${instance.deployId} · ${instance.version || '版本未知'}`,
   status: instance.status,
 })))
+const realtimeResourceWatermark = computed(() => {
+  const values = [data.value?.updatedAt || '']
+  for (const application of data.value?.items || []) {
+    if (application.resources.updatedAt) values.push(application.resources.updatedAt)
+    for (const instance of application.devices) {
+      if (instance.resources.updatedAt) values.push(instance.resources.updatedAt)
+      if (instance.collectedAt) values.push(instance.collectedAt)
+    }
+  }
+  return values.sort().at(-1) || ''
+})
+let lastRealtimeResourceWatermark = ''
 
 watch(() => data.value?.items, (items) => {
   if (!items?.length) return
@@ -202,6 +215,15 @@ watch(selectedInstanceKey, loadHistory)
 watch(historyHours, () => {
   if (historyMode.value === 'preset') loadCurrentView()
 })
+watch([globalRealtime, realtimeResourceWatermark], ([enabled, watermark]) => {
+  if (!enabled) {
+    lastRealtimeResourceWatermark = ''
+    return
+  }
+  if (!watermark || watermark === lastRealtimeResourceWatermark) return
+  lastRealtimeResourceWatermark = watermark
+  loadCurrentView()
+}, { flush: 'post' })
 const selectedInstanceBusy = computed(() => instanceAction.value !== '')
 const autostartLabel = computed(() => selectedInstance.value?.autostart === true
   ? '开机自启动已开启'

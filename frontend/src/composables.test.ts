@@ -92,9 +92,12 @@ describe('usePolling', () => {
 
     interval.value = 5_000
     await nextTick()
-    await vi.advanceTimersByTimeAsync(5_000)
     await flushPromises()
     expect(loader).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(loader).toHaveBeenCalledTimes(3)
 
     wrapper.unmount()
     vi.useRealTimers()

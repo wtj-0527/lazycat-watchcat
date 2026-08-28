@@ -13,6 +13,7 @@ import DeviceTable from '@/components/DeviceTable.vue'
 import PageState from '@/components/PageState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { appConfirm, appPrompt } from '@/dialog'
+import { globalRealtime } from '@/realtime'
 
 type DetailTab = 'overview' | 'system' | 'processes' | 'storage' | 'apps' | 'network' | 'events'
 const detailTabs: Array<[DetailTab, string]> = [
@@ -57,6 +58,13 @@ const processError = ref('')
 const selectedProcess = ref<HostProcess>()
 const processHistory = ref<HostProcess[]>([])
 const processHistoryLoading = ref(false)
+const realtimeMetricNames = [
+  'system.cpu.usage', 'system.memory.usage', 'system.swap.usage', 'system.load.1m',
+  'filesystem.root.usage', 'btrfs.usage', 'disk.temperature',
+  'disk.io.read.bytes_total', 'disk.io.write.bytes_total',
+  'disk.io.read.operations_total', 'disk.io.write.operations_total',
+  'network.interface.receive.bytes_total', 'network.interface.transmit.bytes_total',
+]
 interface SavedView { id: string; name: string; query: { query?: string; status?: string; connectivity?: string; capability?: string; group?: string } }
 interface Payload extends Overview { savedViews: SavedView[] }
 const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> => {
@@ -101,6 +109,15 @@ async function showDevice(id: string) {
     detailError.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
     detailLoading.value = false
+  }
+}
+async function loadDeviceEvents(id = selected.value?.id || detailDeviceId.value) {
+  if (!id) return
+  try {
+    const result = await api<{ items: typeof deviceEvents.value }>(`/api/v1/devices/${encodeURIComponent(id)}/events`)
+    deviceEvents.value = result.items || []
+  } catch (reason) {
+    detailError.value = reason instanceof Error ? reason.message : String(reason)
   }
 }
 async function loadProcesses() {
@@ -192,14 +209,7 @@ async function loadTrend(id = selected.value?.id || detailDeviceId.value) {
   trendLoading.value = true
   trendError.value = ''
   try {
-    const metricNames = [
-      'system.cpu.usage', 'system.memory.usage', 'system.swap.usage', 'system.load.1m',
-      'filesystem.root.usage', 'btrfs.usage', 'disk.temperature',
-      'disk.io.read.bytes_total', 'disk.io.write.bytes_total',
-      'disk.io.read.operations_total', 'disk.io.write.operations_total',
-      'network.interface.receive.bytes_total', 'network.interface.transmit.bytes_total',
-    ]
-    const histories = await Promise.all(metricNames.map(async (name) => {
+    const histories = await Promise.all(realtimeMetricNames.map(async (name) => {
       const result = await api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(id)}/metrics?name=${encodeURIComponent(name)}&${trendRangeQuery()}`)
       return [name, result.items || []] as const
     }))
@@ -209,6 +219,36 @@ async function loadTrend(id = selected.value?.id || detailDeviceId.value) {
   } finally {
     trendLoading.value = false
   }
+}
+function metricIdentity(point: Metric) {
+  const labels = Object.entries(point.labels || {}).sort(([left], [right]) => left.localeCompare(right))
+  return `${point.collectedAt}\u0000${JSON.stringify(labels)}`
+}
+function appendLatestTrend(device: Device) {
+  const now = Date.now()
+  const from = trendMode.value === 'custom' && trendAppliedFrom.value
+    ? new Date(trendAppliedFrom.value).getTime()
+    : now - trendHours.value * 60 * 60 * 1000
+  const to = trendMode.value === 'custom' && trendAppliedTo.value
+    ? new Date(trendAppliedTo.value).getTime()
+    : now
+  const next = { ...trend.value }
+  for (const name of realtimeMetricNames) {
+    const existing = next[name] || []
+    const seen = new Set(existing.map(metricIdentity))
+    const additions = (device.latest?.[name] || []).filter((point) => {
+      const at = new Date(point.collectedAt).getTime()
+      return at >= from && at <= to && !seen.has(metricIdentity(point))
+    })
+    if (!additions.length) continue
+    next[name] = [...existing, ...additions]
+      .filter((point) => {
+        const at = new Date(point.collectedAt).getTime()
+        return at >= from && at <= to
+      })
+      .sort((left, right) => new Date(left.collectedAt).getTime() - new Date(right.collectedAt).getTime())
+  }
+  trend.value = next
 }
 function selectTrendPreset(hours: number) {
   trendMode.value = 'preset'
@@ -669,8 +709,33 @@ const riskMetrics = computed(() => selected.value ? metrics(selected.value).filt
 const capabilityCount = computed(() => selected.value
   ? ['system.', 'container.', 'filesystem.', 'disk.', 'btrfs.'].filter((prefix) => Object.keys(selected.value?.latest || {}).some((name) => name.startsWith(prefix))).length
   : 0)
+watch(() => data.value, (payload) => {
+  if (!detailDeviceId.value || !payload) return
+  const fresh = payload.devices.find((device) => device.id === detailDeviceId.value)
+  if (!fresh) return
+  selected.value = selected.value ? { ...selected.value, ...fresh } : fresh
+  if (!globalRealtime.value) return
+  appendLatestTrend(fresh)
+  if (selectedTab.value === 'processes') {
+    void loadProcesses()
+    if (selectedProcess.value) void selectProcess(selectedProcess.value)
+  } else if (selectedTab.value === 'events') {
+    void loadDeviceEvents(fresh.id)
+  }
+}, { flush: 'post' })
+watch(globalRealtime, (enabled) => {
+  if (!enabled || !selected.value) return
+  appendLatestTrend(selected.value)
+  if (selectedTab.value === 'processes') {
+    void loadProcesses()
+    if (selectedProcess.value) void selectProcess(selectedProcess.value)
+  } else if (selectedTab.value === 'events') {
+    void loadDeviceEvents(selected.value.id)
+  }
+})
 watch(selectedTab, (tab) => {
   if (tab === 'processes') void loadProcesses()
+  if (tab === 'events') void loadDeviceEvents()
 })
 </script>
 

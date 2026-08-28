@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
@@ -188,6 +189,15 @@ func (m *Manager) StageRestore(name string) error {
 	if err != nil {
 		return err
 	}
+	if !item.Verified || item.SHA256 == "" {
+		if err := m.finalizeManifest(item); err != nil {
+			return err
+		}
+		item, err = m.loadManifest(name)
+		if err != nil {
+			return err
+		}
+	}
 	if err := m.verifyManifest(item); err != nil {
 		return err
 	}
@@ -286,18 +296,81 @@ func (m *Manager) applyStagedRestore(ctx context.Context) error {
 func (m *Manager) createOffline(ctx context.Context, kind, suffix string) (Manifest, error) {
 	name := backupName(kind, m.version, suffix)
 	path := filepath.Join(m.dir, name+".db")
-	db, err := sql.Open("sqlite", m.dbPath+"?_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", m.dbPath+"?_pragma=busy_timeout(60000)")
 	if err != nil {
 		return Manifest{}, err
 	}
-	defer db.Close()
-	if _, err := db.ExecContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`); err != nil {
+	if _, err := db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		db.Close()
 		return Manifest{}, err
 	}
-	if _, err := db.ExecContext(ctx, `VACUUM main INTO ?`, path); err != nil {
+	if err := db.Close(); err != nil {
 		return Manifest{}, err
 	}
-	return m.writeManifest(path, name, kind)
+	if err := cloneOrCopyFile(m.dbPath, path, 0o600); err != nil {
+		return Manifest{}, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		_ = os.Remove(path)
+		return Manifest{}, err
+	}
+	// Startup must not spend minutes hashing and quick-checking a multi-GB
+	// database. The reflink is already a point-in-time rollback copy; mark it
+	// pending and verify it after the HTTP service is available (or on demand
+	// before restore).
+	item := Manifest{Name: name, Type: kind, AppVersion: m.version, CreatedAt: time.Now().UTC(), Size: info.Size()}
+	if err := m.writeManifestMetadata(item); err != nil {
+		_ = os.Remove(path)
+		return Manifest{}, err
+	}
+	return item, nil
+}
+
+// FinalizePending verifies and hashes startup safety backups without delaying
+// service readiness. It is safe to call repeatedly.
+func (m *Manager) FinalizePending() error {
+	items, err := m.List()
+	if err != nil {
+		return err
+	}
+	var result error
+	for _, item := range items {
+		if item.Verified && item.SHA256 != "" {
+			continue
+		}
+		if err := m.finalizeManifest(item); err != nil {
+			result = errors.Join(result, fmt.Errorf("%s: %w", item.Name, err))
+		}
+	}
+	return result
+}
+
+func (m *Manager) finalizeManifest(item Manifest) error {
+	path := filepath.Join(m.dir, item.Name+".db")
+	if err := verifySQLite(path); err != nil {
+		return err
+	}
+	sum, err := fileSHA256(path)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	item.Size, item.SHA256, item.Verified = info.Size(), sum, true
+	return m.writeManifestMetadata(item)
+}
+
+func (m *Manager) writeManifestMetadata(item Manifest) error {
+	raw, _ := json.MarshalIndent(item, "", "  ")
+	path := filepath.Join(m.dir, item.Name+".json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (m *Manager) writeManifest(path, name, kind string) (Manifest, error) {
@@ -313,8 +386,7 @@ func (m *Manager) writeManifest(path, name, kind string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	item := Manifest{Name: name, Type: kind, AppVersion: m.version, CreatedAt: time.Now().UTC(), Size: info.Size(), SHA256: sum, Verified: true}
-	raw, _ := json.MarshalIndent(item, "", "  ")
-	if err := os.WriteFile(filepath.Join(m.dir, name+".json"), raw, 0o600); err != nil {
+	if err := m.writeManifestMetadata(item); err != nil {
 		return Manifest{}, err
 	}
 	return item, nil
@@ -392,6 +464,47 @@ func copyFile(source, destination string, mode os.FileMode) error {
 	}
 	if err := out.Sync(); err != nil {
 		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+func cloneOrCopyFile(source, destination string, mode os.FileMode) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if err := unix.IoctlFileClone(int(out.Fd()), int(in.Fd())); err == nil {
+		if syncErr := out.Sync(); syncErr != nil {
+			out.Close()
+			_ = os.Remove(destination)
+			return syncErr
+		}
+		return out.Close()
+	}
+	if err := out.Truncate(0); err != nil {
+		out.Close()
+		_ = os.Remove(destination)
+		return err
+	}
+	if _, err := in.Seek(0, io.SeekStart); err != nil {
+		out.Close()
+		_ = os.Remove(destination)
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		_ = os.Remove(destination)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		_ = os.Remove(destination)
 		return err
 	}
 	return out.Close()
