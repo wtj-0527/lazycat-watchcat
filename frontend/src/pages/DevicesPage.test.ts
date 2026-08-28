@@ -140,10 +140,11 @@ describe('DevicesPage detail tabs', () => {
 
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('hours=24'))).toBe(true)
     const overviewText = wrapper.get('.device-overview-grid').text()
-    expect(overviewText.indexOf('资源趋势')).toBeLessThan(overviewText.indexOf('活动风险'))
+    expect(overviewText.indexOf('吞吐趋势')).toBeLessThan(overviewText.indexOf('活动风险'))
     expect(wrapper.get('.resource-trend-card').text()).toContain('磁盘吞吐')
     expect(wrapper.get('.resource-trend-card').text()).toContain('磁盘 IOPS')
     expect(wrapper.get('.resource-trend-card').text()).toContain('网络吞吐')
+    expect(wrapper.find('.resource-trend-usage').exists()).toBe(false)
     expect(wrapper.findAll('.resource-throughput-grid .line-chart')).toHaveLength(3)
     expect(wrapper.findAll('.resource-throughput-legend')).toHaveLength(3)
     expect(wrapper.findAll('.resource-throughput-grid .chart-legend')).toHaveLength(0)

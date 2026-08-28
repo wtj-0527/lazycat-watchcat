@@ -342,19 +342,6 @@ async function deleteDevice() {
     deletingDevice.value = false
   }
 }
-const trendSeries = computed<ChartSeries[]>(() => [
-  { name: '处理器', color: '#2563eb', points: trend.value['system.cpu.usage'] || [] },
-  { name: '内存', color: '#c05600', points: trend.value['system.memory.usage'] || [] },
-  { name: '存储', color: '#7c3aed', points: trend.value['filesystem.root.usage'] || [] },
-].filter((item) => item.points.length).map((item) => ({
-  ...item,
-  points: item.points.map((point) => ({
-    value: point.value,
-    at: dateTime(point.collectedAt),
-    label: timeOfDay(point.collectedAt),
-  })),
-})))
-
 function newestPoint(name: string, predicate?: (point: Metric) => boolean): Metric | undefined {
   return (selected.value?.latest?.[name] || [])
     .filter((point) => !predicate || predicate(point))
@@ -795,8 +782,8 @@ watch(selectedTab, (tab) => {
             </section>
             <section class="card resource-trend-card">
               <div class="section-title device-trend-title">
-                <div><h2>资源趋势</h2></div>
-                <div class="range-tabs" aria-label="设备资源趋势时间范围">
+                <div><h2>吞吐趋势</h2></div>
+                <div class="range-tabs" aria-label="设备吞吐趋势时间范围">
                   <button v-for="option in [{ h: 1, l: '1 小时' }, { h: 6, l: '6 小时' }, { h: 24, l: '24 小时' }, { h: 168, l: '7 天' }]" :key="option.h" :class="{ active: trendMode === 'preset' && trendHours === option.h }" @click="selectTrendPreset(option.h)">{{ option.l }}</button>
                   <button :class="{ active: trendMode === 'custom' }" @click="showTrendCustomRange">自定义</button>
                 </div>
@@ -807,12 +794,8 @@ watch(selectedTab, (tab) => {
                 <button class="secondary-button" @click="applyTrendCustomRange">应用</button>
               </div>
               <p v-if="trendError" class="operation-evidence warning">{{ trendError }}</p>
-              <div v-if="trendLoading" class="inline-empty">正在读取资源历史…</div>
+              <div v-if="trendLoading" class="inline-empty">正在读取吞吐历史…</div>
               <template v-else>
-                <div class="resource-trend-usage">
-                  <h3>使用率</h3>
-                  <LineChart :series="trendSeries" :min="0" :max="100" unit="%" :height="220" />
-                </div>
                 <div class="resource-throughput-grid">
                   <section>
                     <header>
