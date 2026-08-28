@@ -1,7 +1,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, toValue, watch } from 'vue'
 import type { ComputedRef, MaybeRefOrGetter, Ref } from 'vue'
+import { globalPollingInterval } from '@/realtime'
 
-export function usePolling<T>(loader: () => Promise<T>, interval: MaybeRefOrGetter<number> = 30_000) {
+export function usePolling<T>(loader: () => Promise<T>, interval: MaybeRefOrGetter<number> = globalPollingInterval) {
   const data = ref<T>()
   const loading = ref(true)
   const error = ref('')

@@ -13,6 +13,8 @@ import InspectionsPage from '@/pages/InspectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import AppDialog from '@/components/AppDialog.vue'
+import { usePolling } from '@/composables'
+import { globalPollingInterval, globalRealtime, toggleGlobalRealtime } from '@/realtime'
 import { applyTheme, storedTheme, type ThemeMode } from '@/theme'
 
 type Page = 'overview' | 'devices' | 'apps' | 'users' | 'storage' | 'alerts' | 'inspections' | 'onboarding' | 'settings'
@@ -35,7 +37,10 @@ const pages = {
 
 const page = ref<Page>('overview')
 const version = ref('—')
-const fleet = ref<Overview>()
+const { data: fleet } = usePolling(async () => {
+  const result = await api<Overview>('/api/v1/overview')
+  return { ...result, devices: result.devices || [], alerts: result.alerts || [] }
+}, globalPollingInterval)
 const toastMessage = ref('')
 const globalQuery = ref('')
 const searchNonce = ref(0)
@@ -43,8 +48,7 @@ const themeMode = ref<ThemeMode>(storedTheme())
 const deviceDark = ref(false)
 let deviceThemeQuery: MediaQueryList | undefined
 let toastTimer: number | undefined
-let shellTimer: number | undefined
-let shellLoading = false
+let versionTimer: number | undefined
 
 const pageComponent = computed(() => pages[page.value])
 const pageLabel = computed(() => navs.find(([key]) => key === page.value)?.[1] || '总览')
@@ -81,18 +85,6 @@ function toast(message: string) {
   toastMessage.value = message
   window.clearTimeout(toastTimer)
   toastTimer = window.setTimeout(() => { toastMessage.value = '' }, 2200)
-}
-async function loadShell() {
-  if (shellLoading) return
-  shellLoading = true
-  try {
-    const result = await api<Overview>('/api/v1/overview')
-    fleet.value = { ...result, devices: result.devices || [], alerts: result.alerts || [] }
-  } catch {
-    // Page-level error states remain authoritative when shell telemetry is unavailable.
-  } finally {
-    shellLoading = false
-  }
 }
 async function checkVersion() {
   try {
@@ -137,18 +129,14 @@ onMounted(async () => {
   }
   syncHash()
   window.addEventListener('hashchange', syncHash)
-  void loadShell()
   void checkVersion()
-  shellTimer = window.setInterval(() => {
-    void loadShell()
-    void checkVersion()
-  }, 30_000)
+  versionTimer = window.setInterval(checkVersion, 30_000)
 })
 onBeforeUnmount(() => {
   deviceThemeQuery?.removeEventListener('change', syncDeviceTheme)
   window.removeEventListener('hashchange', syncHash)
   window.clearTimeout(toastTimer)
-  window.clearInterval(shellTimer)
+  window.clearInterval(versionTimer)
 })
 </script>
 
@@ -182,6 +170,14 @@ onBeforeUnmount(() => {
       </div>
       <div class="topbar-actions">
         <span class="freshness-pill" :class="{ stale: staleCount }">更新 {{ freshness }}</span>
+        <button
+          class="topbar-realtime-button"
+          :class="{ active: globalRealtime }"
+          type="button"
+          :aria-pressed="globalRealtime"
+          :title="globalRealtime ? '关闭全局实时模式并恢复每 30 秒刷新' : '所有页面每 5 秒读取最新数据，10 分钟后自动关闭'"
+          @click="toggleGlobalRealtime"
+        ><i />{{ globalRealtime ? '实时 · 5 秒' : '实时' }}</button>
         <form class="global-search" role="search" @submit.prevent="submitGlobalSearch">
           <AppIcon name="search" :size="16" />
           <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
