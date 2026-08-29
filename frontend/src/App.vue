@@ -18,6 +18,7 @@ import { usePolling } from '@/composables'
 import { globalDeviceId, selectGlobalDevice } from '@/deviceScope'
 import { globalPollingInterval, globalRealtime, toggleGlobalRealtime } from '@/realtime'
 import { applyTheme, storedTheme, type ThemeMode } from '@/theme'
+import { frontendVersion, versionReload } from '@/version'
 
 type Page = 'overview' | 'devices' | 'apps' | 'users' | 'storage' | 'alerts' | 'inspections' | 'onboarding' | 'settings'
 const navs: Array<[Page, string]> = [
@@ -103,11 +104,13 @@ function toast(message: string) {
 async function checkVersion() {
   try {
     const next = await api<{ version: string }>(`/api/v1/version?ts=${Date.now()}`, { cache: 'no-store' })
-    if (version.value !== '—' && version.value !== next.version) {
-      window.location.reload()
+    version.value = next.version
+    const reload = versionReload(frontendVersion, next.version, window.location.href)
+    if (reload && sessionStorage.getItem(reload.key) !== '1') {
+      sessionStorage.setItem(reload.key, '1')
+      window.location.replace(reload.url)
       return
     }
-    version.value = next.version
   } catch {
     if (version.value === '—') version.value = '—'
   }
