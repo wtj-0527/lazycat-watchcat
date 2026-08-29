@@ -107,7 +107,14 @@ func (s *Server) metricHistory(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, code, message)
 		return
 	}
-	samples, err := s.store.MetricHistoryRange(r.Context(), id, name, from, to, 2000)
+	points, _ := strconv.Atoi(r.URL.Query().Get("points"))
+	var samples []store.MetricSample
+	var err error
+	if points > 0 {
+		samples, err = s.store.SampledMetricHistory(r.Context(), id, name, from, to, points)
+	} else {
+		samples, err = s.store.MetricHistoryRange(r.Context(), id, name, from, to, 2000)
+	}
 	if err != nil {
 		problem(w, 500, "internal_error", "无法读取指标历史")
 		return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -134,6 +135,100 @@ func (s *Store) MetricHistoryRange(ctx context.Context, deviceID, name string, s
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// SampledMetricHistory returns at most one sample per label set and time bucket.
+// It uses the time index for each bucket instead of reading thousands of
+// interleaved table rows, which keeps long-range charts responsive on large
+// SQLite databases stored on HDDs.
+func (s *Store) SampledMetricHistory(ctx context.Context, deviceID, name string, since, until time.Time, points int) ([]MetricSample, error) {
+	if points < 10 {
+		points = 10
+	}
+	if points > 500 {
+		points = 500
+	}
+	if until.IsZero() {
+		until = time.Now().UTC()
+	}
+	if !since.Before(until) {
+		return nil, nil
+	}
+	conn, err := s.reader().Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	labelRows, err := conn.QueryContext(ctx, `SELECT labels_json FROM latest_metrics WHERE device_id=? AND name=? ORDER BY labels_json`, deviceID, name)
+	if err != nil {
+		return nil, err
+	}
+	var labelSets []string
+	for labelRows.Next() {
+		var labels string
+		if err := labelRows.Scan(&labels); err != nil {
+			labelRows.Close()
+			return nil, err
+		}
+		labelSets = append(labelSets, labels)
+	}
+	if err := labelRows.Close(); err != nil {
+		return nil, err
+	}
+	if len(labelSets) == 0 {
+		return s.MetricHistoryRange(ctx, deviceID, name, since, until, points)
+	}
+
+	stmt, err := conn.PrepareContext(ctx, `SELECT value,unit,labels_json,collected_at
+		FROM metrics INDEXED BY idx_metrics_device_name_time
+		WHERE device_id=? AND name=? AND labels_json=? AND collected_at>=? AND collected_at<=?
+		ORDER BY collected_at DESC LIMIT 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	step := until.Sub(since) / time.Duration(points)
+	if step <= 0 {
+		step = time.Second
+	}
+	fromText := since.UTC().Format(time.RFC3339Nano)
+	seen := make(map[string]struct{}, len(labelSets)*points)
+	out := make([]MetricSample, 0, len(labelSets)*points)
+	for _, labelSet := range labelSets {
+		for bucket := 1; bucket <= points; bucket++ {
+			bucketEnd := since.Add(time.Duration(bucket) * step)
+			if bucket == points || bucketEnd.After(until) {
+				bucketEnd = until
+			}
+			var sample MetricSample
+			var labels, collected string
+			err := stmt.QueryRowContext(ctx, deviceID, name, labelSet, fromText, bucketEnd.UTC().Format(time.RFC3339Nano)).
+				Scan(&sample.Value, &sample.Unit, &labels, &collected)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			key := labels + "\x00" + collected
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			_ = json.Unmarshal([]byte(labels), &sample.Labels)
+			sample.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
+			out = append(out, sample)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CollectedAt.Equal(out[j].CollectedAt) {
+			return fmt.Sprint(out[i].Labels) < fmt.Sprint(out[j].Labels)
+		}
+		return out[i].CollectedAt.Before(out[j].CollectedAt)
+	})
+	return out, nil
 }
 
 func (s *Store) ApplicationMetricHistory(ctx context.Context, appID, name string, since, until time.Time, limit int) ([]ApplicationMetricSample, error) {

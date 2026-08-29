@@ -38,6 +38,9 @@ const volumeHistory = ref<Record<string, ChartSeries[]>>({})
 const historyLoading = ref(false)
 const historyError = ref('')
 let historyRequest = 0
+let historyRunning = false
+let historyQueued = false
+let historyLoaded = false
 const deepLink = (() => {
   const query = location.hash.split('?')[1] || ''
   const params = new URLSearchParams(query)
@@ -294,6 +297,10 @@ function counterRates(items: Metric[], deviceId: string, device: string) {
   })
 }
 async function loadAllHistory() {
+  if (historyRunning) {
+    historyQueued = true
+    return
+  }
   const groups = new Map<string, { disks: typeof physicalDisks.value; volumes: VolumeResource[] }>()
   for (const disk of physicalDisks.value) {
     const deviceId = disk.base.deviceId
@@ -309,9 +316,10 @@ async function loadAllHistory() {
     group.volumes.push(volume)
     groups.set(deviceId, group)
   }
-  if (!groups.size) { diskHistory.value = {}; diskBusyHistory.value = {}; volumeHistory.value = {}; return }
+  if (!groups.size) { diskHistory.value = {}; diskBusyHistory.value = {}; volumeHistory.value = {}; historyLoading.value = false; historyLoaded = true; return }
+  historyRunning = true
   const request = ++historyRequest
-  historyLoading.value = true
+  historyLoading.value = !historyLoaded
   historyError.value = ''
   try {
     const nextDisks: Record<string, ChartSeries[]> = {}
@@ -321,10 +329,10 @@ async function loadAllHistory() {
       const volumeNames = [...new Set(group.volumes.map((volume) => volume.usage.name))]
       const emptyHistory = Promise.resolve<{ items: Metric[] }>({ items: [] })
       const [read, write, busy, ...volumeResults] = await Promise.all([
-        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.read.bytes_total&${historyRange()}`) : emptyHistory,
-        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.write.bytes_total&${historyRange()}`) : emptyHistory,
-        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.busy_percent&${historyRange()}`) : emptyHistory,
-        ...volumeNames.map((name) => api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=${encodeURIComponent(name)}&${historyRange()}`)),
+        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.read.bytes_total&points=240&${historyRange()}`) : emptyHistory,
+        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.write.bytes_total&points=240&${historyRange()}`) : emptyHistory,
+        group.disks.length ? api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=disk.io.busy_percent&points=240&${historyRange()}`) : emptyHistory,
+        ...volumeNames.map((name) => api<{ items: Metric[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/metrics?name=${encodeURIComponent(name)}&points=240&${historyRange()}`)),
       ])
       for (const disk of group.disks) {
         nextDisks[disk.key] = [
@@ -348,7 +356,15 @@ async function loadAllHistory() {
   } catch (reason) {
     if (request === historyRequest) { diskHistory.value = {}; diskBusyHistory.value = {}; volumeHistory.value = {}; historyError.value = reason instanceof Error ? reason.message : String(reason) }
   } finally {
-    if (request === historyRequest) historyLoading.value = false
+    if (request === historyRequest) {
+      historyLoading.value = false
+      historyLoaded = true
+    }
+    historyRunning = false
+    if (historyQueued) {
+      historyQueued = false
+      void loadAllHistory()
+    }
   }
 }
 function setPreset(hours: number) { historyMode.value = 'preset'; historyHours.value = hours; loadAllHistory() }

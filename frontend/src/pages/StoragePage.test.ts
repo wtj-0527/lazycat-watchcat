@@ -115,6 +115,7 @@ describe('StoragePage', () => {
     expect(wrapper.get('.storage-resource-card').text()).toContain('磁盘 I/O 趋势')
     expect(wrapper.get('.storage-resource-card').text()).toContain('磁盘繁忙度')
     expect(wrapper.get('.storage-resource-card').text()).toContain('备份卷 · sdb1')
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('points=240'))).toBe(true)
     wrapper.unmount()
   })
 
