@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -137,10 +136,10 @@ func (s *Store) MetricHistoryRange(ctx context.Context, deviceID, name string, s
 	return out, rows.Err()
 }
 
-// SampledMetricHistory returns at most one sample per label set and time bucket.
-// It uses the time index for each bucket instead of reading thousands of
-// interleaved table rows, which keeps long-range charts responsive on large
-// SQLite databases stored on HDDs.
+// SampledMetricHistory uses compact hourly rollups for long-range charts and
+// appends the latest live point for every label series. If rollups have not
+// been generated yet, it falls back to a small raw window. This avoids random
+// reads across multi-gigabyte metrics tables on mechanical disks.
 func (s *Store) SampledMetricHistory(ctx context.Context, deviceID, name string, since, until time.Time, points int) ([]MetricSample, error) {
 	if points < 10 {
 		points = 10
@@ -154,98 +153,54 @@ func (s *Store) SampledMetricHistory(ctx context.Context, deviceID, name string,
 	if !since.Before(until) {
 		return nil, nil
 	}
-	conn, err := s.reader().Conn(ctx)
+	rows, err := s.reader().QueryContext(ctx, `SELECT avg_value,labels_json,bucket_start
+		FROM metric_rollups_hourly
+		WHERE device_id=? AND name=? AND bucket_start>=? AND bucket_start<=?
+		ORDER BY bucket_start ASC`, deviceID, name, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
-
-	labelRows, err := conn.QueryContext(ctx, `SELECT labels_json FROM latest_metrics WHERE device_id=? AND name=? ORDER BY labels_json`, deviceID, name)
-	if err != nil {
-		return nil, err
-	}
-	var labelSets []string
-	for labelRows.Next() {
-		var labels string
-		if err := labelRows.Scan(&labels); err != nil {
-			labelRows.Close()
+	defer rows.Close()
+	out := make([]MetricSample, 0, points)
+	for rows.Next() {
+		var sample MetricSample
+		var labels, collected string
+		if err := rows.Scan(&sample.Value, &labels, &collected); err != nil {
 			return nil, err
 		}
-		labelSets = append(labelSets, labels)
+		_ = json.Unmarshal([]byte(labels), &sample.Labels)
+		sample.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
+		out = append(out, sample)
 	}
-	if err := labelRows.Close(); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(labelSets) == 0 {
+	if len(out) == 0 {
 		return s.MetricHistoryRange(ctx, deviceID, name, since, until, points)
 	}
-
-	stmt, err := conn.PrepareContext(ctx, `SELECT value,unit,labels_json,collected_at
-		FROM metrics INDEXED BY idx_metrics_device_name_time
-		WHERE device_id=? AND name=? AND labels_json=? AND collected_at>=? AND collected_at<=?
-		ORDER BY collected_at DESC LIMIT 1`)
+	latestRows, err := s.reader().QueryContext(ctx, `SELECT value,unit,labels_json,collected_at
+		FROM latest_metrics WHERE device_id=? AND name=? ORDER BY labels_json`, deviceID, name)
 	if err != nil {
 		return nil, err
 	}
-	defer stmt.Close()
-	firstStmt, err := conn.PrepareContext(ctx, `SELECT collected_at
-		FROM metrics INDEXED BY idx_metrics_device_name_time
-		WHERE device_id=? AND name=? AND labels_json=? AND collected_at>=? AND collected_at<=?
-		ORDER BY collected_at ASC LIMIT 1`)
-	if err != nil {
-		return nil, err
-	}
-	defer firstStmt.Close()
-
-	seen := make(map[string]struct{}, len(labelSets)*points)
-	out := make([]MetricSample, 0, len(labelSets)*points)
-	for _, labelSet := range labelSets {
-		var firstText string
-		err := firstStmt.QueryRowContext(ctx, deviceID, name, labelSet, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano)).Scan(&firstText)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
+	defer latestRows.Close()
+	for latestRows.Next() {
+		var sample MetricSample
+		var labels, collected string
+		if err := latestRows.Scan(&sample.Value, &sample.Unit, &labels, &collected); err != nil {
 			return nil, err
 		}
-		effectiveFrom, err := time.Parse(time.RFC3339Nano, firstText)
-		if err != nil || effectiveFrom.Before(since) {
-			effectiveFrom = since
+		sample.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
+		if sample.CollectedAt.Before(since) || sample.CollectedAt.After(until) {
+			continue
 		}
-		step := until.Sub(effectiveFrom) / time.Duration(points)
-		if step <= 0 {
-			step = time.Second
-		}
-		fromText := effectiveFrom.UTC().Format(time.RFC3339Nano)
-		for bucket := 1; bucket <= points; bucket++ {
-			bucketEnd := effectiveFrom.Add(time.Duration(bucket) * step)
-			if bucket == points || bucketEnd.After(until) {
-				bucketEnd = until
-			}
-			var sample MetricSample
-			var labels, collected string
-			err := stmt.QueryRowContext(ctx, deviceID, name, labelSet, fromText, bucketEnd.UTC().Format(time.RFC3339Nano)).
-				Scan(&sample.Value, &sample.Unit, &labels, &collected)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			key := labels + "\x00" + collected
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			_ = json.Unmarshal([]byte(labels), &sample.Labels)
-			sample.CollectedAt, _ = time.Parse(time.RFC3339Nano, collected)
-			out = append(out, sample)
-		}
+		_ = json.Unmarshal([]byte(labels), &sample.Labels)
+		out = append(out, sample)
+	}
+	if err := latestRows.Err(); err != nil {
+		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].CollectedAt.Equal(out[j].CollectedAt) {
-			return fmt.Sprint(out[i].Labels) < fmt.Sprint(out[j].Labels)
-		}
 		return out[i].CollectedAt.Before(out[j].CollectedAt)
 	})
 	return out, nil
