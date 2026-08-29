@@ -61,9 +61,22 @@ func NewEmbedded(ctx context.Context, st *store.Store, logger *slog.Logger, sync
 	if halErr != nil {
 		logger.Warn("connect LazyCat HAL read-only collector", "error", halErr)
 	}
+	dockerCollector := NewDockerCollector(envValue("WATCHCAT_DOCKER_SOCKET", defaultDockerSocket))
+	if dockerCollector.Available() {
+		go func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cleanupCancel()
+			removed, cleanupErr := dockerCollector.CleanupStaleHelpers(cleanupCtx, 10*time.Minute)
+			if cleanupErr != nil {
+				logger.Warn("cleanup stale collector helpers", "removed", removed, "error", cleanupErr)
+			} else if removed > 0 {
+				logger.Info("cleaned stale collector helpers", "removed", removed)
+			}
+		}()
+	}
 	return &Embedded{
 		store: st, logger: logger, deviceID: deviceID, advanced: AdvancedConfigFromEnv(),
-		hal: hal, docker: NewDockerCollector(envValue("WATCHCAT_DOCKER_SOCKET", defaultDockerSocket)),
+		hal: hal, docker: dockerCollector,
 		dataPath: envValue("WATCHCAT_HOST_DATA_PATH", "/lzcapp/var"), syncAlerts: syncAlerts,
 	}, nil
 }
@@ -210,6 +223,14 @@ func (e *Embedded) collectAdvanced(ctx context.Context) {
 		warnings = append(warnings, "hal fan: LazyCat HAL connection unavailable")
 	}
 	if evidence.dockerMapped {
+		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 20*time.Second)
+		removed, cleanupErr := e.docker.CleanupStaleHelpers(cleanupCtx, 10*time.Minute)
+		cleanupCancel()
+		if cleanupErr != nil {
+			warnings = append(warnings, "docker helper cleanup: "+cleanupErr.Error())
+		} else if removed > 0 {
+			e.logger.Info("cleaned stale collector helpers", "removed", removed)
+		}
 		callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		runtimePoints, dockerErr := e.docker.Collect(callCtx, now)
 		cancel()

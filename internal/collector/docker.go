@@ -230,6 +230,43 @@ func (d *DockerCollector) Available() bool {
 	return err == nil && info.Mode()&os.ModeSocket != 0
 }
 
+func staleHelperContainerIDs(containers []dockerContainer, now time.Time, olderThan time.Duration) []string {
+	var ids []string
+	for _, item := range containers {
+		if item.ID == "" || item.Labels[smartHelperLabel] != "true" || item.State == "running" {
+			continue
+		}
+		if item.Created > 0 && now.Sub(time.Unix(item.Created, 0)) < olderThan {
+			continue
+		}
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+// CleanupStaleHelpers removes only WatchCat-owned, non-running helper
+// containers. Helpers younger than olderThan are retained to avoid racing
+// another collector job between Docker create and start.
+func (d *DockerCollector) CleanupStaleHelpers(ctx context.Context, olderThan time.Duration) (int, error) {
+	var containers []dockerContainer
+	if err := d.getJSON(ctx, "/containers/json?all=1", &containers); err != nil {
+		return 0, err
+	}
+	removed := 0
+	var errs []error
+	for _, id := range staleHelperContainerIDs(containers, time.Now(), olderThan) {
+		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err := d.doJSON(callCtx, http.MethodDelete, "/containers/"+url.PathEscape(id)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
+		cancel()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("remove helper %s: %w", id[:min(12, len(id))], err))
+			continue
+		}
+		removed++
+	}
+	return removed, errors.Join(errs...)
+}
+
 func (d *DockerCollector) UnusedImages(ctx context.Context) (UnusedImageSummary, error) {
 	if !d.Available() {
 		return UnusedImageSummary{}, fmt.Errorf("docker socket unavailable: %s", d.socket)
@@ -681,9 +718,15 @@ func (d *DockerCollector) runHelper(ctx context.Context, cfg dockerHelperConfig)
 		return nil, -1, errors.New("decode Docker helper create response: empty container ID")
 	}
 	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = d.doJSON(cleanupCtx, http.MethodDelete, "/containers/"+url.PathEscape(created.ID)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
+		for attempt := 0; attempt < 3; attempt++ {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, cleanupErr := d.doJSON(cleanupCtx, http.MethodDelete, "/containers/"+url.PathEscape(created.ID)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
+			cancel()
+			if cleanupErr == nil {
+				return
+			}
+			time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+		}
 	}()
 	if _, err := d.doJSON(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start", nil, http.StatusNoContent); err != nil {
 		return nil, -1, err

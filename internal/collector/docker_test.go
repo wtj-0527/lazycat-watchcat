@@ -25,6 +25,21 @@ func TestDockerSmartHelperSecurityDefaults(t *testing.T) {
 	}
 }
 
+func TestStaleHelperContainerIDsOnlyReturnsOldStoppedWatchCatHelpers(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	containers := []dockerContainer{
+		{ID: "old-created", State: "created", Created: now.Add(-20 * time.Minute).Unix(), Labels: map[string]string{smartHelperLabel: "true"}},
+		{ID: "old-exited", State: "exited", Created: now.Add(-30 * time.Minute).Unix(), Labels: map[string]string{smartHelperLabel: "true"}},
+		{ID: "fresh-created", State: "created", Created: now.Add(-time.Minute).Unix(), Labels: map[string]string{smartHelperLabel: "true"}},
+		{ID: "running", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{smartHelperLabel: "true"}},
+		{ID: "foreign", State: "created", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{"app": "other"}},
+	}
+	got := staleHelperContainerIDs(containers, now, 10*time.Minute)
+	if !slices.Equal(got, []string{"old-created", "old-exited"}) {
+		t.Fatalf("cleanup candidates=%v", got)
+	}
+}
+
 func TestSmartSATFallbackDetection(t *testing.T) {
 	for _, raw := range []string{
 		`{"smartctl":{"messages":[{"string":"/dev/sdb: Unknown USB bridge [0x0bda:0x9201]"}]}}`,
