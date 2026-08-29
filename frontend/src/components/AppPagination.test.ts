@@ -26,4 +26,13 @@ describe('AppPagination', () => {
     await wrapper.setProps({ total: 0, rangeStart: 0, rangeEnd: 0 })
     expect(wrapper.find('nav').exists()).toBe(false)
   })
+
+  it('shows a custom current page size even when it is not in the default choices', () => {
+    const wrapper = mount(AppPagination, {
+      props: { total: 27, pageCount: 3, rangeStart: 1, rangeEnd: 12, page: 1, pageSize: 12 },
+    })
+
+    expect(wrapper.get('select').element.value).toBe('12')
+    expect(wrapper.get('select').text()).toContain('12 条')
+  })
 })

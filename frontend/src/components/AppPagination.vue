@@ -19,6 +19,10 @@ const emit = defineEmits<{
   'update:pageSize': [value: number]
 }>()
 
+const effectivePageSizes = computed(() =>
+  [...new Set([...props.pageSizes, props.pageSize])].filter(size => size > 0).sort((a, b) => a - b),
+)
+
 const visiblePages = computed(() => {
   if (props.pageCount <= 7) return Array.from({ length: props.pageCount }, (_, index) => index + 1)
   const candidates = new Set([1, props.pageCount, props.page - 1, props.page, props.page + 1])
@@ -47,7 +51,7 @@ function setPageSize(event: Event) {
     <label class="pagination-size">
       <span>每页</span>
       <select :value="pageSize" :aria-label="`${label}每页条数`" @change="setPageSize">
-        <option v-for="size in pageSizes" :key="size" :value="size">{{ size }} 条</option>
+        <option v-for="size in effectivePageSizes" :key="size" :value="size">{{ size }} 条</option>
       </select>
     </label>
     <div class="pagination-pages">
