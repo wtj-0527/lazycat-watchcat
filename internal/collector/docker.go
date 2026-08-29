@@ -36,18 +36,20 @@ var safeFilesystemMount = regexp.MustCompile(`^/lzcsys/(?:data|var|run/(?:mnt|me
 var safeBtrfsDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+[0-9]+|nvme[0-9]+n[0-9]+p[0-9]+|mapper/[A-Za-z0-9._+-]+)$`)
 
 type DockerCollector struct {
-	socket           string
-	client           *http.Client
-	statsBatch       int
-	statsConcurrency int
-	cursorMu         sync.Mutex
-	statsCursor      int
-	processMu        sync.Mutex
-	processPrevious  map[string]processCounter
-	processSampleAt  time.Time
-	processHistory   int
-	processHelperMu  sync.Mutex
-	processHelperID  string
+	socket                 string
+	client                 *http.Client
+	statsBatch             int
+	statsConcurrency       int
+	cursorMu               sync.Mutex
+	statsCursor            int
+	processMu              sync.Mutex
+	processPrevious        map[string]processCounter
+	processSampleAt        time.Time
+	processHistory         int
+	processHistoryAt       time.Time
+	processHistoryInterval time.Duration
+	processHelperMu        sync.Mutex
+	processHelperID        string
 }
 
 type processCounter struct {
@@ -242,14 +244,19 @@ func NewDockerCollector(socket string) *DockerCollector {
 	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WATCHCAT_DOCKER_STATS_CONCURRENCY"))); err == nil && configured > 0 && configured <= 8 {
 		statsConcurrency = configured
 	}
-	processHistory := 100
+	processHistory := 30
 	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WATCHCAT_PROCESS_HISTORY_LIMIT"))); err == nil && configured > 0 && configured <= 500 {
 		processHistory = configured
+	}
+	processHistoryInterval := 2 * time.Minute
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WATCHCAT_PROCESS_HISTORY_INTERVAL_SECONDS"))); err == nil && configured >= 30 && configured <= 3600 {
+		processHistoryInterval = time.Duration(configured) * time.Second
 	}
 	return &DockerCollector{
 		socket: socket, client: &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		statsBatch: statsBatch, statsConcurrency: statsConcurrency,
 		processPrevious: map[string]processCounter{}, processHistory: processHistory,
+		processHistoryInterval: processHistoryInterval,
 	}
 }
 
@@ -594,7 +601,10 @@ func (d *DockerCollector) CollectProcesses(ctx context.Context, now time.Time) (
 		}
 		return out[i].PID < out[j].PID
 	})
-	markProcessHistory(out, d.processHistory)
+	if d.processHistoryAt.IsZero() || now.Sub(d.processHistoryAt) >= d.processHistoryInterval {
+		markProcessHistory(out, d.processHistory)
+		d.processHistoryAt = now
+	}
 	return out, nil
 }
 

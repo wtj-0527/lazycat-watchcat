@@ -31,7 +31,7 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepathDir(path), 0o700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=cache_size(-16384)&_pragma=mmap_size(268435456)")
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	readDB, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)&_pragma=foreign_keys(1)")
+	readDB, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)&_pragma=foreign_keys(1)&_pragma=cache_size(-32768)&_pragma=mmap_size(268435456)")
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -633,13 +633,16 @@ func (s *Store) IngestMetrics(ctx context.Context, batch protocol.MetricBatch) e
 		}
 	}
 	if batch.ProcessesCollected {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM latest_processes WHERE device_id=?`, batch.DeviceID); err != nil {
-			return err
-		}
 		latestProcessStmt, err := tx.PrepareContext(ctx, `INSERT INTO latest_processes(
 			device_id,pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
 			read_bytes,write_bytes,read_rate,write_rate,threads,uptime_seconds,collected_at,received_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(device_id,pid,start_time) DO UPDATE SET
+			name=excluded.name,user_name=excluded.user_name,command=excluded.command,state=excluded.state,
+			cgroup_path=excluded.cgroup_path,cpu_percent=excluded.cpu_percent,memory_rss_bytes=excluded.memory_rss_bytes,
+			read_bytes=excluded.read_bytes,write_bytes=excluded.write_bytes,read_rate=excluded.read_rate,
+			write_rate=excluded.write_rate,threads=excluded.threads,uptime_seconds=excluded.uptime_seconds,
+			collected_at=excluded.collected_at,received_at=excluded.received_at`)
 		if err != nil {
 			return err
 		}
@@ -667,6 +670,9 @@ func (s *Store) IngestMetrics(ctx context.Context, batch protocol.MetricBatch) e
 					return err
 				}
 			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM latest_processes WHERE device_id=? AND received_at<?`, batch.DeviceID, now.Format(time.RFC3339Nano)); err != nil {
+			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET last_seen_at=?,status='online' WHERE id=?`, now.Format(time.RFC3339Nano), batch.DeviceID); err != nil {

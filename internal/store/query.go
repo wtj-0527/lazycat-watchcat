@@ -315,7 +315,10 @@ func (s *Store) applicationMetricHistoryForDevices(ctx context.Context, deviceID
 
 func (s *Store) LatestMetricTimestamp(ctx context.Context) (time.Time, error) {
 	var value sql.NullString
-	if err := s.reader().QueryRowContext(ctx, `SELECT MAX(collected_at) FROM metrics`).Scan(&value); err != nil {
+	// The scheduler only needs the newest observed sample. Reading the compact
+	// projection avoids a full scan of the multi-gigabyte history table every
+	// minute on mechanical disks.
+	if err := s.reader().QueryRowContext(ctx, `SELECT MAX(collected_at) FROM latest_metrics`).Scan(&value); err != nil {
 		return time.Time{}, err
 	}
 	if !value.Valid {

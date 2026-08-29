@@ -54,4 +54,22 @@ func TestProcessSnapshotAndHistory(t *testing.T) {
 	if len(noHistory) != 0 {
 		t.Fatalf("non-ranked process unexpectedly persisted: %+v", noHistory)
 	}
+
+	next := now.Add(30 * time.Second)
+	if err := st.IngestMetrics(ctx, protocol.MetricBatch{
+		DeviceID: deviceID, ProcessesCollected: true,
+		Processes: []protocol.ProcessSample{
+			{PID: 10, StartTime: "100", Name: "worker", User: "root", CPUPercent: 20, MemoryRSSBytes: 4096, CollectedAt: next},
+			{PID: 12, StartTime: "102", Name: "new-worker", User: "root", CPUPercent: 2, MemoryRSSBytes: 512, CollectedAt: next},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page, err = st.LatestProcesses(ctx, deviceID, ProcessListOptions{Sort: "pid", Order: "asc", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || page.Items[0].PID != 10 || page.Items[0].CPUPercent != 20 || page.Items[1].PID != 12 {
+		t.Fatalf("incremental latest process replacement failed: %+v", page)
+	}
 }
