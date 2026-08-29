@@ -924,7 +924,6 @@ func (s *Server) storageView(w http.ResponseWriter, r *http.Request) {
 	}
 	var items []map[string]any
 	totalBytes := float64(0)
-	fillWithin30Days := 0
 	rules := s.loadAlertRules(r.Context())
 	availableByVolume := map[string]float64{}
 	for _, metric := range metrics {
@@ -943,22 +942,14 @@ func (s *Server) storageView(w http.ResponseWriter, r *http.Request) {
 			if available := availableByVolume[key]; available > 0 {
 				totalBytes += available / (1 - m.Value/100)
 			}
-			history, historyErr := s.store.MetricHistory(r.Context(), m.DeviceID, m.Name, time.Now().UTC().Add(-30*24*time.Hour), 5000)
-			if historyErr == nil && len(history) >= 2 {
-				first, last := history[0], history[len(history)-1]
-				days := last.CollectedAt.Sub(first.CollectedAt).Hours() / 24
-				if days > 0 {
-					growth := (last.Value - first.Value) / days
-					if growth > 0 && (100-last.Value)/growth <= 30 {
-						fillWithin30Days++
-					}
-				}
-			}
 		}
 	}
 	writeJSON(w, 200, map[string]any{
 		"items": items, "count": len(items), "updatedAt": latestTimestamp(metrics),
-		"summary": map[string]any{"totalBytes": totalBytes, "fillWithin30Days": fillWithin30Days},
+		// Keep the initial storage snapshot independent from the raw history
+		// table. On long-running installations that table can be gigabytes,
+		// and a synchronous 30-day scan used to block the whole page.
+		"summary": map[string]any{"totalBytes": totalBytes, "fillWithin30Days": 0},
 	})
 }
 func (s *Server) alertsView(w http.ResponseWriter, r *http.Request) {
