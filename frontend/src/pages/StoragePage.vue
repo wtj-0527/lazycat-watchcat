@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
-import type { Capability, Metric } from '@/types'
+import type { Capability, HostProcess, Metric } from '@/types'
 import { ago, bytes, dateTime, formatMetricValue, metricLabel, monthDay, parseBeijingDateTimeInput, storageRiskAdvice, storageRiskStatus, toBeijingDateTimeInput } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
@@ -24,6 +24,40 @@ interface VolumeResource {
   backingDevice: string
   physicalDevice: string
 }
+interface IOProcessSource extends HostProcess {
+  appId?: string
+  appTitle?: string
+  deployId?: string
+  userId?: string
+  containerId?: string
+  containerName?: string
+}
+interface IOApplicationSource {
+  appId: string
+  appTitle: string
+  deployId?: string
+  userId?: string
+  containers: string[]
+  processCount: number
+  readRate: number
+  writeRate: number
+}
+interface IOSourcePayload {
+  deviceId: string
+  collectedAt: string
+  processTotal: number
+  processes: IOProcessSource[]
+  applications: IOApplicationSource[]
+  limitations: string[]
+}
+interface SelectedIOSource {
+  key: string
+  type: 'process' | 'application'
+  deviceId: string
+  label: string
+  process?: IOProcessSource
+  application?: IOApplicationSource
+}
 
 const checking = ref(false)
 const checkMessage = ref('')
@@ -36,12 +70,21 @@ const appliedCustomTo = ref('')
 const diskHistory = ref<Record<string, ChartSeries[]>>({})
 const diskBusyHistory = ref<Record<string, ChartSeries[]>>({})
 const volumeHistory = ref<Record<string, ChartSeries[]>>({})
+const ioSources = ref<Record<string, IOSourcePayload>>({})
+const ioSourcesLoading = ref(false)
+const ioSourcesError = ref('')
+const selectedIOSource = ref<SelectedIOSource>()
+const ioSourceHistory = ref<ChartSeries[]>([])
+const ioSourceHistoryLoading = ref(false)
+const ioSourceHistoryError = ref('')
 const historyLoading = ref(false)
 const historyError = ref('')
 let historyRequest = 0
 let historyRunning = false
 let historyQueued = false
 let historyLoaded = false
+let ioSourcesRequest = 0
+let ioHistoryRequest = 0
 const deepLink = (() => {
   const query = location.hash.split('?')[1] || ''
   const params = new URLSearchParams(query)
@@ -217,6 +260,10 @@ const physicalDisks = computed(() => {
 })
 const orphanVolumes = computed(() => volumes.value.filter((volume) =>
   !physicalDisks.value.some((disk) => disk.deviceId === volume.deviceId && disk.device === volume.physicalDevice)))
+const visibleIOSources = computed(() => [...new Set([
+  ...physicalDisks.value.map((disk) => disk.deviceId),
+  ...volumes.value.map((volume) => volume.deviceId),
+])].map((deviceId) => ioSources.value[deviceId]).filter((item): item is IOSourcePayload => Boolean(item)))
 
 function storageDiskID(key: string) {
   return `storage-disk-${encodeURIComponent(key).replaceAll('%', '_')}`
@@ -293,7 +340,116 @@ function riskTitle(item: Metric) {
   }
   return labels[item.name] || metricLabel(item)
 }
-watch([() => data.value?.updatedAt, globalDeviceId], () => { if (data.value?.updatedAt) loadAllHistory() })
+function ioSourceDeviceName(deviceId: string) {
+  return deviceOptions.value.find((item) => item.value === deviceId)?.label || deviceId
+}
+function ioSourceRate(source: { readRate: number; writeRate: number }) {
+  return Math.max(0, source.readRate || 0) + Math.max(0, source.writeRate || 0)
+}
+function ioSourceBarWidth(source: { readRate: number; writeRate: number }, items: Array<{ readRate: number; writeRate: number }>) {
+  const maximum = Math.max(1, ...items.map(ioSourceRate))
+  return `${Math.max(2, ioSourceRate(source) / maximum * 100)}%`
+}
+async function loadIOSources() {
+  const deviceIDs = [...new Set([
+    ...physicalDisks.value.map((disk) => disk.deviceId),
+    ...volumes.value.map((volume) => volume.deviceId),
+  ].filter(Boolean))]
+  const request = ++ioSourcesRequest
+  if (!deviceIDs.length) {
+    ioSources.value = {}
+    ioSourcesLoading.value = false
+    return
+  }
+  ioSourcesLoading.value = true
+  ioSourcesError.value = ''
+  try {
+    const results = await Promise.all(deviceIDs.map((deviceId) =>
+      api<IOSourcePayload>(`/api/v1/devices/${encodeURIComponent(deviceId)}/io-sources?limit=12`)
+        .then((payload) => [deviceId, payload] as const)))
+    if (request === ioSourcesRequest) {
+      ioSources.value = Object.fromEntries(results)
+      if (selectedIOSource.value && !deviceIDs.includes(selectedIOSource.value.deviceId)) {
+        selectedIOSource.value = undefined
+        ioSourceHistory.value = []
+      }
+    }
+  } catch (reason) {
+    if (request === ioSourcesRequest) {
+      ioSources.value = {}
+      ioSourcesError.value = reason instanceof Error ? reason.message : String(reason)
+    }
+  } finally {
+    if (request === ioSourcesRequest) ioSourcesLoading.value = false
+  }
+}
+async function selectProcessIOSource(deviceId: string, process: IOProcessSource) {
+  const selected: SelectedIOSource = {
+    key: `process:${deviceId}:${process.pid}:${process.startTime}`,
+    type: 'process', deviceId, label: `${process.name} · PID ${process.pid}`, process,
+  }
+  selectedIOSource.value = selected
+  const request = ++ioHistoryRequest
+  ioSourceHistoryLoading.value = true
+  ioSourceHistoryError.value = ''
+  try {
+    const result = await api<{ items: HostProcess[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/processes/${process.pid}/metrics?startTime=${encodeURIComponent(process.startTime)}&${historyRange()}`)
+    if (request !== ioHistoryRequest) return
+    ioSourceHistory.value = [
+      { name: '读取', color: metricColors.read, points: (result.items || []).map((item) => ({ value: item.readRate / 1024, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt), timestamp: new Date(item.collectedAt).getTime() })) },
+      { name: '写入', color: metricColors.write, points: (result.items || []).map((item) => ({ value: item.writeRate / 1024, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt), timestamp: new Date(item.collectedAt).getTime() })) },
+    ]
+  } catch (reason) {
+    if (request === ioHistoryRequest) {
+      ioSourceHistory.value = []
+      ioSourceHistoryError.value = reason instanceof Error ? reason.message : String(reason)
+    }
+  } finally {
+    if (request === ioHistoryRequest) ioSourceHistoryLoading.value = false
+  }
+}
+async function selectApplicationIOSource(deviceId: string, application: IOApplicationSource) {
+  const selected: SelectedIOSource = {
+    key: `application:${deviceId}:${application.appId}:${application.deployId || ''}:${application.userId || ''}`,
+    type: 'application', deviceId, label: application.appTitle || application.appId, application,
+  }
+  selectedIOSource.value = selected
+  const request = ++ioHistoryRequest
+  ioSourceHistoryLoading.value = true
+  ioSourceHistoryError.value = ''
+  try {
+    const deploy = application.deployId ? `&deployId=${encodeURIComponent(application.deployId)}` : ''
+    const user = application.userId ? `&userId=${encodeURIComponent(application.userId)}` : ''
+    const result = await api<{ series: { blockReadRate: Array<{ value: number; collectedAt: string }>; blockWriteRate: Array<{ value: number; collectedAt: string }> } }>(
+      `/api/v1/applications/${encodeURIComponent(application.appId)}/metrics?${historyRange()}&deviceId=${encodeURIComponent(deviceId)}${deploy}${user}`)
+    if (request !== ioHistoryRequest) return
+    const points = (items: Array<{ value: number; collectedAt: string }>) => (items || []).map((item) => ({
+      value: item.value / 1024, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt), timestamp: new Date(item.collectedAt).getTime(),
+    }))
+    ioSourceHistory.value = [
+      { name: '读取', color: metricColors.read, points: points(result.series?.blockReadRate || []) },
+      { name: '写入', color: metricColors.write, points: points(result.series?.blockWriteRate || []) },
+    ]
+  } catch (reason) {
+    if (request === ioHistoryRequest) {
+      ioSourceHistory.value = []
+      ioSourceHistoryError.value = reason instanceof Error ? reason.message : String(reason)
+    }
+  } finally {
+    if (request === ioHistoryRequest) ioSourceHistoryLoading.value = false
+  }
+}
+function reloadSelectedIOSourceHistory() {
+  const selected = selectedIOSource.value
+  if (!selected) return
+  if (selected.type === 'process' && selected.process) void selectProcessIOSource(selected.deviceId, selected.process)
+  if (selected.type === 'application' && selected.application) void selectApplicationIOSource(selected.deviceId, selected.application)
+}
+watch([() => data.value?.updatedAt, globalDeviceId], () => {
+  if (!data.value?.updatedAt) return
+  loadAllHistory()
+  loadIOSources()
+})
 
 function historyRange() {
   return historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value
@@ -384,7 +540,12 @@ async function loadAllHistory() {
     }
   }
 }
-function setPreset(hours: number) { historyMode.value = 'preset'; historyHours.value = hours; loadAllHistory() }
+function setPreset(hours: number) {
+  historyMode.value = 'preset'
+  historyHours.value = hours
+  loadAllHistory()
+  reloadSelectedIOSourceHistory()
+}
 function showCustomRange() {
   historyMode.value = 'custom'
   if (!customTo.value) {
@@ -399,7 +560,11 @@ function applyCustomRange() {
   const to = parseBeijingDateTimeInput(customTo.value)
   if (!customFrom.value || !customTo.value || !Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from >= to) { historyError.value = '请选择有效的开始和结束时间'; return }
   if (to.getTime() - from.getTime() > 30 * 24 * 3600 * 1000) { historyError.value = '单次查询范围不能超过 30 天'; return }
-  appliedCustomFrom.value = from.toISOString(); appliedCustomTo.value = to.toISOString(); historyError.value = ''; loadAllHistory()
+  appliedCustomFrom.value = from.toISOString()
+  appliedCustomTo.value = to.toISOString()
+  historyError.value = ''
+  loadAllHistory()
+  reloadSelectedIOSourceHistory()
 }
 async function runStorageCheck() {
   checking.value = true; checkMessage.value = ''
@@ -445,6 +610,69 @@ async function runStorageCheck() {
       <div v-if="historyMode === 'custom'" class="storage-custom-range"><label>开始（北京时间）<input v-model="customFrom" type="datetime-local" /></label><label>结束（北京时间）<input v-model="customTo" type="datetime-local" /></label><button class="secondary-button" @click="applyCustomRange">应用</button></div>
       <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
       <div v-if="historyLoading" class="inline-empty">正在读取全部磁盘与卷的历史数据…</div>
+      <section class="storage-io-attribution">
+        <div class="storage-io-attribution-heading">
+          <div><h3>主要 I/O 来源</h3><p>按当前进程实际读写速率排序，并关联到能够识别的应用与容器。</p></div>
+          <span>进程级数据不能精确拆分至单块物理磁盘</span>
+        </div>
+        <div v-if="ioSourcesLoading && !visibleIOSources.length" class="inline-empty">正在分析宿主机进程、容器和应用 I/O…</div>
+        <div v-else-if="ioSourcesError" class="inline-empty">I/O 来源读取失败：{{ ioSourcesError }}</div>
+        <div v-else class="storage-io-device-list">
+          <article v-for="source in visibleIOSources" :key="source.deviceId" class="storage-io-device">
+            <div class="storage-io-device-heading">
+              <div><b>{{ ioSourceDeviceName(source.deviceId) }}</b><small>{{ source.processTotal }} 个宿主机进程 · 采集于 {{ dateTime(source.collectedAt) }}</small></div>
+              <span>当前速率</span>
+            </div>
+            <div class="storage-io-source-columns">
+              <section class="storage-io-ranking">
+                <div class="storage-io-ranking-title"><h4>应用与容器</h4><span>{{ source.applications.length }} 项已归因</span></div>
+                <button
+                  v-for="application in source.applications"
+                  :key="`${application.appId}-${application.deployId || ''}-${application.userId || ''}`"
+                  type="button"
+                  class="storage-io-source-row"
+                  :class="{ active: selectedIOSource?.key === `application:${source.deviceId}:${application.appId}:${application.deployId || ''}:${application.userId || ''}` }"
+                  @click="selectApplicationIOSource(source.deviceId, application)"
+                >
+                  <span><b>{{ application.appTitle || application.appId }}</b><small>{{ application.containers.join('、') || application.deployId || application.appId }} · {{ application.processCount }} 个进程</small></span>
+                  <i><em :style="{ width: ioSourceBarWidth(application, source.applications) }"></em></i>
+                  <strong>{{ bytes(ioSourceRate(application)) }}/s</strong>
+                  <small class="storage-io-split">读 {{ bytes(application.readRate) }}/s · 写 {{ bytes(application.writeRate) }}/s</small>
+                </button>
+                <div v-if="!source.applications.length" class="storage-io-empty">当前活跃进程尚未匹配到应用容器。</div>
+              </section>
+              <section class="storage-io-ranking">
+                <div class="storage-io-ranking-title"><h4>宿主机进程</h4><span>读写总速率</span></div>
+                <button
+                  v-for="process in source.processes"
+                  :key="`${process.pid}-${process.startTime}`"
+                  type="button"
+                  class="storage-io-source-row"
+                  :class="{ active: selectedIOSource?.key === `process:${source.deviceId}:${process.pid}:${process.startTime}` }"
+                  @click="selectProcessIOSource(source.deviceId, process)"
+                >
+                  <span><b>{{ process.name }} <small>PID {{ process.pid }}</small></b><small>{{ process.appTitle ? `${process.appTitle} · ${process.containerName || process.containerId}` : process.user || '宿主机进程' }}</small></span>
+                  <i><em :style="{ width: ioSourceBarWidth(process, source.processes) }"></em></i>
+                  <strong>{{ bytes(ioSourceRate(process)) }}/s</strong>
+                  <small class="storage-io-split">读 {{ bytes(process.readRate) }}/s · 写 {{ bytes(process.writeRate) }}/s</small>
+                </button>
+                <div v-if="!source.processes.length" class="storage-io-empty">当前采样周期没有进程产生可观测磁盘读写。</div>
+              </section>
+            </div>
+            <section v-if="selectedIOSource?.deviceId === source.deviceId" class="storage-io-history">
+              <div class="storage-io-history-heading">
+                <div><h4>{{ selectedIOSource.label }} · I/O 历史</h4><span>{{ selectedIOSource.type === 'process' ? '进程实际读写速率' : '容器块设备读写速率' }}</span></div>
+                <span v-if="selectedIOSource.process?.appTitle">{{ selectedIOSource.process.appTitle }} · {{ selectedIOSource.process.containerName }}</span>
+              </div>
+              <div v-if="ioSourceHistoryLoading" class="inline-empty">正在读取 I/O 历史…</div>
+              <div v-else-if="ioSourceHistoryError" class="inline-empty">{{ ioSourceHistoryError }}</div>
+              <LineChart v-else :series="ioSourceHistory" :min="0" unit=" KiB/s" :height="220" />
+            </section>
+            <p class="storage-io-limitation">Btrfs、内核回写和块设备内部操作无法完整归属到普通进程；此处用于定位主要用户态来源，不会把未归因部分伪装成某个应用。</p>
+          </article>
+          <div v-if="!visibleIOSources.length" class="storage-io-empty">尚无可用于 I/O 归因的进程快照。</div>
+        </div>
+      </section>
       <div class="storage-expanded-list">
         <article v-for="disk in physicalDisks" :id="storageDiskID(disk.key)" :key="disk.key" class="storage-expanded-disk" :class="{ targeted: highlightedDiskKey === disk.key }">
           <div class="storage-expanded-disk-heading">

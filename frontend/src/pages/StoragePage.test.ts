@@ -267,4 +267,51 @@ describe('StoragePage', () => {
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('/devices/canway/metrics?'))).toBe(true)
     wrapper.unmount()
   })
+
+  it('shows attributed application and process I/O and loads source history', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [
+          { deviceId: 'canway', deviceName: 'canway', name: 'disk.capacity', value: 2_000_000_000_000, unit: 'bytes', labels: { device: 'sda', model: 'TOSHIBA MQ04ABD200', media: 'hdd' }, collectedAt },
+        ],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path === '/api/v1/devices/canway/io-sources?limit=12') return Promise.resolve({
+        deviceId: 'canway', collectedAt, processTotal: 128, limitations: [],
+        applications: [{
+          appId: 'community.lazycat.app.hermes-studio', appTitle: 'Hermes Studio',
+          deployId: 'community.lazycat.app.hermes-studio2', containers: ['hermes-web'],
+          processCount: 3, readRate: 2048, writeRate: 4096,
+        }],
+        processes: [{
+          pid: 4254, startTime: '100', name: 'rclone', user: 'root', state: 'R',
+          cpuPercent: 10, memoryRssBytes: 1024, readBytes: 1, writeBytes: 2,
+          readRate: 1024, writeRate: 8192, threads: 4, uptimeSeconds: 60, collectedAt,
+        }],
+      })
+      if (path.includes('/processes/4254/metrics?')) return Promise.resolve({
+        items: [{
+          pid: 4254, startTime: '100', name: 'rclone', user: 'root', state: 'R',
+          cpuPercent: 10, memoryRssBytes: 1024, readBytes: 1, writeBytes: 2,
+          readRate: 1024, writeRate: 8192, threads: 4, uptimeSeconds: 60, collectedAt,
+        }],
+      })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+
+    expect(wrapper.get('.storage-io-attribution').text()).toContain('Hermes Studio')
+    expect(wrapper.get('.storage-io-attribution').text()).toContain('rclone')
+    expect(wrapper.get('.storage-io-attribution').text()).toContain('9.0 KiB/s')
+    await wrapper.findAll('.storage-io-source-row')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.storage-io-history').text()).toContain('rclone · PID 4254 · I/O 历史')
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('/processes/4254/metrics?'))).toBe(true)
+    wrapper.unmount()
+  })
 })

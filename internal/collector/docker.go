@@ -570,10 +570,51 @@ func (d *DockerCollector) CollectProcesses(ctx context.Context, now time.Time) (
 		}
 		return out[i].PID < out[j].PID
 	})
-	for index := range out {
-		out[index].RecordHistory = index < d.processHistory
-	}
+	markProcessHistory(out, d.processHistory)
 	return out, nil
+}
+
+func markProcessHistory(items []protocol.ProcessSample, limit int) {
+	if limit <= 0 || len(items) == 0 {
+		return
+	}
+	if limit >= len(items) {
+		for index := range items {
+			items[index].RecordHistory = true
+		}
+		return
+	}
+	indexes := make([]int, len(items))
+	for index := range indexes {
+		indexes[index] = index
+	}
+	selected := map[int]struct{}{}
+	quota := max(1, limit/3)
+	rank := func(value func(protocol.ProcessSample) float64) {
+		sorted := append([]int(nil), indexes...)
+		sort.Slice(sorted, func(i, j int) bool {
+			left, right := value(items[sorted[i]]), value(items[sorted[j]])
+			if left != right {
+				return left > right
+			}
+			return items[sorted[i]].PID < items[sorted[j]].PID
+		})
+		for _, index := range sorted[:min(quota, len(sorted))] {
+			selected[index] = struct{}{}
+		}
+	}
+	rank(func(item protocol.ProcessSample) float64 { return item.CPUPercent })
+	rank(func(item protocol.ProcessSample) float64 { return float64(item.MemoryRSSBytes) })
+	rank(func(item protocol.ProcessSample) float64 { return item.ReadRate + item.WriteRate })
+	for index := range items {
+		if len(selected) >= limit {
+			break
+		}
+		selected[index] = struct{}{}
+	}
+	for index := range selected {
+		items[index].RecordHistory = true
+	}
 }
 
 func nonNegativeDelta(current, previous uint64) uint64 {

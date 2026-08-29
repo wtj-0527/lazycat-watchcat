@@ -112,6 +112,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/metrics", s.metricHistory)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/processes", s.deviceProcesses)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/processes/{pid}/metrics", s.processMetrics)
+	s.mux.HandleFunc("GET /api/v1/devices/{id}/io-sources", s.deviceIOSources)
 	s.mux.HandleFunc("GET /api/v1/devices/{id}/events", s.deviceEvents)
 	s.mux.HandleFunc("GET /api/v1/applications", s.applications)
 	s.mux.HandleFunc("POST /api/v1/applications/{id}/instances/{deployId}/actions", s.applicationInstanceAction)
