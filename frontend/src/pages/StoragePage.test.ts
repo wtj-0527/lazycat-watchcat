@@ -13,6 +13,29 @@ afterEach(() => {
 })
 
 describe('StoragePage', () => {
+  it('loads storage history with the 24-hour range by default', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [
+          { deviceId: 'd1', deviceName: '猫盒', name: 'disk.capacity', value: 2_000_000_000_000, unit: 'bytes', labels: { device: 'sda', model: 'TOSHIBA MQ04ABD200' }, collectedAt },
+        ],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path.includes('/io-sources')) return Promise.resolve({ deviceId: 'd1', collectedAt, processTotal: 0, processes: [], applications: [], limitations: [] })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('hours=24'))).toBe(true)
+    expect(wrapper.get('.range-tabs button.active').text()).toBe('24小时')
+    wrapper.unmount()
+  })
+
   it('normalizes null storage and capability lists to an empty state', async () => {
     apiMock.mockImplementation((path: string) => {
       if (path === '/api/v1/storage') return Promise.resolve({ items: null, updatedAt: new Date().toISOString() })

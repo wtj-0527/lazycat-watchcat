@@ -61,7 +61,7 @@ interface SelectedIOSource {
 
 const checking = ref(false)
 const checkMessage = ref('')
-const historyHours = ref(336)
+const historyHours = ref(24)
 const historyMode = ref<'preset' | 'custom'>('preset')
 const customFrom = ref('')
 const customTo = ref('')
@@ -445,8 +445,17 @@ function reloadSelectedIOSourceHistory() {
   if (selected.type === 'process' && selected.process) void selectProcessIOSource(selected.deviceId, selected.process)
   if (selected.type === 'application' && selected.application) void selectApplicationIOSource(selected.deviceId, selected.application)
 }
-watch([() => data.value?.updatedAt, globalDeviceId], () => {
+watch(() => data.value?.updatedAt, () => {
   if (!data.value?.updatedAt) return
+  // Historical series are immutable for the selected range. Re-querying all
+  // disk and volume history after every live storage refresh keeps SQLite
+  // readers open and can saturate mechanical disks. Load history once, while
+  // current storage and I/O-source data continue to refresh normally.
+  if (!historyLoaded) loadAllHistory()
+  loadIOSources()
+})
+watch(globalDeviceId, () => {
+  historyLoaded = false
   loadAllHistory()
   loadIOSources()
 })

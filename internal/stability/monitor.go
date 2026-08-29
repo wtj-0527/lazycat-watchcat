@@ -10,7 +10,7 @@ import (
 )
 
 const stateKey = "stability_observation"
-const defaultIntegrityInterval = 6 * time.Hour
+const defaultDatabaseProbeInterval = 6 * time.Hour
 
 type Status struct {
 	StartedAt              time.Time  `json:"startedAt"`
@@ -108,10 +108,13 @@ func (m *Monitor) sample(ctx context.Context) {
 	m.mu.RLock()
 	lastIntegrityAt := m.status.DatabaseIntegrityAt
 	m.mu.RUnlock()
-	runIntegrity := lastIntegrityAt == nil || now.Sub(*lastIntegrityAt) >= defaultIntegrityInterval
+	runIntegrity := lastIntegrityAt == nil || now.Sub(*lastIntegrityAt) >= defaultDatabaseProbeInterval
 	var integrityErr error
 	if runIntegrity {
-		integrityErr = m.store.IntegrityCheck(ctx)
+		// Production stability sampling must remain lightweight. A full
+		// PRAGMA quick_check scans the entire database and can saturate a
+		// mechanical disk for tens of minutes.
+		integrityErr = m.store.DatabaseProbe(ctx)
 	}
 	inputs, inputErr := m.store.StabilityInputs(ctx)
 

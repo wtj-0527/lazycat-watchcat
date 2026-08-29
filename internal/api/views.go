@@ -1146,7 +1146,23 @@ func (s *Server) operationsView(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) SyncAlerts(ctx context.Context) error {
+func (s *Server) SyncAlerts(ctx context.Context) (result error) {
+	s.alertSyncMu.Lock()
+	if s.alertSyncing || (!s.alertLastSync.IsZero() && time.Since(s.alertLastSync) < 20*time.Second) {
+		s.alertSyncMu.Unlock()
+		return nil
+	}
+	s.alertSyncing = true
+	s.alertSyncMu.Unlock()
+	defer func() {
+		s.alertSyncMu.Lock()
+		s.alertSyncing = false
+		if result == nil {
+			s.alertLastSync = time.Now()
+		}
+		s.alertSyncMu.Unlock()
+	}()
+
 	devices, err := s.store.ListDevices(ctx)
 	if err != nil {
 		return err

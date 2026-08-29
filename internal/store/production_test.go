@@ -29,6 +29,18 @@ func testStoreDevice(t *testing.T) (*Store, protocol.PairCollectorResponse) {
 	return st, paired
 }
 
+func TestDatabaseProbeUsesLightweightSchemaRead(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "probe.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	if err := st.DatabaseProbe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPersistentAlertStateMachine(t *testing.T) {
 	ctx := context.Background()
 	st, paired := testStoreDevice(t)

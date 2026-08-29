@@ -57,6 +57,9 @@ type Server struct {
 	runtimeRefreshMu    sync.Mutex
 	runtimeAppsSyncing  bool
 	runtimeUsersSyncing bool
+	alertSyncMu         sync.Mutex
+	alertSyncing        bool
+	alertLastSync       time.Time
 	analytics           chan struct{}
 	docker              dockerMaintenance
 	dockerPrune         chan struct{}
