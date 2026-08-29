@@ -296,7 +296,7 @@ describe('AppsPage', () => {
     wrapper.unmount()
   })
 
-  it('hides deployment ownership records that are not granted by app access policy', async () => {
+  it('shows all granted applications while hiding ungranted ownership records', async () => {
     apiMock.mockImplementation(async (path: string) => {
       if (path.includes('/metrics')) return {
         appId: 'allowed', from: '2026-08-28T00:00:00Z', to: '2026-08-29T00:00:00Z',
@@ -314,8 +314,19 @@ describe('AppsPage', () => {
             id: 'legacy', title: '遗留应用', paused: 1,
             devices: [device({ deployId: 'legacy-1', userId: '200099', userName: '200099', status: 'paused', healthy: false, accessPolicyKnown: true, accessGranted: false, accessReason: 'not_allowed' })],
           }),
+          application({
+            id: 'shared', title: '已授权共享应用', healthy: 1,
+            devices: [device({ deployId: 'shared-admin', userId: 'admin', userName: '管理员', accessPolicyKnown: true, accessGranted: true, accessReason: 'all_apps' })],
+          }),
+          application({
+            id: 'cloud.lazycat.shell.settings', title: '系统设置', healthy: 1,
+            devices: [device({ deployId: 'settings-admin', userId: 'admin', userName: '管理员', accessPolicyKnown: true, accessGranted: true, accessReason: 'all_apps' })],
+          }),
         ],
-        users: [{ id: '200099', name: '200099' }],
+        users: [{
+          id: '200099', name: '200099',
+          policies: [{ deviceId: 'device-1', appAccessNoLimit: false, allowedAppIds: ['allowed', 'shared', 'cloud.lazycat.shell.settings'] }],
+        }],
         source: 'lazycat', stale: false, updatedAt: new Date().toISOString(),
       }
     })
@@ -326,10 +337,13 @@ describe('AppsPage', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('该用户的部署实例')
-    expect(wrapper.findAll('.app-resource-item')).toHaveLength(1)
+    expect(wrapper.findAll('.app-resource-item')).toHaveLength(2)
     expect(wrapper.text()).toContain('已授权应用')
+    expect(wrapper.text()).toContain('已授权共享应用')
+    expect(wrapper.text()).toContain('暂无独立实例数据')
     expect(wrapper.text()).not.toContain('遗留应用')
-    expect(wrapper.text()).toContain('仅展示管理员授权')
+    expect(wrapper.text()).not.toContain('系统设置')
+    expect(wrapper.text()).toContain('显示管理员授权的应用')
     wrapper.unmount()
   })
 

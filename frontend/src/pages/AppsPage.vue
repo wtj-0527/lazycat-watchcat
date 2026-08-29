@@ -15,7 +15,8 @@ import { globalRealtime } from '@/realtime'
 import { metricColors } from '@/metricColors'
 import { globalDeviceId } from '@/deviceScope'
 
-interface RuntimeUser { id: string; name: string }
+interface RuntimeUserPolicy { deviceId: string; appAccessNoLimit: boolean; allowedAppIds: string[] }
+interface RuntimeUser { id: string; name: string; policies?: RuntimeUserPolicy[] }
 interface Payload { items: ApplicationItem[]; users: RuntimeUser[]; source: string; stale: boolean; updatedAt?: string }
 interface HistoryPoint { value: number; collectedAt: string }
 interface HistoryPayload {
@@ -105,11 +106,39 @@ const availableDevices = computed(() => {
   return [...devices].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
 })
 const availableUsers = computed(() => (data.value?.users || []).filter((user) =>
-  deviceFilter.value === 'all' || allInstances.value.some((item) => item.device.deviceId === deviceFilter.value && item.device.userId === user.id)))
+  deviceFilter.value === 'all'
+  || user.policies?.some((policy) => policy.deviceId === deviceFilter.value)
+  || allInstances.value.some((item) => item.device.deviceId === deviceFilter.value && item.device.userId === user.id)))
+const selectedUserPolicies = computed(() => {
+  const user = (data.value?.users || []).find((item) => item.id === userFilter.value)
+  return (user?.policies || []).filter((policy) => deviceFilter.value === 'all' || policy.deviceId === deviceFilter.value)
+})
+const implicitAccessAppIDs = new Set(['cloud.lazycat.shell.appstore', 'cloud.lazycat.shell.settings'])
+const userCanAccessApp = (item: ApplicationItem) => {
+  if (userFilter.value === 'all') return true
+  if (implicitAccessAppIDs.has(item.id)) return false
+  if (selectedUserPolicies.value.length) {
+    return selectedUserPolicies.value.some((policy) => policy.appAccessNoLimit || policy.allowedAppIds.includes(item.id))
+  }
+  return item.devices.some((device) =>
+    device.userId === userFilter.value
+    && (deviceFilter.value === 'all' || device.deviceId === deviceFilter.value)
+    && device.accessPolicyKnown && device.accessGranted)
+}
 const visibleDevices = (item: ApplicationItem) => item.devices.filter((device) =>
   (userFilter.value === 'all' || device.userId === userFilter.value)
   && (userFilter.value === 'all' || device.accessPolicyKnown && device.accessGranted)
   && (deviceFilter.value === 'all' || device.deviceId === deviceFilter.value))
+const scopedRuntimeState = (item: ApplicationItem) => {
+  if (userFilter.value === 'all') return { tone: appStatus(item), label: applicationRuntimeLabel(item) }
+  const instances = visibleDevices(item)
+  if (!instances.length) return { tone: 'unknown', label: '暂无独立实例' }
+  if (instances.some((device) => device.status === 'error')) return { tone: 'critical', label: '存在异常' }
+  if (instances.some((device) => device.status === 'running') && instances.some((device) => device.status === 'paused')) return { tone: 'warning', label: '部分暂停' }
+  if (instances.some((device) => device.status === 'running')) return { tone: 'healthy', label: '运行中' }
+  if (instances.some((device) => device.status === 'paused')) return { tone: 'warning', label: '已暂停' }
+  return { tone: 'unknown', label: '状态未知' }
+}
 const emptyResources = (): ApplicationItem['resources'] => ({
   containers: 0, cpuPercent: 0, memoryUsage: 0, memoryLimit: 0,
   networkReceive: 0, networkTransmit: 0, blockRead: 0, blockWrite: 0,
@@ -135,12 +164,13 @@ function scopedApplicationResources(item: ApplicationItem) {
 }
 const filtered = computed(() => (data.value?.items || []).filter((item) => {
   const matchesQuery = `${item.title} ${item.id}`.toLowerCase().includes(query.value.trim().toLowerCase())
-  const status = appStatus(item)
+  const status = scopedRuntimeState(item).tone
   const matchesStatus = statusFilter.value === 'all'
     || (statusFilter.value === 'healthy' && status === 'healthy')
     || (statusFilter.value === 'degraded' && status === 'warning')
     || (statusFilter.value === 'critical' && status === 'critical')
-  const matchesScope = (userFilter.value === 'all' && deviceFilter.value === 'all') || visibleDevices(item).length > 0
+  const matchesDevice = deviceFilter.value === 'all' || item.devices.some((device) => device.deviceId === deviceFilter.value)
+  const matchesScope = userCanAccessApp(item) && matchesDevice
   return matchesQuery && matchesStatus && matchesScope
 }).sort((a, b) => {
   if (sortMetric.value === 'name') {
@@ -515,7 +545,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
     <div v-if="viewMode === 'detail'" class="app-resource-layout">
       <aside class="card app-resource-list-card">
         <div class="section-title compact"><div><h2>{{ userFilter === 'all' ? '部署实例所属应用' : '该用户的部署实例' }}</h2><span class="muted">{{ filtered.length }} 个结果</span></div></div>
-        <p v-if="userFilter !== 'all'" class="instance-scope-note">已按 LazyCat 可见应用权限筛选，仅展示管理员授权且属于该用户的应用实例。</p>
+        <p v-if="userFilter !== 'all'" class="instance-scope-note">已按 LazyCat 可见应用权限显示管理员授权的应用；没有用户独立实例时仍会保留，并明确标注暂无指标。</p>
         <div v-if="filtered.length" class="app-resource-list" role="table" aria-label="应用资源列表">
           <div class="app-resource-list-head" role="row">
             <button role="columnheader" @click="toggleApplicationSort('name')">应用{{ sortIndicator('name') }}</button>
@@ -525,7 +555,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
             <button role="columnheader" @click="toggleApplicationSort('disk')">I/O{{ sortIndicator('disk') }}</button>
           </div>
           <button v-for="item in appPagination.pagedItems.value" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" role="row" @click="selectedAppId = item.id">
-            <span role="cell" class="app-resource-name"><i :class="appStatus(item)" /><span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></span></span>
+            <span role="cell" class="app-resource-name"><i :class="scopedRuntimeState(item).tone" /><span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small><em v-if="userFilter !== 'all' && !visibleDevices(item).length">暂无独立实例数据</em></span></span>
             <b role="cell">{{ formatNumber(scopedApplicationResources(item).cpuPercent) }}%</b>
             <small role="cell">{{ bytes(scopedApplicationResources(item).memoryUsage) }}</small>
             <small role="cell">{{ bytes(scopedApplicationResources(item).networkReceive + scopedApplicationResources(item).networkTransmit) }}</small>
@@ -544,7 +574,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
               <label for="application-instance">应用实例</label>
               <SmartSelect v-model="selectedInstanceKey" :options="selectedInstanceOptions" :all-label="`全部实例（${visibleSelectedDevices.length}）`" control-label="应用实例" searchable />
               <StatusPill v-if="selectedInstance" :status="runtimeStatusTone(selectedInstance.status)" :label="runtimeStatusLabel(selectedInstance.status)" />
-              <StatusPill v-else :status="appStatus(selectedApp)" :label="applicationRuntimeLabel(selectedApp)" />
+              <StatusPill v-else :status="scopedRuntimeState(selectedApp).tone" :label="scopedRuntimeState(selectedApp).label" />
             </div>
           </div>
           <div v-if="selectedInstance" class="instance-control-bar">

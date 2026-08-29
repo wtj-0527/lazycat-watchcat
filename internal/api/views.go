@@ -212,7 +212,8 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		names[device.ID] = device.Name
 	}
 	userPolicies := map[string]store.RuntimeUser{}
-	if runtimeUsers, userErr := s.store.ListRuntimeUsers(r.Context()); userErr == nil {
+	runtimeUsers, userErr := s.store.ListRuntimeUsers(r.Context())
+	if userErr == nil {
 		for _, user := range runtimeUsers {
 			userPolicies[user.DeviceID+"\x00"+user.UserID] = user
 		}
@@ -310,11 +311,41 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	userList := make([]map[string]string, 0, len(users))
-	for id, name := range users {
-		userList = append(userList, map[string]string{"id": id, "name": name})
+	type userPolicyView struct {
+		DeviceID         string   `json:"deviceId"`
+		AppAccessNoLimit bool     `json:"appAccessNoLimit"`
+		AllowedAppIDs    []string `json:"allowedAppIds"`
 	}
-	sort.Slice(userList, func(i, j int) bool { return userList[i]["name"] < userList[j]["name"] })
+	type runtimeUserView struct {
+		ID       string           `json:"id"`
+		Name     string           `json:"name"`
+		Policies []userPolicyView `json:"policies"`
+	}
+	userViews := map[string]*runtimeUserView{}
+	for _, user := range runtimeUsers {
+		view := userViews[user.UserID]
+		if view == nil {
+			view = &runtimeUserView{ID: user.UserID, Name: user.Nickname}
+			userViews[user.UserID] = view
+		}
+		if view.Name == "" {
+			view.Name = user.Nickname
+		}
+		view.Policies = append(view.Policies, userPolicyView{
+			DeviceID: user.DeviceID, AppAccessNoLimit: user.AppAccessNoLimit,
+			AllowedAppIDs: append([]string{}, user.AllowedAppIDs...),
+		})
+	}
+	for id, name := range users {
+		if userViews[id] == nil {
+			userViews[id] = &runtimeUserView{ID: id, Name: name}
+		}
+	}
+	userList := make([]*runtimeUserView, 0, len(userViews))
+	for _, user := range userViews {
+		userList = append(userList, user)
+	}
+	sort.Slice(userList, func(i, j int) bool { return userList[i].Name < userList[j].Name })
 	writeJSON(w, 200, map[string]any{"items": out, "users": userList, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": s.runtimeApps != nil && s.runtimeApps.LastUID() == ""})
 }
 

@@ -955,6 +955,7 @@ body { font-size: 12px; }
 .app-resource-name > i.critical { background: var(--critical); }
 .app-resource-name b,.app-resource-name small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
 .app-resource-name small,.app-resource-item>small { color:var(--muted);font-size:10px }
+.app-resource-name em { display:inline-flex;margin-top:3px;padding:2px 6px;border-radius:999px;background:var(--unknown-soft);color:var(--unknown);font-size:9px;font-style:normal;font-weight:750;line-height:1.35 }
 .instance-scope-note { margin:0 0 9px;padding:8px 10px;border-radius:9px;background:var(--unknown-soft);color:var(--muted);font-size:10px;line-height:1.55 }
 .app-resource-now { min-width: 72px; text-align: right; }
 .app-resource-now b { color: var(--secondary); }
