@@ -15,12 +15,14 @@ interface UserItem { deviceId:string;deviceName:string;local:boolean;userId:stri
 interface Payload {items:UserItem[];count:number;recordingSince?:string;updatedAt:string}
 interface ApplicationItem {id:string;title:string;devices:{deviceId:string}[]|null}
 interface ApplicationsPayload {items:ApplicationItem[]}
+interface CreatedUserReceipt {deviceName:string;userId:string;password:string}
 type UserTab = 'overview'|'access'|'endpoints'|'history'
 const userTabs:Array<{id:UserTab;label:string}>=[{id:'overview',label:'概览'},{id:'access',label:'应用权限'},{id:'endpoints',label:'登录终端'},{id:'history',label:'登录历史'}]
 const emit=defineEmits<{toast:[message:string]}>()
 const query=ref('');const device=globalDeviceId;const status=ref('all');const selectedKey=ref('')
 const activeTab=ref<UserTab>('overview');const mobileDetail=ref(false)
 const showCreate=ref(false);const newUser=ref({userId:'',password:'',role:'normal'});const busy=ref(false)
+const createdUserReceipt=ref<CreatedUserReceipt|null>(null)
 const createAccessMode=ref<'all'|'selected'>('all');const createAccessSearch=ref('');const createAllowedAppIds=ref<string[]>([])
 const accessMode=ref<'all'|'selected'>('all');const accessSearch=ref('');const allowedAppIds=ref<string[]>([]);const accessBusy=ref(false)
 const {data,loading,error,refresh}=usePolling(()=>api<Payload>('/api/v1/users'))
@@ -32,7 +34,21 @@ const selectedEndpoints=computed(()=>selected.value?.devices||[])
 const selectedSessions=computed(()=>selected.value?.sessions||[])
 const appOptions=computed(()=>(applications.value?.items||[]).filter(app=>(app.devices||[]).some(x=>x.deviceId===selected.value?.deviceId)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(accessSearch.value.trim().toLowerCase())))
 const localDeviceId=computed(()=>(data.value?.items||[]).find(item=>item.local)?.deviceId||'')
+const localDeviceName=computed(()=>(data.value?.items||[]).find(item=>item.local)?.deviceName||localDeviceId.value||'本机')
 const createAppOptions=computed(()=>localDeviceId.value?(applications.value?.items||[]).filter(app=>(app.devices||[]).some(x=>x.deviceId===localDeviceId.value)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(createAccessSearch.value.trim().toLowerCase())):[])
+const createdUserShareText=computed(()=>{
+  const receipt=createdUserReceipt.value
+  if(!receipt)return ''
+  return `设备名称: ${receipt.deviceName}
+
+[成员1]
+用户名：${receipt.userId}
+密码：${receipt.password}
+
+提示：
+  1、成员首次登录输入账号信息后需点击“无受信任设备”获取管理员允许后才可登录
+  2、提醒成员下载微服客户端: https://lazycat.cloud/download`
+})
 const userPagination=usePagination(filtered,20)
 const appAccessPagination=usePagination(appOptions,20)
 const createAppPagination=usePagination(createAppOptions,12)
@@ -60,6 +76,7 @@ function syncUserRoute(){
   activeTab.value=state.tab
   if(state.deviceId&&state.userId){selectedKey.value=`${state.deviceId}\0${state.userId}`;mobileDetail.value=true}
 }
+syncUserRoute()
 function updateUserRoute(){
   if(!selected.value)return
   const params=new URLSearchParams({device:selected.value.deviceId,user:selected.value.userId,tab:activeTab.value})
@@ -96,12 +113,23 @@ const sessionEndpointName=(session:Session)=>{const endpoint=endpointForSession(
 function toggleApp(id:string){allowedAppIds.value=allowedAppIds.value.includes(id)?allowedAppIds.value.filter(x=>x!==id):[...allowedAppIds.value,id]}
 function toggleCreateApp(id:string){createAllowedAppIds.value=createAllowedAppIds.value.includes(id)?createAllowedAppIds.value.filter(x=>x!==id):[...createAllowedAppIds.value,id]}
 function resetCreateUser(){newUser.value={userId:'',password:'',role:'normal'};createAccessMode.value='all';createAccessSearch.value='';createAllowedAppIds.value=[];createAppPagination.resetPage()}
+function closeCreatedUserReceipt(){createdUserReceipt.value=null}
+async function copyCreatedUserInfo(){
+  try{
+    await navigator.clipboard.writeText(createdUserShareText.value)
+    emit('toast','账号信息已复制')
+  }catch{
+    emit('toast','复制失败，请检查浏览器剪贴板权限')
+  }
+}
 async function createUser(){
   busy.value=true
   try{
     const noLimit=newUser.value.role==='admin'||createAccessMode.value==='all'
+    const receipt={deviceName:localDeviceName.value,userId:newUser.value.userId.trim(),password:newUser.value.password}
     await api('/api/v1/users',{method:'POST',body:JSON.stringify({...newUser.value,appAccessNoLimit:noLimit,allowedAppIds:noLimit?[]:createAllowedAppIds.value})})
     emit('toast','用户已创建')
+    createdUserReceipt.value=receipt
     showCreate.value=false
     resetCreateUser()
     await refresh()
@@ -113,7 +141,7 @@ async function removeUser(item:UserItem){if(!await appConfirm({title:'删除用�
 async function saveAppAccess(item:UserItem){accessBusy.value=true;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/app-access`,{method:'PUT',body:JSON.stringify({noLimit:item.appInstallPermission||accessMode.value==='all',allowedAppIds:item.appInstallPermission?[]:allowedAppIds.value})});emit('toast','应用可见范围已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{accessBusy.value=false}}
 async function renameEndpoint(item:UserItem,endpoint:Endpoint){const remarkName=await appPrompt({title:'修改终端备注',message:`为 ${endpointDisplayName(endpoint)} 设置便于识别的备注名。留空可清除备注。`,inputPlaceholder:'输入终端备注',inputValue:endpoint.remarkName||'',confirmText:'保存备注'});if(remarkName===null)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/end-devices/${encodeURIComponent(endpoint.id)}/remark`,{method:'PUT',body:JSON.stringify({remarkName})});emit('toast','终端备注已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function removeEndpoint(item:UserItem,endpoint:Endpoint){if(!await appConfirm({title:'删除登录终端',message:`确认从 ${item.deviceName} 设备上 ${item.nickname} 的账户中删除“${endpointDisplayName(endpoint)}”？该终端需要重新登录后才能再次访问。`,confirmText:'删除终端',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/end-devices/${encodeURIComponent(endpoint.id)}?deviceId=${encodeURIComponent(item.deviceId)}`,{method:'DELETE'});emit('toast',item.local?'登录终端已删除':'删除操作已发送到远端设备');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
-onMounted(()=>{syncUserRoute();window.addEventListener('hashchange',syncUserRoute)})
+onMounted(()=>window.addEventListener('hashchange',syncUserRoute))
 onBeforeUnmount(()=>window.removeEventListener('hashchange',syncUserRoute))
 </script>
 
@@ -215,4 +243,35 @@ onBeforeUnmount(()=>window.removeEventListener('hashchange',syncUserRoute))
     </section>
   </div>
 </PageState>
+<Teleport to="body">
+  <Transition name="dialog">
+    <div v-if="createdUserReceipt" class="dialog-backdrop user-created-backdrop" role="presentation" @mousedown.self="closeCreatedUserReceipt">
+      <section class="app-dialog user-created-dialog" role="dialog" aria-modal="true" aria-labelledby="user-created-title">
+        <header class="user-created-header">
+          <div class="user-created-symbol" aria-hidden="true">✓</div>
+          <div><p>账号已准备完成</p><h2 id="user-created-title">用户创建成功</h2></div>
+        </header>
+        <div class="user-created-device"><span>设备名称</span><b>{{createdUserReceipt.deviceName}}</b></div>
+        <section class="user-created-account">
+          <div class="user-created-account-title"><span>成员 1</span><small>请安全交付给成员</small></div>
+          <dl>
+            <div><dt>用户名</dt><dd>{{createdUserReceipt.userId}}</dd></div>
+            <div><dt>初始密码</dt><dd>{{createdUserReceipt.password}}</dd></div>
+          </dl>
+        </section>
+        <section class="user-created-tips">
+          <h3>登录提示</h3>
+          <ol>
+            <li>成员首次登录输入账号信息后，需点击“无受信任设备”，获取管理员允许后才可登录。</li>
+            <li>提醒成员下载微服客户端：<a href="https://lazycat.cloud/download" target="_blank" rel="noopener noreferrer">lazycat.cloud/download</a></li>
+          </ol>
+        </section>
+        <div class="user-created-actions">
+          <button class="secondary-button" @click="copyCreatedUserInfo">复制账号信息</button>
+          <button class="primary-button" @click="closeCreatedUserReceipt">完成</button>
+        </div>
+      </section>
+    </div>
+  </Transition>
+</Teleport>
 </template>

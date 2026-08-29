@@ -8,6 +8,7 @@ vi.mock('@/api', () => ({ api: apiMock }))
 afterEach(() => {
   vi.clearAllMocks()
   location.hash = ''
+  document.body.querySelectorAll('.user-created-backdrop').forEach(element => element.remove())
 })
 
 describe('UsersPage', () => {
@@ -56,6 +57,76 @@ describe('UsersPage', () => {
       appAccessNoLimit: false,
       allowedAppIds: ['cloud.lazycat.app.photo'],
     }))
+    const receipt = document.body.querySelector<HTMLElement>('.user-created-dialog')
+    expect(receipt?.textContent).toContain('用户创建成功')
+    expect(receipt?.textContent).toContain('nasw')
+    expect(receipt?.textContent).toContain('new-user')
+    expect(receipt?.textContent).toContain('password-123')
+    expect(receipt?.textContent).toContain('无受信任设备')
+    expect(receipt?.textContent).toContain('lazycat.cloud/download')
+    wrapper.unmount()
+  })
+
+  it('shows the local machine receipt, copies it, and does not show it when creation fails', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    let failCreation = false
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/applications') return { items: [] }
+      if (path === '/api/v1/users' && !options) {
+        return {
+          count: 2,
+          updatedAt: new Date().toISOString(),
+          items: [
+            { deviceId: 'remote', deviceName: 'nasw', local: false, userId: 'remote-admin', nickname: '远端管理员', role: 'admin', appInstallPermission: true, appAccessNoLimit: true, allowedAppIds: [], online: true, activeDevices: 1, totalDevices: 1, applicationCount: 0, instanceCount: 0, firstObservedAt: '', updatedAt: '', onlineSeconds24h: 0, onlineSeconds7d: 0, onlineSeconds30d: 0, loginCount: 0, devices: [], sessions: [] },
+            { deviceId: 'local', deviceName: 'canway', local: true, userId: 'admin', nickname: '管理员', role: 'admin', appInstallPermission: true, appAccessNoLimit: true, allowedAppIds: [], online: true, activeDevices: 1, totalDevices: 1, applicationCount: 0, instanceCount: 0, firstObservedAt: '', updatedAt: '', onlineSeconds24h: 0, onlineSeconds7d: 0, onlineSeconds30d: 0, loginCount: 0, devices: [], sessions: [] },
+          ],
+        }
+      }
+      if (path === '/api/v1/users' && options?.method === 'POST') {
+        if (failCreation) throw new Error('创建失败')
+        return { created: true }
+      }
+      return {}
+    })
+
+    const wrapper = mount(UsersPage)
+    await flushPromises()
+    await wrapper.get('.page-intro .primary-button').trigger('click')
+    let fields = wrapper.findAll('.create-user-account input')
+    await fields[0].setValue('mandy')
+    await fields[1].setValue('mandy123')
+    await wrapper.get('.create-user-footer .primary-button').trigger('click')
+    await flushPromises()
+
+    const receipt = document.body.querySelector<HTMLElement>('.user-created-dialog')!
+    expect(receipt.textContent).toContain('设备名称')
+    expect(receipt.textContent).toContain('canway')
+    expect(receipt.textContent).not.toContain('nasw')
+    receipt.querySelectorAll<HTMLButtonElement>('button')[0].click()
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith(`设备名称: canway
+
+[成员1]
+用户名：mandy
+密码：mandy123
+
+提示：
+  1、成员首次登录输入账号信息后需点击“无受信任设备”获取管理员允许后才可登录
+  2、提醒成员下载微服客户端: https://lazycat.cloud/download`)
+    receipt.querySelectorAll<HTMLButtonElement>('button')[1].click()
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 220))
+    expect(document.body.querySelector('.user-created-dialog')).toBeNull()
+
+    failCreation = true
+    await wrapper.get('.page-intro .primary-button').trigger('click')
+    fields = wrapper.findAll('.create-user-account input')
+    await fields[0].setValue('failed-user')
+    await fields[1].setValue('password-123')
+    await wrapper.get('.create-user-footer .primary-button').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('.user-created-dialog')).toBeNull()
     wrapper.unmount()
   })
 
