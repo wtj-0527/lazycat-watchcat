@@ -6,10 +6,11 @@ import type { Capability, Metric } from '@/types'
 import { ago, bytes, dateTime, formatMetricValue, metricLabel, monthDay, parseBeijingDateTimeInput, storageRiskAdvice, storageRiskStatus, toBeijingDateTimeInput } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
+import SmartSelect, { type SmartOption } from '@/components/SmartSelect.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { metricColors } from '@/metricColors'
-import { globalDeviceId } from '@/deviceScope'
+import { globalDeviceId, selectGlobalDevice } from '@/deviceScope'
 
 interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[]; summary: { totalBytes: number; fillWithin30Days: number } }
 interface VolumeResource {
@@ -60,6 +61,22 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
   return { ...storage, items: storage.items || [], summary: storage.summary || { totalBytes: 0, fillWithin30Days: 0 }, capabilities: operations.capabilities || [] }
 })
 
+const deviceOptions = computed<SmartOption[]>(() => {
+  const devices = new Map<string, { name: string; hostname: string }>()
+  for (const item of data.value?.items || []) {
+    if (!item.deviceId) continue
+    const current = devices.get(item.deviceId)
+    devices.set(item.deviceId, {
+      name: item.deviceName || current?.name || item.deviceId,
+      hostname: String(item.labels?.hostname || current?.hostname || item.deviceId),
+    })
+  }
+  return [...devices.entries()].map(([value, device]) => ({
+    value,
+    label: device.name,
+    meta: device.hostname === device.name ? value : device.hostname,
+  })).sort((left, right) => left.label.localeCompare(right.label))
+})
 const itemList = computed(() => (data.value?.items || []).filter((item) =>
   globalDeviceId.value === 'all' || item.deviceId === globalDeviceId.value))
 const riskStatus = (item: Metric) => item.risk || storageRiskStatus(item)
@@ -408,7 +425,23 @@ async function runStorageCheck() {
     </div>
 
     <section class="card storage-resource-card">
-      <div class="section-title storage-expanded-title"><div><h2>存储资源</h2></div><div class="range-tabs"><button v-for="option in [{ h: 24, l: '24小时' }, { h: 168, l: '7天' }, { h: 336, l: '14天' }, { h: 720, l: '30天' }]" :key="option.h" :class="{ active: historyMode === 'preset' && historyHours === option.h }" @click="setPreset(option.h)">{{ option.l }}</button><button :class="{ active: historyMode === 'custom' }" @click="showCustomRange">自定义</button></div></div>
+      <div class="section-title storage-expanded-title">
+        <div><h2>存储资源</h2></div>
+        <div class="storage-resource-toolbar">
+          <div class="storage-device-filter">
+            <span>设备</span>
+            <SmartSelect
+              :model-value="globalDeviceId"
+              :options="deviceOptions"
+              :all-label="`全部设备 · ${deviceOptions.length} 台`"
+              control-label="筛选存储设备"
+              searchable
+              @update:model-value="selectGlobalDevice"
+            />
+          </div>
+          <div class="range-tabs"><button v-for="option in [{ h: 24, l: '24小时' }, { h: 168, l: '7天' }, { h: 336, l: '14天' }, { h: 720, l: '30天' }]" :key="option.h" :class="{ active: historyMode === 'preset' && historyHours === option.h }" @click="setPreset(option.h)">{{ option.l }}</button><button :class="{ active: historyMode === 'custom' }" @click="showCustomRange">自定义</button></div>
+        </div>
+      </div>
       <div v-if="historyMode === 'custom'" class="storage-custom-range"><label>开始（北京时间）<input v-model="customFrom" type="datetime-local" /></label><label>结束（北京时间）<input v-model="customTo" type="datetime-local" /></label><button class="secondary-button" @click="applyCustomRange">应用</button></div>
       <p v-if="historyError" class="operation-evidence warning">{{ historyError }}</p>
       <div v-if="historyLoading" class="inline-empty">正在读取全部磁盘与卷的历史数据…</div>

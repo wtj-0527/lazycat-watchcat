@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import StoragePage from './StoragePage.vue'
+import { selectGlobalDevice } from '@/deviceScope'
 
 const apiMock = vi.hoisted(() => vi.fn())
 vi.mock('@/api', () => ({ api: apiMock }))
@@ -8,6 +9,7 @@ vi.mock('@/api', () => ({ api: apiMock }))
 afterEach(() => {
   vi.clearAllMocks()
   location.hash = ''
+  selectGlobalDevice('all')
 })
 
 describe('StoragePage', () => {
@@ -231,6 +233,38 @@ describe('StoragePage', () => {
     expect(cards[0].text() + cards[1].text()).toContain('sda · Seagate')
     expect(cards[0].text() + cards[1].text()).toContain('sda · Toshiba')
     expect(wrapper.findAll('.volume-panel')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('filters storage statistics, disks, volumes, and history by device', async () => {
+    const collectedAt = new Date().toISOString()
+    apiMock.mockImplementation((path: string) => {
+      if (path === '/api/v1/storage') return Promise.resolve({
+        updatedAt: collectedAt,
+        items: [
+          { deviceId: 'nasw', deviceName: 'nasw', name: 'disk.capacity', value: 1_000_000_000_000, unit: 'bytes', labels: { device: 'sda', model: 'ST1000LM048', media: 'hdd' }, collectedAt },
+          { deviceId: 'canway', deviceName: 'canway', name: 'disk.capacity', value: 2_000_000_000_000, unit: 'bytes', labels: { device: 'sda', model: 'TOSHIBA MQ04ABD200', media: 'hdd' }, collectedAt },
+          { deviceId: 'nasw', deviceName: 'nasw', name: 'btrfs.usage', value: 10, unit: '%', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+          { deviceId: 'canway', deviceName: 'canway', name: 'btrfs.usage', value: 20, unit: '%', labels: { mount: '/lzcsys/data', backing_device: '/dev/sda1' }, collectedAt },
+        ],
+      })
+      if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
+      if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
+      return Promise.reject(new Error(`Unexpected API path: ${path}`))
+    })
+
+    const wrapper = mount(StoragePage)
+    await flushPromises()
+    expect(wrapper.findAll('.storage-expanded-disk')).toHaveLength(2)
+
+    selectGlobalDevice('canway')
+    await flushPromises()
+
+    expect(wrapper.findAll('.storage-expanded-disk')).toHaveLength(1)
+    expect(wrapper.get('.storage-expanded-disk').text()).toContain('canway · 主数据盘')
+    expect(wrapper.get('.storage-expanded-disk').text()).not.toContain('nasw')
+    expect(wrapper.findAll('.stats .stat')[0].text()).toContain('1')
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('/devices/canway/metrics?'))).toBe(true)
     wrapper.unmount()
   })
 })
