@@ -170,22 +170,73 @@ func oldestUserObservation(items []store.RuntimeUser) time.Time {
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
-	var req struct{ UserID, Password, Role string }
+	var req struct {
+		UserID           string   `json:"userId"`
+		Password         string   `json:"password"`
+		Role             string   `json:"role"`
+		AppAccessNoLimit *bool    `json:"appAccessNoLimit"`
+		AllowedAppIDs    []string `json:"allowedAppIds"`
+	}
 	if decodeJSON(r, &req) != nil || strings.TrimSpace(req.UserID) == "" || len(req.Password) < 8 {
 		problem(w, 400, "invalid_user", "用户 ID 必填，密码至少 8 位")
 		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.Role != "admin" && req.Role != "normal" {
+		problem(w, 400, "invalid_role", "角色必须是 admin 或 normal")
+		return
+	}
+	allowed, errCode, errMessage := normalizeAllowedAppIDs(req.AllowedAppIDs)
+	if errCode != "" {
+		problem(w, 400, errCode, errMessage)
+		return
+	}
+	setAppAccess := req.AppAccessNoLimit != nil || req.Role == "admin"
+	noLimit := req.Role == "admin" || (req.AppAccessNoLimit != nil && *req.AppAccessNoLimit)
+	if noLimit {
+		allowed = nil
 	}
 	actor := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
 	if s.runtimeUsers == nil {
 		problem(w, 503, "user_manager_unavailable", "用户管理服务不可用")
 		return
 	}
-	if err := s.runtimeUsers.Create(r.Context(), actor, strings.TrimSpace(req.UserID), req.Password, req.Role); err != nil {
+	if err := s.runtimeUsers.Create(r.Context(), actor, req.UserID, req.Password, req.Role); err != nil {
 		problem(w, 502, "user_create_failed", "创建用户失败："+err.Error())
 		return
 	}
 	_ = s.store.RecordAudit(r.Context(), "user.created", "lazycat_user", req.UserID, map[string]any{"role": req.Role})
-	writeJSON(w, 201, map[string]any{"created": true})
+	if !setAppAccess {
+		writeJSON(w, 201, map[string]any{"created": true, "userId": req.UserID})
+		return
+	}
+	if err := s.runtimeUsers.SetAppAccess(r.Context(), actor, req.UserID, noLimit, allowed); err != nil {
+		_ = s.store.RecordAudit(r.Context(), "user.app_access.update_failed", "lazycat_user", req.UserID, map[string]any{"error": err.Error()})
+		problem(w, 502, "user_created_app_access_failed", "用户已创建，但应用可见范围设置失败："+err.Error())
+		return
+	}
+	users, err := s.runtimeUsers.Query(r.Context(), actor)
+	if err != nil {
+		problem(w, 502, "user_created_app_access_verify_failed", "用户已创建且权限已提交，但服务端回读失败："+err.Error())
+		return
+	}
+	if err = s.store.ObserveRuntimeUsers(r.Context(), s.localDeviceID, users); err != nil {
+		problem(w, 500, "user_created_app_access_persist_failed", "用户已创建且权限已提交，但保存回读结果失败")
+		return
+	}
+	var created *store.RuntimeUser
+	for i := range users {
+		if users[i].UserID == req.UserID {
+			created = &users[i]
+			break
+		}
+	}
+	if created == nil {
+		problem(w, 502, "user_created_app_access_user_missing", "用户已创建且权限已提交，但服务端回读中暂未出现该用户")
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "user.app_access.updated", "lazycat_user", req.UserID, map[string]any{"noLimit": created.AppAccessNoLimit, "allowedAppIds": created.AllowedAppIDs})
+	writeJSON(w, 201, map[string]any{"created": true, "userId": req.UserID, "noLimit": created.AppAccessNoLimit, "allowedAppIds": created.AllowedAppIDs})
 }
 func (s *Server) changeUserRole(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimSpace(r.PathValue("id"))
@@ -245,25 +296,11 @@ func (s *Server) updateUserAppAccess(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "invalid_app_access", "应用可见范围格式无效")
 		return
 	}
-	seen := map[string]bool{}
-	allowed := make([]string, 0, len(req.AllowedAppIDs))
-	for _, raw := range req.AllowedAppIDs {
-		id := strings.TrimSpace(raw)
-		if id == "" || seen[id] {
-			continue
-		}
-		if len(id) > 256 {
-			problem(w, 400, "invalid_app_id", "应用 ID 长度不能超过 256 个字符")
-			return
-		}
-		seen[id] = true
-		allowed = append(allowed, id)
-	}
-	if len(allowed) > 1000 {
-		problem(w, 400, "too_many_apps", "单个用户最多允许配置 1000 个应用")
+	allowed, errCode, errMessage := normalizeAllowedAppIDs(req.AllowedAppIDs)
+	if errCode != "" {
+		problem(w, 400, errCode, errMessage)
 		return
 	}
-	sort.Strings(allowed)
 	if req.NoLimit {
 		allowed = nil
 	}
@@ -293,6 +330,27 @@ func (s *Server) updateUserAppAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.RecordAudit(r.Context(), "user.app_access.updated", "lazycat_user", uid, map[string]any{"noLimit": updated.AppAccessNoLimit, "allowedAppIds": updated.AllowedAppIDs})
 	writeJSON(w, 200, map[string]any{"updated": true, "noLimit": updated.AppAccessNoLimit, "allowedAppIds": updated.AllowedAppIDs})
+}
+
+func normalizeAllowedAppIDs(items []string) ([]string, string, string) {
+	seen := map[string]bool{}
+	allowed := make([]string, 0, len(items))
+	for _, raw := range items {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		if len(id) > 256 {
+			return nil, "invalid_app_id", "应用 ID 长度不能超过 256 个字符"
+		}
+		seen[id] = true
+		allowed = append(allowed, id)
+	}
+	if len(allowed) > 1000 {
+		return nil, "too_many_apps", "单个用户最多允许配置 1000 个应用"
+	}
+	sort.Strings(allowed)
+	return allowed, "", ""
 }
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimSpace(r.PathValue("id"))

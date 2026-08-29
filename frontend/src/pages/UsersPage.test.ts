@@ -11,6 +11,54 @@ afterEach(() => {
 })
 
 describe('UsersPage', () => {
+  it('selects local application visibility while creating a normal user', async () => {
+    apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
+      if (path === '/api/v1/applications') {
+        return {
+          items: [
+            { id: 'cloud.lazycat.app.photo', title: '懒猫相册', devices: [{ deviceId: 'd1' }] },
+            { id: 'remote.only', title: '远端应用', devices: [{ deviceId: 'd2' }] },
+          ],
+        }
+      }
+      if (path === '/api/v1/users' && !options) {
+        return {
+          count: 1,
+          updatedAt: new Date().toISOString(),
+          items: [
+            { deviceId: 'd1', deviceName: 'nasw', local: true, userId: 'admin', nickname: '管理员', role: 'admin', appInstallPermission: true, appAccessNoLimit: true, allowedAppIds: [], online: true, activeDevices: 1, totalDevices: 1, applicationCount: 1, instanceCount: 1, firstObservedAt: '', updatedAt: '', onlineSeconds24h: 0, onlineSeconds7d: 0, onlineSeconds30d: 0, loginCount: 0, devices: [], sessions: [] },
+          ],
+        }
+      }
+      if (path === '/api/v1/users' && options?.method === 'POST') return { created: true }
+      return {}
+    })
+
+    const wrapper = mount(UsersPage)
+    await flushPromises()
+    await wrapper.get('.page-intro .primary-button').trigger('click')
+    const fields = wrapper.findAll('.create-user-account input')
+    await fields[0].setValue('new-user')
+    await fields[1].setValue('password-123')
+    await wrapper.findAll('.create-access-mode button')[1].trigger('click')
+
+    expect(wrapper.get('.create-app-list').text()).toContain('懒猫相册')
+    expect(wrapper.get('.create-app-list').text()).not.toContain('远端应用')
+    await wrapper.get('.create-app-list button').trigger('click')
+    await wrapper.get('.create-user-footer .primary-button').trigger('click')
+    await flushPromises()
+
+    const request = apiMock.mock.calls.find(([path, options]) => path === '/api/v1/users' && options?.method === 'POST')
+    expect(request?.[1]?.body).toBe(JSON.stringify({
+      userId: 'new-user',
+      password: 'password-123',
+      role: 'normal',
+      appAccessNoLimit: false,
+      allowedAppIds: ['cloud.lazycat.app.photo'],
+    }))
+    wrapper.unmount()
+  })
+
   it('uses presence wording and saves application visibility by app id', async () => {
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
       if (path === '/api/v1/applications') {

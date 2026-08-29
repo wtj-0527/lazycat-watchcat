@@ -21,6 +21,7 @@ const emit=defineEmits<{toast:[message:string]}>()
 const query=ref('');const device=globalDeviceId;const status=ref('all');const selectedKey=ref('')
 const activeTab=ref<UserTab>('overview');const mobileDetail=ref(false)
 const showCreate=ref(false);const newUser=ref({userId:'',password:'',role:'normal'});const busy=ref(false)
+const createAccessMode=ref<'all'|'selected'>('all');const createAccessSearch=ref('');const createAllowedAppIds=ref<string[]>([])
 const accessMode=ref<'all'|'selected'>('all');const accessSearch=ref('');const allowedAppIds=ref<string[]>([]);const accessBusy=ref(false)
 const {data,loading,error,refresh}=usePolling(()=>api<Payload>('/api/v1/users'))
 const {data:applications}=usePolling(()=>api<ApplicationsPayload>('/api/v1/applications'))
@@ -30,8 +31,11 @@ const selected=computed(()=>filtered.value.find(x=>`${x.deviceId}\0${x.userId}`=
 const selectedEndpoints=computed(()=>selected.value?.devices||[])
 const selectedSessions=computed(()=>selected.value?.sessions||[])
 const appOptions=computed(()=>(applications.value?.items||[]).filter(app=>(app.devices||[]).some(x=>x.deviceId===selected.value?.deviceId)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(accessSearch.value.trim().toLowerCase())))
+const localDeviceId=computed(()=>(data.value?.items||[]).find(item=>item.local)?.deviceId||'')
+const createAppOptions=computed(()=>localDeviceId.value?(applications.value?.items||[]).filter(app=>(app.devices||[]).some(x=>x.deviceId===localDeviceId.value)).filter(app=>`${app.title} ${app.id}`.toLowerCase().includes(createAccessSearch.value.trim().toLowerCase())):[])
 const userPagination=usePagination(filtered,20)
 const appAccessPagination=usePagination(appOptions,20)
+const createAppPagination=usePagination(createAppOptions,12)
 const endpointPagination=usePagination(selectedEndpoints,10)
 const sessionPagination=usePagination(selectedSessions,10)
 watch([query,device,status],()=>{userPagination.resetPage()})
@@ -40,6 +44,8 @@ watch(filtered,(items)=>{if(items.length&&!items.some(x=>`${x.deviceId}\0${x.use
 watch(selected, item=>{userPagination.resetPage();appAccessPagination.resetPage();endpointPagination.resetPage();sessionPagination.resetPage();if(!item)return;accessMode.value=item.appInstallPermission||item.appAccessNoLimit?'all':'selected';allowedAppIds.value=[...(item.allowedAppIds||[])];accessSearch.value='';updateUserRoute()},{immediate:true})
 watch(activeTab,updateUserRoute)
 watch(accessSearch,appAccessPagination.resetPage)
+watch(createAccessSearch,createAppPagination.resetPage)
+watch(()=>newUser.value.role,role=>{if(role==='admin'){createAccessMode.value='all';createAllowedAppIds.value=[]}})
 const onlineCount=computed(()=>(data.value?.items||[]).filter(x=>x.online).length)
 const duration=(seconds?:number)=>{const value=Number.isFinite(seconds)?Number(seconds):0;const h=Math.floor(value/3600),m=Math.floor((value%3600)/60);return h?`${h} 小时 ${m} 分钟`:`${m} 分钟`}
 const presence=(item:UserItem)=>item.online?'在线':item.totalDevices>0?'离线':'未发现终端'
@@ -88,7 +94,19 @@ async function copyEndpointHost(endpoint:Endpoint){
 const endpointForSession=(session:Session)=>selectedEndpoints.value.find(endpoint=>endpoint.id===session.endDeviceId)
 const sessionEndpointName=(session:Session)=>{const endpoint=endpointForSession(session);return endpoint?endpointDisplayName(endpoint):session.endDeviceId||'未知终端'}
 function toggleApp(id:string){allowedAppIds.value=allowedAppIds.value.includes(id)?allowedAppIds.value.filter(x=>x!==id):[...allowedAppIds.value,id]}
-async function createUser(){busy.value=true;try{await api('/api/v1/users',{method:'POST',body:JSON.stringify(newUser.value)});emit('toast','用户已创建');showCreate.value=false;newUser.value={userId:'',password:'',role:'normal'};await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{busy.value=false}}
+function toggleCreateApp(id:string){createAllowedAppIds.value=createAllowedAppIds.value.includes(id)?createAllowedAppIds.value.filter(x=>x!==id):[...createAllowedAppIds.value,id]}
+function resetCreateUser(){newUser.value={userId:'',password:'',role:'normal'};createAccessMode.value='all';createAccessSearch.value='';createAllowedAppIds.value=[];createAppPagination.resetPage()}
+async function createUser(){
+  busy.value=true
+  try{
+    const noLimit=newUser.value.role==='admin'||createAccessMode.value==='all'
+    await api('/api/v1/users',{method:'POST',body:JSON.stringify({...newUser.value,appAccessNoLimit:noLimit,allowedAppIds:noLimit?[]:createAllowedAppIds.value})})
+    emit('toast','用户已创建')
+    showCreate.value=false
+    resetCreateUser()
+    await refresh()
+  }catch(e){emit('toast',e instanceof Error?e.message:String(e))}finally{busy.value=false}
+}
 async function changeRole(item:UserItem){if(!await appConfirm({title:'调整用户角色',message:`确认将 ${item.nickname} 调整为${item.role==='admin'?'普通用户':'管理员'}？`,confirmText:'确认调整'}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/role`,{method:'PUT',body:JSON.stringify({role:item.role==='admin'?'normal':'admin'})});emit('toast','角色已更新');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function resetPassword(item:UserItem){const password=await appPrompt({title:'重置用户密码',message:`为 ${item.nickname} 设置新密码，至少 8 位。`,inputType:'password',inputPlaceholder:'输入新密码',confirmText:'确认重置'});if(!password)return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}/password`,{method:'PUT',body:JSON.stringify({password})});emit('toast','密码已重置')}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
 async function removeUser(item:UserItem){if(!await appConfirm({title:'删除用户',message:`确认删除用户 ${item.nickname}？本次不会清理用户数据。`,confirmText:'删除用户',danger:true}))return;try{await api(`/api/v1/users/${encodeURIComponent(item.userId)}`,{method:'DELETE'});emit('toast','用户已删除');await refresh()}catch(e){emit('toast',e instanceof Error?e.message:String(e))}}
@@ -103,7 +121,32 @@ onBeforeUnmount(()=>window.removeEventListener('hashchange',syncUserRoute))
 <PageState :loading="loading" :error="error" :empty="data?.items.length===0" empty-title="尚无用户数据" empty-text="用户状态将在首次真实采集后显示。" @retry="refresh">
   <div class="page-intro"><div><h2>用户</h2><p v-if="data?.recordingSince">登录历史自 {{ dateTime(data.recordingSince) }} 开始记录</p></div><button class="primary-button" @click="showCreate=!showCreate">创建本机用户</button></div>
   <section class="stats user-stats"><div class="stat"><span>用户记录</span><strong>{{ data?.count||0 }}</strong></div><div class="stat"><span>当前在线</span><strong>{{ onlineCount }}</strong></div><div class="stat"><span>登录终端</span><strong>{{ data?.items.reduce((n,x)=>n+x.activeDevices,0)||0 }}</strong></div><div class="stat"><span>运行实例</span><strong>{{ data?.items.reduce((n,x)=>n+x.instanceCount,0)||0 }}</strong></div></section>
-  <section v-if="showCreate" class="card user-create-card"><div class="section-title"><div><h2>创建本机用户</h2></div></div><div class="user-form"><label><span>用户 ID</span><input v-model="newUser.userId"></label><label><span>初始密码</span><input v-model="newUser.password" type="password"></label><label><span>角色</span><select v-model="newUser.role"><option value="normal">普通用户</option><option value="admin">管理员</option></select></label><button class="primary-button" :disabled="busy" @click="createUser">{{busy?'创建中…':'确认创建'}}</button></div></section>
+  <section v-if="showCreate" class="card user-create-card">
+    <div class="section-title"><div><h2>创建本机用户</h2><p>创建账号时同时配置该用户可以看到的应用。</p></div></div>
+    <div class="create-user-account">
+      <label><span>用户 ID</span><input v-model="newUser.userId" autocomplete="off" placeholder="输入用户 ID"></label>
+      <label><span>初始密码</span><input v-model="newUser.password" type="password" autocomplete="new-password" placeholder="至少 8 位"></label>
+      <label><span>角色</span><select v-model="newUser.role"><option value="normal">普通用户</option><option value="admin">管理员</option></select></label>
+    </div>
+    <div class="create-access-section">
+      <div class="create-access-heading"><div><h3>应用可见范围</h3><p>{{newUser.role==='admin'?'管理员默认可以访问全部应用。':'选择全部应用，或仅开放指定应用。'}}</p></div><span v-if="newUser.role==='normal'&&createAccessMode==='selected'">已选择 {{createAllowedAppIds.length}} 个</span></div>
+      <div class="access-mode create-access-mode" :class="{single:newUser.role==='admin'}">
+        <button :class="{active:createAccessMode==='all'}" @click="createAccessMode='all'"><b>全部应用</b><small>可以访问本机当前及以后安装的应用</small></button>
+        <button v-if="newUser.role==='normal'" :class="{active:createAccessMode==='selected'}" @click="createAccessMode='selected'"><b>指定应用</b><small>仅允许访问下方选中的应用</small></button>
+      </div>
+      <template v-if="newUser.role==='normal'&&createAccessMode==='selected'">
+        <label class="app-access-search"><input v-model="createAccessSearch" placeholder="搜索应用名称或 App ID"></label>
+        <div class="app-access-list create-app-list">
+          <button v-for="app in createAppPagination.pagedItems.value" :key="app.id" :class="{selected:createAllowedAppIds.includes(app.id)}" @click="toggleCreateApp(app.id)">
+            <span><b>{{app.title||app.id}}</b><small>{{app.id}}</small></span><i>{{createAllowedAppIds.includes(app.id)?'已选择':'选择'}}</i>
+          </button>
+          <p v-if="!createAppOptions.length" class="inline-empty">本机尚未采集到可配置的应用。</p>
+        </div>
+        <AppPagination v-model:page="createAppPagination.page.value" v-model:page-size="createAppPagination.pageSize.value" :total="createAppPagination.total.value" :page-count="createAppPagination.pageCount.value" :range-start="createAppPagination.rangeStart.value" :range-end="createAppPagination.rangeEnd.value" label="创建用户应用列表分页" />
+      </template>
+    </div>
+    <div class="create-user-footer"><button class="secondary-button" :disabled="busy" @click="showCreate=false;resetCreateUser()">取消</button><button class="primary-button" :disabled="busy||!newUser.userId.trim()||newUser.password.length<8" @click="createUser">{{busy?'创建中…':'确认创建'}}</button></div>
+  </section>
   <section class="card user-filter-card"><div class="filter-bar"><label class="search-field"><input v-model="query" placeholder="搜索昵称、UID 或设备"></label><select v-model="device"><option value="all">全部设备</option><option v-for="[id,name] in devices" :key="id" :value="id">{{name}}</option></select><select v-model="status"><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option></select></div></section>
   <div class="user-layout" :class="{'mobile-detail':mobileDetail}">
     <section class="card user-list"><button v-for="item in userPagination.pagedItems.value" :key="`${item.deviceId}-${item.userId}`" :class="{active:selected?.deviceId===item.deviceId&&selected?.userId===item.userId}" @click="selectUser(item)"><span class="user-list-avatar">{{(item.nickname||item.userId).slice(0,1).toUpperCase()}}</span><span><b>{{item.nickname||item.userId}}</b><small>{{item.deviceName}} · {{item.userId}}</small></span><span class="pill" :class="presenceClass(item)">{{presence(item)}}</span></button><AppPagination v-model:page="userPagination.page.value" v-model:page-size="userPagination.pageSize.value" :total="userPagination.total.value" :page-count="userPagination.pageCount.value" :range-start="userPagination.rangeStart.value" :range-end="userPagination.rangeEnd.value" label="用户列表分页" /></section>
