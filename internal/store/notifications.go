@@ -27,7 +27,7 @@ type NotificationSummary struct {
 
 func (s *Store) NotificationSummary(ctx context.Context) (NotificationSummary, error) {
 	var result NotificationSummary
-	rows, err := s.db.QueryContext(ctx, `SELECT status,COUNT(*) FROM notification_outbox GROUP BY status`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT status,COUNT(*) FROM notification_outbox GROUP BY status`)
 	if err != nil {
 		return result, err
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wtj-0527/lazycat-watchcat/internal/backup"
@@ -18,29 +19,49 @@ import (
 	"github.com/wtj-0527/lazycat-watchcat/internal/pki"
 	"github.com/wtj-0527/lazycat-watchcat/internal/protocol"
 	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeapps"
-	"github.com/wtj-0527/lazycat-watchcat/internal/runtimeusers"
 	"github.com/wtj-0527/lazycat-watchcat/internal/stability"
 	"github.com/wtj-0527/lazycat-watchcat/internal/store"
 	"github.com/wtj-0527/lazycat-watchcat/internal/upgradecoord"
 )
 
+type runtimeApplicationManager interface {
+	LastUID() string
+	Query(context.Context, string) ([]runtimeapps.Application, error)
+	Control(context.Context, string, string, string, *bool) (runtimeapps.ControlResult, error)
+}
+
+type runtimeUserManager interface {
+	LastUID() string
+	Query(context.Context, string) ([]store.RuntimeUser, error)
+	Create(context.Context, string, string, string, string) error
+	ChangeRole(context.Context, string, string, string) error
+	ResetPassword(context.Context, string, string, string) error
+	Delete(context.Context, string, string, bool) error
+	RenameDevice(context.Context, string, string, string, string) error
+	RemoveDevice(context.Context, string, string, string) error
+	SetAppAccess(context.Context, string, string, bool, []string) error
+}
+
 type Server struct {
-	store              *store.Store
-	ca                 *pki.Authority
-	webDir             string
-	pairingTTL         time.Duration
-	mux                *http.ServeMux
-	backup             *backup.Manager
-	stability          *stability.Monitor
-	restart            func()
-	runtimeApps        *runtimeapps.Source
-	runtimeUsers       *runtimeusers.Source
-	localDeviceID      string
-	analytics          chan struct{}
-	docker             dockerMaintenance
-	dockerPrune        chan struct{}
-	upstream           *collector.Upstream
-	upgradeCoordinator *upgradecoord.Manager
+	store               *store.Store
+	ca                  *pki.Authority
+	webDir              string
+	pairingTTL          time.Duration
+	mux                 *http.ServeMux
+	backup              *backup.Manager
+	stability           *stability.Monitor
+	restart             func()
+	runtimeApps         runtimeApplicationManager
+	runtimeUsers        runtimeUserManager
+	localDeviceID       string
+	runtimeRefreshMu    sync.Mutex
+	runtimeAppsSyncing  bool
+	runtimeUsersSyncing bool
+	analytics           chan struct{}
+	docker              dockerMaintenance
+	dockerPrune         chan struct{}
+	upstream            *collector.Upstream
+	upgradeCoordinator  *upgradecoord.Manager
 }
 
 func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Duration) *Server {
@@ -54,10 +75,10 @@ func New(st *store.Store, ca *pki.Authority, webDir string, pairingTTL time.Dura
 func (s *Server) ConfigureOperations(manager *backup.Manager, monitor *stability.Monitor, restart func()) {
 	s.backup, s.stability, s.restart = manager, monitor, restart
 }
-func (s *Server) ConfigureRuntimeApps(source *runtimeapps.Source, localDeviceID string) {
+func (s *Server) ConfigureRuntimeApps(source runtimeApplicationManager, localDeviceID string) {
 	s.runtimeApps, s.localDeviceID = source, localDeviceID
 }
-func (s *Server) ConfigureRuntimeUsers(source *runtimeusers.Source, localDeviceID string) {
+func (s *Server) ConfigureRuntimeUsers(source runtimeUserManager, localDeviceID string) {
 	s.runtimeUsers, s.localDeviceID = source, localDeviceID
 }
 func (s *Server) ConfigureDockerMaintenance(docker *collector.DockerCollector, localDeviceID string) {

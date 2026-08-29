@@ -162,7 +162,7 @@ func (s *Store) ObserveRuntimeUsers(ctx context.Context, deviceID string, users 
 }
 
 func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,user_id,nickname,role,app_install_permission,app_access_no_limit,allowed_app_ids_json,online,active_devices,total_devices,first_observed_at,updated_at FROM user_runtime_state ORDER BY device_id,nickname,user_id`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,user_id,nickname,role,app_install_permission,app_access_no_limit,allowed_app_ids_json,online,active_devices,total_devices,first_observed_at,updated_at FROM user_runtime_state ORDER BY device_id,nickname,user_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +196,7 @@ func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
 	// Do not issue child queries while the parent rows are open. With the
 	// intentionally small SQLite pool, two concurrent callers could otherwise
 	// each hold one connection and wait forever for the other connection.
-	drows, err := s.db.QueryContext(ctx, `SELECT device_id,user_id,end_device_id,name,model,remark_name,device_api_url,is_mobile,is_tv,lang,time_zone,is_wifi,online,binding_time,login_time
+	drows, err := s.reader().QueryContext(ctx, `SELECT device_id,user_id,end_device_id,name,model,remark_name,device_api_url,is_mobile,is_tv,lang,time_zone,is_wifi,online,binding_time,login_time
 		FROM user_device_state ORDER BY device_id,user_id,online DESC,name`)
 	if err != nil {
 		return nil, err
@@ -229,7 +229,7 @@ func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
 }
 
 func (s *Store) ListUserLoginSessions(ctx context.Context, since time.Time) ([]UserLoginSession, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,user_id,end_device_id,login_at,logout_at FROM user_login_sessions WHERE login_at>=? OR logout_at IS NULL ORDER BY login_at DESC`, since.UTC().Format(time.RFC3339Nano))
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,user_id,end_device_id,login_at,logout_at FROM user_login_sessions WHERE login_at>=? OR logout_at IS NULL ORDER BY login_at DESC`, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}

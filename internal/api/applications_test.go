@@ -175,10 +175,32 @@ func TestApplicationsUsePackageManagerAndPersistSnapshot(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/applications", nil)
 	request.Header.Set("X-Hc-User-Id", "user-1")
 	recorder := httptest.NewRecorder()
+	startedAt := time.Now()
 	server.Handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+	if elapsed := time.Since(startedAt); elapsed > 250*time.Millisecond {
+		t.Fatalf("initial application view blocked on runtime synchronization for %s", elapsed)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		states, listErr := st.ListRuntimeApplications(context.Background())
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(states) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("runtime snapshot was not persisted: %+v", states)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/applications", nil)
+	request.Header.Set("X-Hc-User-Id", "user-1")
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
 	var response struct {
 		Count int `json:"count"`
 		Items []struct {
@@ -201,16 +223,23 @@ func TestApplicationsUsePackageManagerAndPersistSnapshot(t *testing.T) {
 	if len(states) != 2 {
 		t.Fatalf("persisted states=%+v", states)
 	}
-	capabilities, err := st.ListCapabilityStatuses(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, capability := range capabilities {
-		found = found || capability.Capability == "lpk.runtime" && capability.Status == "available"
-	}
-	if !found {
-		t.Fatalf("runtime capability not available: %+v", capabilities)
+	var capabilities []store.CapabilityStatus
+	for {
+		capabilities, err = st.ListCapabilityStatuses(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, capability := range capabilities {
+			found = found || capability.Capability == "lpk.runtime" && capability.Status == "available"
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("runtime capability not available: %+v", capabilities)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

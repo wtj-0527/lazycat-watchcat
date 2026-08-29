@@ -68,7 +68,7 @@ func (s *Store) ReplaceRuntimeApplications(ctx context.Context, deviceID string,
 }
 
 func (s *Store) ListRuntimeApplications(ctx context.Context) ([]RuntimeApplication, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,deploy_id,app_id,title,version,install_status,instance_status,domain,builtin,user_id,user_name,updated_at
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,deploy_id,app_id,title,version,install_status,instance_status,domain,builtin,user_id,user_name,updated_at
 		FROM application_runtime_state ORDER BY title,app_id,deploy_id`)
 	if err != nil {
 		return nil, err

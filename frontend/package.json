@@ -1,7 +1,7 @@
 {
   "name": "lazycat-watchcat-web",
   "private": true,
-  "version": "1.4.37",
+  "version": "1.4.39",
   "type": "module",
   "scripts": {
     "dev": "vite",

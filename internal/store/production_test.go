@@ -140,7 +140,18 @@ func TestReadPoolRemainsAvailableWhenWriterPoolIsOccupied(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	if _, err = st.EnsureLocalDevice(ctx, "node", "node", "linux/amd64", "1.0.0", nil); err != nil {
+	deviceID, err := st.EnsureLocalDevice(ctx, "node", "node", "linux/amd64", "1.0.0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.ReplaceRuntimeApplications(ctx, deviceID, []RuntimeApplication{{
+		DeviceID: deviceID, DeployID: "app-1", AppID: "app.one", Title: "App One",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.ObserveRuntimeUsers(ctx, deviceID, []RuntimeUser{{
+		UserID: "user-1", Nickname: "User One",
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := st.db.Conn(ctx)
@@ -162,6 +173,18 @@ func TestReadPoolRemainsAvailableWhenWriterPoolIsOccupied(t *testing.T) {
 	}
 	if len(devices) != 1 || devices[0].Name != "node" {
 		t.Fatalf("devices=%+v", devices)
+	}
+	applications, err := st.ListRuntimeApplications(readCtx)
+	if err != nil || len(applications) != 1 {
+		t.Fatalf("runtime applications blocked by occupied writer pool: items=%+v err=%v", applications, err)
+	}
+	users, err := st.ListRuntimeUsers(readCtx)
+	if err != nil || len(users) != 1 {
+		t.Fatalf("runtime users blocked by occupied writer pool: items=%+v err=%v", users, err)
+	}
+	sessions, err := st.ListUserLoginSessions(readCtx, time.Now().Add(-24*time.Hour))
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("user sessions blocked by occupied writer pool: items=%+v err=%v", sessions, err)
 	}
 }
 

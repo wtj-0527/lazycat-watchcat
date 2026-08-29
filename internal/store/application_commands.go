@@ -137,7 +137,7 @@ func (s *Store) ApplicationCommandByID(ctx context.Context, id string) (Applicat
 	var command ApplicationCommand
 	var autostart sql.NullInt64
 	var requested, started, completed sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id,device_id,deploy_id,app_id,user_id,action,autostart,status,error,observed_status,requested_at,started_at,completed_at
+	err := s.reader().QueryRowContext(ctx, `SELECT id,device_id,deploy_id,app_id,user_id,action,autostart,status,error,observed_status,requested_at,started_at,completed_at
 		FROM application_commands WHERE id=?`, id).Scan(
 		&command.ID, &command.DeviceID, &command.DeployID, &command.AppID, &command.UserID, &command.Action,
 		&autostart, &command.Status, &command.Error, &command.ObservedStatus, &requested, &started, &completed)
@@ -159,7 +159,7 @@ func (s *Store) SetApplicationAutostart(ctx context.Context, deviceID, deployID 
 }
 
 func (s *Store) ApplicationAutostartMap(ctx context.Context) (map[string]*bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,deploy_id,autostart FROM application_instance_preferences`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,deploy_id,autostart FROM application_instance_preferences`)
 	if err != nil {
 		return nil, err
 	}

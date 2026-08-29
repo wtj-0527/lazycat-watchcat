@@ -152,7 +152,7 @@ type MaintenanceWindow struct {
 }
 
 func (s *Store) ListMaintenanceWindows(ctx context.Context) ([]MaintenanceWindow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,starts_at,ends_at,enabled,created_at,updated_at FROM maintenance_windows ORDER BY starts_at DESC`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT id,name,starts_at,ends_at,enabled,created_at,updated_at FROM maintenance_windows ORDER BY starts_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (s *Store) DeleteMaintenanceWindow(ctx context.Context, id string) error {
 
 func (s *Store) InMaintenance(ctx context.Context, now time.Time) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM maintenance_windows WHERE enabled=1 AND starts_at<=? AND ends_at>?`,
+	err := s.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM maintenance_windows WHERE enabled=1 AND starts_at<=? AND ends_at>?`,
 		now.UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano)).Scan(&count)
 	return count > 0, err
 }
@@ -245,7 +245,7 @@ func (s *Store) ListDeviceEvents(ctx context.Context, deviceID string, limit int
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.reader().QueryContext(ctx, `
 		SELECT id,type,title,detail,created_at FROM (
 			SELECT 'audit-'||id AS id,'audit' AS type,action AS title,metadata_json AS detail,created_at
 			FROM audit_log WHERE subject_type='device' AND subject_id=?
@@ -277,7 +277,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditEntry, error) 
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,action,subject_type,subject_id,metadata_json,created_at FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.reader().QueryContext(ctx, `SELECT id,action,subject_type,subject_id,metadata_json,created_at FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -56,7 +56,7 @@ func (s *Store) ListInspections(ctx context.Context, limit int) ([]Inspection, e
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,status,trigger_type,started_at,completed_at,device_count,healthy_count,warning_count,critical_count,evidence_sha256,error,change_summary_json FROM inspections ORDER BY started_at DESC LIMIT ?`, limit)
+	rows, err := s.reader().QueryContext(ctx, `SELECT id,status,trigger_type,started_at,completed_at,device_count,healthy_count,warning_count,critical_count,evidence_sha256,error,change_summary_json FROM inspections ORDER BY started_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (s *Store) InspectionByID(ctx context.Context, id string) (Inspection, erro
 	var started string
 	var completed sql.NullString
 	var report, change string
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,trigger_type,started_at,completed_at,device_count,healthy_count,warning_count,critical_count,report_json,evidence_sha256,error,change_summary_json FROM inspections WHERE id=?`, id).
+	err := s.reader().QueryRowContext(ctx, `SELECT id,status,trigger_type,started_at,completed_at,device_count,healthy_count,warning_count,critical_count,report_json,evidence_sha256,error,change_summary_json FROM inspections WHERE id=?`, id).
 		Scan(&i.ID, &i.Status, &i.TriggerType, &started, &completed, &i.DeviceCount, &i.HealthyCount, &i.WarningCount, &i.CriticalCount, &report, &i.EvidenceSHA256, &i.Error, &change)
 	if err != nil {
 		return i, err
@@ -94,7 +94,7 @@ func (s *Store) InspectionByID(ctx context.Context, id string) (Inspection, erro
 
 func (s *Store) LatestInspection(ctx context.Context) (Inspection, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM inspections WHERE status='completed' ORDER BY started_at DESC LIMIT 1`).Scan(&id)
+	err := s.reader().QueryRowContext(ctx, `SELECT id FROM inspections WHERE status='completed' ORDER BY started_at DESC LIMIT 1`).Scan(&id)
 	if err != nil {
 		return Inspection{}, err
 	}

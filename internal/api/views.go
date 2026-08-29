@@ -189,28 +189,10 @@ func deviceMetricTimeRange(r *http.Request) (time.Time, time.Time, string, strin
 	return from, to, "", ""
 }
 func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
-	runtimeError := ""
-	if s.runtimeApps != nil && s.localDeviceID != "" {
-		uid := strings.TrimSpace(r.Header.Get("X-Hc-User-Id"))
-		// Keep GET polling read-only once the source is initialized. Runtime
-		// state is refreshed by the background synchronizer and explicitly
-		// after application control operations.
-		if (s.runtimeApps.LastUID() == "" || s.runtimeApps.LastUID() != uid) && uid != "" {
-			if _, err := s.SyncRuntimeApplications(r.Context(), uid); err != nil {
-				runtimeError = err.Error()
-			}
-		}
-		if s.runtimeApps.LastUID() == "" && uid == "" {
-			runtimeError = "LazyCat user identity is missing"
-		}
-	}
+	s.scheduleRuntimeApplicationsRefresh(r.Header.Get("X-Hc-User-Id"))
 	states, err := s.store.ListRuntimeApplications(r.Context())
 	if err != nil {
 		problem(w, 500, "internal_error", "无法读取应用状态")
-		return
-	}
-	if len(states) == 0 && runtimeError != "" {
-		problem(w, http.StatusServiceUnavailable, "runtime_unavailable", "无法读取 LazyCat Package Manager："+runtimeError)
 		return
 	}
 	devices, err := s.store.ListDevices(r.Context())
@@ -307,7 +289,7 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		userList = append(userList, map[string]string{"id": id, "name": name})
 	}
 	sort.Slice(userList, func(i, j int) bool { return userList[i]["name"] < userList[j]["name"] })
-	writeJSON(w, 200, map[string]any{"items": out, "users": userList, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": runtimeError != ""})
+	writeJSON(w, 200, map[string]any{"items": out, "users": userList, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": s.runtimeApps != nil && s.runtimeApps.LastUID() == ""})
 }
 
 func localizedAppTitle(appID, fallback string) string {
