@@ -188,17 +188,37 @@ func (s *Store) SampledMetricHistory(ctx context.Context, deviceID, name string,
 		return nil, err
 	}
 	defer stmt.Close()
-
-	step := until.Sub(since) / time.Duration(points)
-	if step <= 0 {
-		step = time.Second
+	firstStmt, err := conn.PrepareContext(ctx, `SELECT collected_at
+		FROM metrics INDEXED BY idx_metrics_device_name_time
+		WHERE device_id=? AND name=? AND labels_json=? AND collected_at>=? AND collected_at<=?
+		ORDER BY collected_at ASC LIMIT 1`)
+	if err != nil {
+		return nil, err
 	}
-	fromText := since.UTC().Format(time.RFC3339Nano)
+	defer firstStmt.Close()
+
 	seen := make(map[string]struct{}, len(labelSets)*points)
 	out := make([]MetricSample, 0, len(labelSets)*points)
 	for _, labelSet := range labelSets {
+		var firstText string
+		err := firstStmt.QueryRowContext(ctx, deviceID, name, labelSet, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano)).Scan(&firstText)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		effectiveFrom, err := time.Parse(time.RFC3339Nano, firstText)
+		if err != nil || effectiveFrom.Before(since) {
+			effectiveFrom = since
+		}
+		step := until.Sub(effectiveFrom) / time.Duration(points)
+		if step <= 0 {
+			step = time.Second
+		}
+		fromText := effectiveFrom.UTC().Format(time.RFC3339Nano)
 		for bucket := 1; bucket <= points; bucket++ {
-			bucketEnd := since.Add(time.Duration(bucket) * step)
+			bucketEnd := effectiveFrom.Add(time.Duration(bucket) * step)
 			if bucket == points || bucketEnd.After(until) {
 				bucketEnd = until
 			}

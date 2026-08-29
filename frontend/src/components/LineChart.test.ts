@@ -48,4 +48,24 @@ describe('LineChart', () => {
     await wrapper.get('.chart-line-hit').trigger('click')
     expect(onSeriesSelect).toHaveBeenCalledWith('instance-1')
   })
+
+  it('positions timestamped points on a continuous time axis instead of equal index spacing', () => {
+    const wrapper = mount(LineChart, {
+      props: {
+        series: [{
+          name: 'Busy',
+          color: '#2563eb',
+          points: [
+            { value: 10, timestamp: 0, label: '00:00' },
+            { value: 20, timestamp: 60 * 60 * 1000, label: '01:00' },
+            { value: 30, timestamp: 10 * 60 * 60 * 1000, label: '10:00' },
+          ],
+        }],
+      },
+    })
+
+    expect(wrapper.get('.chart-line').attributes('d')).toContain('M 42.0')
+    expect(wrapper.get('.chart-line').attributes('d')).toContain('L 126.0')
+    expect(wrapper.get('.chart-line').attributes('d')).toContain('L 882.0')
+  })
 })

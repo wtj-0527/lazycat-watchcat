@@ -284,7 +284,7 @@ function historyRange() {
     : `hours=${historyHours.value}`
 }
 function chartPoint(item: Metric) {
-  return { value: item.value, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt) }
+  return { value: item.value, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt), timestamp: metricTime(item) }
 }
 function counterRates(items: Metric[], deviceId: string, device: string) {
   const points = items.filter((item) =>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-export interface ChartPoint { value: number; label?: string; at?: string }
+export interface ChartPoint { value: number; label?: string; at?: string; timestamp?: number }
 export interface ChartSeries { id?: string; name: string; color: string; points: ChartPoint[] }
 const props = withDefaults(defineProps<{ series: ChartSeries[]; min?: number; max?: number; unit?: string; height?: number; showLegend?: boolean; selectable?: boolean }>(), {
   min: 0, unit: '', height: 220, showLegend: true, selectable: false,
@@ -16,13 +16,37 @@ const normalizedSeries = computed(() => props.series.map((item) => {
   return { ...item, points: Array.from({ length: 120 }, (_, index) => item.points[Math.round(index * step)]) }
 }))
 const all = computed(() => normalizedSeries.value.flatMap((item) => item.points).filter((point) => Number.isFinite(point.value)))
+const temporalPoints = computed(() => all.value.filter((point) => Number.isFinite(point.timestamp)))
+const timeDomain = computed(() => {
+  if (!temporalPoints.value.length) return undefined
+  const values = temporalPoints.value.map((point) => Number(point.timestamp))
+  return { from: Math.min(...values), to: Math.max(...values) }
+})
 const upper = computed(() => props.max ?? Math.max(1, ...all.value.map((point) => point.value)))
 const lower = computed(() => props.min)
 function x(index: number, count: number) { return pad.left + (count <= 1 ? 0 : index / (count - 1) * (width - pad.left - pad.right)) }
+function pointX(point: ChartPoint, index: number, count: number) {
+  const domain = timeDomain.value
+  if (!domain || !Number.isFinite(point.timestamp) || domain.to <= domain.from) return x(index, count)
+  return pad.left + (Number(point.timestamp) - domain.from) / (domain.to - domain.from) * (width - pad.left - pad.right)
+}
 function y(value: number) { const range = Math.max(1, upper.value - lower.value); return pad.top + (upper.value - value) / range * (props.height - pad.top - pad.bottom) }
-function path(points: ChartPoint[]) { return points.map((point, index) => `${index ? 'L' : 'M'} ${x(index, points.length).toFixed(1)} ${y(point.value).toFixed(1)}`).join(' ') }
+function path(points: ChartPoint[]) { return points.map((point, index) => `${index ? 'L' : 'M'} ${pointX(point, index, points.length).toFixed(1)} ${y(point.value).toFixed(1)}`).join(' ') }
 const ticks = computed(() => [upper.value, upper.value * .75 + lower.value * .25, (upper.value + lower.value) / 2, upper.value * .25 + lower.value * .75, lower.value])
 const axisLabels = computed(() => {
+  const domain = timeDomain.value
+  if (domain && temporalPoints.value.length) {
+    const ordered = [...temporalPoints.value].sort((left, right) => Number(left.timestamp) - Number(right.timestamp))
+    const targets = [domain.from, domain.from + (domain.to - domain.from) / 2, domain.to]
+    return targets.map((target) => {
+      const point = ordered.reduce((best, current) =>
+        Math.abs(Number(current.timestamp) - target) < Math.abs(Number(best.timestamp) - target) ? current : best)
+      return {
+        x: pad.left + (target - domain.from) / Math.max(1, domain.to - domain.from) * (width - pad.left - pad.right),
+        label: point.label || point.at || '',
+      }
+    })
+  }
   const longest = normalizedSeries.value.reduce<ChartPoint[]>((best, item) => item.points.length > best.length ? item.points : best, [])
   if (!longest.length) return []
   const indexes = [...new Set([0, Math.floor((longest.length - 1) / 2), longest.length - 1])]
@@ -31,6 +55,14 @@ const axisLabels = computed(() => {
 const hoverItems = computed(() => {
   if (!hover.value) return []
   return normalizedSeries.value.filter((item) => item.points.length).map((item) => {
+    const domain = timeDomain.value
+    if (domain && item.points.some((point) => Number.isFinite(point.timestamp))) {
+      const target = domain.from + hover.value!.ratio * (domain.to - domain.from)
+      const candidates = item.points.filter((point) => Number.isFinite(point.timestamp))
+      const point = candidates.reduce((best, current) =>
+        Math.abs(Number(current.timestamp) - target) < Math.abs(Number(best.timestamp) - target) ? current : best)
+      return { ...item, point, index: item.points.indexOf(point) }
+    }
     const index = Math.round(hover.value!.ratio * (item.points.length - 1))
     return { ...item, point: item.points[index], index }
   })
@@ -75,11 +107,11 @@ function selectSeries(item: ChartSeries) {
       <g v-for="item in normalizedSeries" :key="item.name" :class="{ 'selectable-series': selectable }" @click="selectSeries(item)">
         <path v-if="selectable" class="chart-line-hit" :d="path(item.points)" />
         <path class="chart-line" :d="path(item.points)" :stroke="item.color" />
-        <circle v-for="(point, index) in item.points" :key="index" :cx="x(index, item.points.length)" :cy="y(point.value)" r="3" :fill="item.color" :class="{ selectable }" />
+        <circle v-for="(point, index) in item.points" :key="index" :cx="pointX(point, index, item.points.length)" :cy="y(point.value)" r="3" :fill="item.color" :class="{ selectable }" />
       </g>
       <g v-if="hover" class="chart-hover-layer">
         <line :x1="hoverX" :x2="hoverX" :y1="pad.top" :y2="height - pad.bottom" />
-        <circle v-for="item in hoverItems" :key="item.name" :cx="x(item.index, item.points.length)" :cy="y(item.point.value)" r="5" :fill="item.color" />
+        <circle v-for="item in hoverItems" :key="item.name" :cx="pointX(item.point, item.index, item.points.length)" :cy="y(item.point.value)" r="5" :fill="item.color" />
       </g>
       <text v-for="item in axisLabels" :key="item.x" class="chart-axis-label" :x="item.x" :y="height - 7" text-anchor="middle">{{ item.label }}</text>
     </svg>
