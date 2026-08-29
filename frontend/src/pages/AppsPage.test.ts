@@ -296,7 +296,7 @@ describe('AppsPage', () => {
     wrapper.unmount()
   })
 
-  it('distinguishes real app access from legacy deployment ownership', async () => {
+  it('hides deployment ownership records that are not granted by app access policy', async () => {
     apiMock.mockImplementation(async (path: string) => {
       if (path.includes('/metrics')) return {
         appId: 'allowed', from: '2026-08-28T00:00:00Z', to: '2026-08-29T00:00:00Z',
@@ -326,9 +326,10 @@ describe('AppsPage', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('该用户的部署实例')
-    expect(wrapper.text()).toContain('无权限遗留')
-    expect(wrapper.text()).toContain('有权访问')
-    expect(wrapper.text()).toContain('不代表用户仍可打开该应用')
+    expect(wrapper.findAll('.app-resource-item')).toHaveLength(1)
+    expect(wrapper.text()).toContain('已授权应用')
+    expect(wrapper.text()).not.toContain('遗留应用')
+    expect(wrapper.text()).toContain('仅展示管理员授权')
     wrapper.unmount()
   })
 

@@ -955,13 +955,6 @@ body { font-size: 12px; }
 .app-resource-name > i.critical { background: var(--critical); }
 .app-resource-name b,.app-resource-name small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
 .app-resource-name small,.app-resource-item>small { color:var(--muted);font-size:10px }
-.app-resource-identity { display:flex;min-width:0;align-items:center;gap:6px }
-.app-resource-identity small { min-width:0;flex:1 }
-.app-resource-identity em { flex:none;padding:2px 6px;border-radius:999px;font-size:9px;font-style:normal;font-weight:750;line-height:1.35 }
-.app-resource-identity .access-granted { background:var(--healthy-soft);color:var(--healthy) }
-.app-resource-identity .access-denied { background:var(--warning-soft);color:var(--warning) }
-.app-resource-identity .access-mixed { background:var(--critical-soft);color:var(--critical) }
-.app-resource-identity .access-unknown { background:var(--unknown-soft);color:var(--unknown) }
 .instance-scope-note { margin:0 0 9px;padding:8px 10px;border-radius:9px;background:var(--unknown-soft);color:var(--muted);font-size:10px;line-height:1.55 }
 .app-resource-now { min-width: 72px; text-align: right; }
 .app-resource-now b { color: var(--secondary); }
