@@ -26,6 +26,8 @@ const defaultDockerSocket = "/lzcapp/run/lzc-docker/docker.sock"
 const defaultDockerStatsBatchSize = 8
 const defaultDockerStatsConcurrency = 2
 const smartHelperLabel = "community.lazycat.app.watchcat.smart-helper"
+const helperRoleLabel = "community.lazycat.app.watchcat.helper-role"
+const processHelperRole = "process-snapshot"
 
 var smartBlockDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 var dockerImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
@@ -44,6 +46,8 @@ type DockerCollector struct {
 	processPrevious  map[string]processCounter
 	processSampleAt  time.Time
 	processHistory   int
+	processHelperMu  sync.Mutex
+	processHelperID  string
 }
 
 type processCounter struct {
@@ -65,6 +69,9 @@ type dockerContainer struct {
 
 type dockerContainerInspect struct {
 	Image string `json:"Image"`
+	State struct {
+		Running bool `json:"Running"`
+	} `json:"State"`
 }
 
 type dockerImage struct {
@@ -136,6 +143,27 @@ type dockerWaitResponse struct {
 	Error      *struct {
 		Message string `json:"Message"`
 	} `json:"Error"`
+}
+
+type dockerExecCreateResponse struct {
+	ID string `json:"Id"`
+}
+
+type dockerExecInspectResponse struct {
+	Running  bool `json:"Running"`
+	ExitCode int  `json:"ExitCode"`
+}
+
+type dockerExecConfig struct {
+	AttachStdout bool     `json:"AttachStdout"`
+	AttachStderr bool     `json:"AttachStderr"`
+	Tty          bool     `json:"Tty"`
+	Cmd          []string `json:"Cmd"`
+}
+
+type dockerExecStartConfig struct {
+	Detach bool `json:"Detach"`
+	Tty    bool `json:"Tty"`
 }
 
 type dockerDeviceMapping struct {
@@ -511,11 +539,7 @@ func (d *DockerCollector) CollectProcesses(ctx context.Context, now time.Time) (
 	if err != nil {
 		return nil, err
 	}
-	cfg := newDockerHelperConfig(image, []string{"/usr/local/bin/watchcat"}, []string{"process-snapshot"})
-	cfg.HostConfig.Binds = []string{"/proc:/host-proc:ro", "/etc/passwd:/host-passwd:ro"}
-	cfg.HostConfig.PidsLimit = 64
-	cfg.HostConfig.Memory = 96 << 20
-	raw, code, err := d.runHelper(ctx, cfg)
+	raw, code, err := d.runProcessSnapshot(ctx, image)
 	if err != nil {
 		return nil, err
 	}
@@ -572,6 +596,101 @@ func (d *DockerCollector) CollectProcesses(ctx context.Context, now time.Time) (
 	})
 	markProcessHistory(out, d.processHistory)
 	return out, nil
+}
+
+func (d *DockerCollector) runProcessSnapshot(ctx context.Context, image string) ([]byte, int, error) {
+	d.processHelperMu.Lock()
+	defer d.processHelperMu.Unlock()
+
+	helperID, err := d.ensureProcessHelper(ctx, image)
+	if err != nil {
+		return nil, -1, err
+	}
+	createRaw, err := d.doJSON(ctx, http.MethodPost, "/containers/"+url.PathEscape(helperID)+"/exec", dockerExecConfig{
+		AttachStdout: true, AttachStderr: true, Tty: true,
+		Cmd: []string{"/usr/local/bin/watchcat", "process-snapshot"},
+	}, http.StatusCreated)
+	if err != nil {
+		d.processHelperID = ""
+		return nil, -1, err
+	}
+	var created dockerExecCreateResponse
+	if err := json.Unmarshal(createRaw, &created); err != nil || created.ID == "" {
+		d.processHelperID = ""
+		if err == nil {
+			err = errors.New("empty exec ID")
+		}
+		return nil, -1, fmt.Errorf("decode process helper exec: %w", err)
+	}
+	output, err := d.doJSON(ctx, http.MethodPost, "/exec/"+url.PathEscape(created.ID)+"/start", dockerExecStartConfig{
+		Detach: false, Tty: true,
+	}, http.StatusOK)
+	if err != nil {
+		d.processHelperID = ""
+		return nil, -1, err
+	}
+	var inspected dockerExecInspectResponse
+	if err := d.getJSON(ctx, "/exec/"+url.PathEscape(created.ID)+"/json", &inspected); err != nil {
+		return nil, -1, err
+	}
+	if inspected.Running {
+		return nil, -1, errors.New("process helper exec did not finish")
+	}
+	return output, inspected.ExitCode, nil
+}
+
+func (d *DockerCollector) ensureProcessHelper(ctx context.Context, image string) (string, error) {
+	if d.processHelperID != "" {
+		var inspected dockerContainerInspect
+		if err := d.getJSON(ctx, "/containers/"+url.PathEscape(d.processHelperID)+"/json", &inspected); err == nil &&
+			inspected.State.Running && inspected.Image == image {
+			return d.processHelperID, nil
+		}
+		d.processHelperID = ""
+	}
+
+	var containers []dockerContainer
+	if err := d.getJSON(ctx, "/containers/json?all=1", &containers); err != nil {
+		return "", err
+	}
+	for _, item := range containers {
+		if item.Labels[smartHelperLabel] != "true" || item.Labels[helperRoleLabel] != processHelperRole {
+			continue
+		}
+		if item.State == "running" && (item.ImageID == image || item.Image == image) {
+			d.processHelperID = item.ID
+			return item.ID, nil
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		_, _ = d.doJSON(cleanupCtx, http.MethodDelete, "/containers/"+url.PathEscape(item.ID)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
+		cancel()
+	}
+
+	cfg := newDockerHelperConfig(image, []string{"/bin/sh"}, []string{"-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done"})
+	cfg.AttachStdout, cfg.AttachStderr, cfg.Tty = false, false, false
+	cfg.Labels[helperRoleLabel] = processHelperRole
+	cfg.HostConfig.Binds = []string{"/proc:/host-proc:ro", "/etc/passwd:/host-passwd:ro"}
+	cfg.HostConfig.PidsLimit = 64
+	cfg.HostConfig.Memory = 96 << 20
+	raw, err := d.doJSON(ctx, http.MethodPost, "/containers/create", cfg, http.StatusCreated)
+	if err != nil {
+		return "", err
+	}
+	var created dockerCreateResponse
+	if err := json.Unmarshal(raw, &created); err != nil || created.ID == "" {
+		if err == nil {
+			err = errors.New("empty container ID")
+		}
+		return "", fmt.Errorf("decode persistent process helper: %w", err)
+	}
+	if _, err := d.doJSON(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start", nil, http.StatusNoContent); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		_, _ = d.doJSON(cleanupCtx, http.MethodDelete, "/containers/"+url.PathEscape(created.ID)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
+		cancel()
+		return "", err
+	}
+	d.processHelperID = created.ID
+	return created.ID, nil
 }
 
 func markProcessHistory(items []protocol.ProcessSample, limit int) {

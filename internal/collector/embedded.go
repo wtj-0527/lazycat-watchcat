@@ -169,7 +169,7 @@ func (e *Embedded) collectRuntime(ctx context.Context) {
 		if dockerErr != nil {
 			e.logger.Warn("embedded collector container metrics", "error", dockerErr)
 		}
-		processCtx, processCancel := context.WithTimeout(ctx, 20*time.Second)
+		processCtx, processCancel := context.WithTimeout(ctx, 45*time.Second)
 		processes, processErr := e.docker.CollectProcesses(processCtx, now)
 		processCancel()
 		if processErr != nil {
@@ -239,7 +239,7 @@ func (e *Embedded) collectAdvanced(ctx context.Context) {
 			evidence.dockerRestricted = permissionDenied(dockerErr)
 			warnings = append(warnings, "docker runtime: "+dockerErr.Error())
 		}
-		processCtx, processCancel := context.WithTimeout(ctx, 20*time.Second)
+		processCtx, processCancel := context.WithTimeout(ctx, 45*time.Second)
 		_, processErr := e.docker.CollectProcesses(processCtx, now)
 		processCancel()
 		if processErr != nil {
