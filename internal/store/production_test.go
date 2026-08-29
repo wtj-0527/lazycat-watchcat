@@ -133,6 +133,38 @@ func TestInspectionEvidenceAndRetentionRollupAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestReadPoolRemainsAvailableWhenWriterPoolIsOccupied(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "read-pool.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if _, err = st.EnsureLocalDevice(ctx, "node", "node", "linux/amd64", "1.0.0", nil); err != nil {
+		t.Fatal(err)
+	}
+	first, err := st.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := st.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	devices, err := st.ListDevices(readCtx)
+	if err != nil {
+		t.Fatalf("read blocked by occupied writer pool: %v", err)
+	}
+	if len(devices) != 1 || devices[0].Name != "node" {
+		t.Fatalf("devices=%+v", devices)
+	}
+}
+
 func TestLatestMetricsProjectionAvoidsHistoricalScanAndRejectsOlderSamples(t *testing.T) {
 	ctx := context.Background()
 	st, paired := testStoreDevice(t)

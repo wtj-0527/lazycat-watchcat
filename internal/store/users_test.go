@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -57,5 +58,51 @@ func TestObserveRuntimeUsersCreatesAndClosesLoginSession(t *testing.T) {
 	}
 	if len(sessions) != 1 || sessions[0].LogoutAt == nil {
 		t.Fatalf("sessions=%+v", sessions)
+	}
+}
+
+func TestListRuntimeUsersSupportsConcurrentReaders(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "users-concurrent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	deviceID, err := st.EnsureLocalDevice(ctx, "node", "node", "linux/amd64", "1.1.0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := make([]RuntimeUser, 20)
+	for index := range users {
+		users[index] = RuntimeUser{
+			UserID: "user-" + string(rune('a'+index)), Nickname: "User",
+			Devices: []RuntimeUserDevice{{ID: "client", Name: "Client", Online: true}},
+		}
+	}
+	if err = st.ObserveRuntimeUsers(ctx, deviceID, users); err != nil {
+		t.Fatal(err)
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	errors := make(chan error, 8)
+	for index := 0; index < cap(errors); index++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			items, readErr := st.ListRuntimeUsers(readCtx)
+			if readErr == nil && len(items) != len(users) {
+				readErr = context.Canceled
+			}
+			errors <- readErr
+		}()
+	}
+	wg.Wait()
+	close(errors)
+	for readErr := range errors {
+		if readErr != nil {
+			t.Fatalf("concurrent ListRuntimeUsers failed: %v", readErr)
+		}
 	}
 }

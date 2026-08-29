@@ -162,7 +162,7 @@ func (s *Store) ListAlerts(ctx context.Context, includeResolved bool) ([]Alert, 
 		query += ` WHERE status!='resolved'`
 	}
 	query += ` ORDER BY CASE severity WHEN 'critical' THEN 0 ELSE 1 END,last_seen_at DESC`
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.reader().QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

@@ -89,7 +89,7 @@ func (s *Store) SetCapabilityStatuses(ctx context.Context, deviceID string, item
 }
 
 func (s *Store) ListCapabilityStatuses(ctx context.Context) ([]CapabilityStatus, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,capability,status,detail,checked_at FROM collector_capabilities ORDER BY device_id,capability`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,capability,status,detail,checked_at FROM collector_capabilities ORDER BY device_id,capability`)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (s *Store) SetSystemState(ctx context.Context, name string, value any) erro
 
 func (s *Store) GetSystemState(ctx context.Context, name string, dest any) (bool, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM system_state WHERE name=?`, name).Scan(&raw)
+	err := s.reader().QueryRowContext(ctx, `SELECT value FROM system_state WHERE name=?`, name).Scan(&raw)
 	if IsNotFound(err) {
 		return false, nil
 	}
@@ -137,7 +137,7 @@ type SystemStateItem struct {
 }
 
 func (s *Store) ListSystemStates(ctx context.Context) ([]SystemStateItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name,value,updated_at FROM system_state ORDER BY name`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT name,value,updated_at FROM system_state ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

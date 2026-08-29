@@ -166,13 +166,14 @@ func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []RuntimeUser
+	indexes := map[string]int{}
 	for rows.Next() {
 		var u RuntimeUser
 		var install, noLimit, online int
 		var allowed, first, updated string
 		if err = rows.Scan(&u.DeviceID, &u.UserID, &u.Nickname, &u.Role, &install, &noLimit, &allowed, &online, &u.ActiveDevices, &u.TotalDevices, &first, &updated); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		u.AppInstallPermission = install != 0
@@ -181,33 +182,50 @@ func (s *Store) ListRuntimeUsers(ctx context.Context) ([]RuntimeUser, error) {
 		u.Online = online != 0
 		u.FirstObservedAt = parseTime(first)
 		u.UpdatedAt = parseTime(updated)
-		drows, qerr := s.db.QueryContext(ctx, `SELECT end_device_id,name,model,remark_name,device_api_url,is_mobile,is_tv,lang,time_zone,is_wifi,online,binding_time,login_time FROM user_device_state WHERE device_id=? AND user_id=? ORDER BY online DESC,name`, u.DeviceID, u.UserID)
-		if qerr != nil {
-			return nil, qerr
-		}
-		for drows.Next() {
-			var d RuntimeUserDevice
-			var mobile, tv, wifi, on int
-			var binding, login string
-			if qerr = drows.Scan(&d.ID, &d.Name, &d.Model, &d.RemarkName, &d.DeviceAPIURL, &mobile, &tv, &d.Lang, &d.TimeZone, &wifi, &on, &binding, &login); qerr != nil {
-				drows.Close()
-				return nil, qerr
-			}
-			d.IsMobile = mobile != 0
-			d.IsTV = tv != 0
-			if wifi >= 0 {
-				value := wifi != 0
-				d.IsWifi = &value
-			}
-			d.Online = on != 0
-			d.BindingTime = parseTime(binding)
-			d.LoginTime = parseTime(login)
-			u.Devices = append(u.Devices, d)
-		}
-		drows.Close()
+		indexes[u.DeviceID+"\x00"+u.UserID] = len(out)
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+
+	// Do not issue child queries while the parent rows are open. With the
+	// intentionally small SQLite pool, two concurrent callers could otherwise
+	// each hold one connection and wait forever for the other connection.
+	drows, err := s.db.QueryContext(ctx, `SELECT device_id,user_id,end_device_id,name,model,remark_name,device_api_url,is_mobile,is_tv,lang,time_zone,is_wifi,online,binding_time,login_time
+		FROM user_device_state ORDER BY device_id,user_id,online DESC,name`)
+	if err != nil {
+		return nil, err
+	}
+	defer drows.Close()
+	for drows.Next() {
+		var deviceID, userID string
+		var d RuntimeUserDevice
+		var mobile, tv, wifi, on int
+		var binding, login string
+		if err = drows.Scan(&deviceID, &userID, &d.ID, &d.Name, &d.Model, &d.RemarkName, &d.DeviceAPIURL, &mobile, &tv, &d.Lang, &d.TimeZone, &wifi, &on, &binding, &login); err != nil {
+			return nil, err
+		}
+		index, ok := indexes[deviceID+"\x00"+userID]
+		if !ok {
+			continue
+		}
+		d.IsMobile = mobile != 0
+		d.IsTV = tv != 0
+		if wifi >= 0 {
+			value := wifi != 0
+			d.IsWifi = &value
+		}
+		d.Online = on != 0
+		d.BindingTime = parseTime(binding)
+		d.LoginTime = parseTime(login)
+		out[index].Devices = append(out[index].Devices, d)
+	}
+	return out, drows.Err()
 }
 
 func (s *Store) ListUserLoginSessions(ctx context.Context, since time.Time) ([]UserLoginSession, error) {

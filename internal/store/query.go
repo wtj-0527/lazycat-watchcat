@@ -51,7 +51,7 @@ type ApplicationMetricSample struct {
 func (s *Store) DeviceByID(ctx context.Context, id string) (protocol.Device, error) {
 	var d protocol.Device
 	var caps, created, seen string
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,hostname,os_version,collector_version,capabilities_json,status,created_at,last_seen_at FROM devices WHERE id=?`, id).Scan(&d.ID, &d.Name, &d.Hostname, &d.OSVersion, &d.CollectorVer, &caps, &d.Status, &created, &seen)
+	err := s.reader().QueryRowContext(ctx, `SELECT id,name,hostname,os_version,collector_version,capabilities_json,status,created_at,last_seen_at FROM devices WHERE id=?`, id).Scan(&d.ID, &d.Name, &d.Hostname, &d.OSVersion, &d.CollectorVer, &caps, &d.Status, &created, &seen)
 	if err != nil {
 		return d, err
 	}
@@ -62,7 +62,7 @@ func (s *Store) DeviceByID(ctx context.Context, id string) (protocol.Device, err
 }
 
 func (s *Store) ListLatestMetrics(ctx context.Context) ([]LatestMetric, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,name,value,unit,labels_json,collected_at FROM latest_metrics ORDER BY device_id,name`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,name,value,unit,labels_json,collected_at FROM latest_metrics ORDER BY device_id,name`)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (s *Store) ListLatestMetrics(ctx context.Context) ([]LatestMetric, error) {
 }
 
 func (s *Store) LatestMetricsForDevice(ctx context.Context, deviceID string) ([]LatestMetric, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,name,value,unit,labels_json,collected_at FROM latest_metrics WHERE device_id=? ORDER BY name`, deviceID)
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,name,value,unit,labels_json,collected_at FROM latest_metrics WHERE device_id=? ORDER BY name`, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (s *Store) MetricHistoryRange(ctx context.Context, deviceID, name string, s
 	}
 	query += ` ORDER BY collected_at ASC LIMIT ?`
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func (s *Store) applicationDeviceIDs(ctx context.Context, appID string) ([]strin
 		query += ` WHERE app_id=?`
 		args = append(args, appID)
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func (s *Store) applicationMetricHistoryForDevices(ctx context.Context, deviceID
 		}
 		query += ` ORDER BY collected_at ASC LIMIT ?`
 		args = append(args, remaining)
-		rows, err := s.db.QueryContext(ctx, query, args...)
+		rows, err := s.reader().QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +245,7 @@ func (s *Store) applicationMetricHistoryForDevices(ctx context.Context, deviceID
 
 func (s *Store) LatestMetricTimestamp(ctx context.Context) (time.Time, error) {
 	var value sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(collected_at) FROM metrics`).Scan(&value); err != nil {
+	if err := s.reader().QueryRowContext(ctx, `SELECT MAX(collected_at) FROM metrics`).Scan(&value); err != nil {
 		return time.Time{}, err
 	}
 	if !value.Valid {
@@ -282,14 +282,14 @@ func (s *Store) LatestProcesses(ctx context.Context, deviceID string, options Pr
 		args = append(args, like, like, like, like)
 	}
 	var page ProcessPage
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),MAX(collected_at) FROM latest_processes WHERE `+where, args...).Scan(&page.Total, nullableTimeScanner{dest: &page.CollectedAt}); err != nil {
+	if err := s.reader().QueryRowContext(ctx, `SELECT COUNT(*),MAX(collected_at) FROM latest_processes WHERE `+where, args...).Scan(&page.Total, nullableTimeScanner{dest: &page.CollectedAt}); err != nil {
 		return page, err
 	}
 	query := `SELECT pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
 		read_bytes,write_bytes,read_rate,write_rate,threads,uptime_seconds,collected_at
 		FROM latest_processes WHERE ` + where + ` ORDER BY ` + column + ` ` + direction + `,pid ASC LIMIT ? OFFSET ?`
 	args = append(args, options.Limit, options.Offset)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return page, err
 	}
@@ -308,7 +308,7 @@ func (s *Store) ProcessHistory(ctx context.Context, deviceID string, pid int, st
 	if limit <= 0 || limit > 5000 {
 		limit = 2000
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
+	rows, err := s.reader().QueryContext(ctx, `SELECT pid,start_time,name,user_name,command,state,cgroup_path,cpu_percent,memory_rss_bytes,
 		read_bytes,write_bytes,read_rate,write_rate,threads,uptime_seconds,collected_at
 		FROM process_samples WHERE device_id=? AND pid=? AND start_time=? AND collected_at>=? AND collected_at<=?
 		ORDER BY collected_at ASC LIMIT ?`,

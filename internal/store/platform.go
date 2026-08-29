@@ -20,7 +20,7 @@ type DeviceMetadata struct {
 }
 
 func (s *Store) DeviceMetadataMap(ctx context.Context) (map[string]DeviceMetadata, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id,group_name,location,labels_json,updated_at FROM device_metadata`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT device_id,group_name,location,labels_json,updated_at FROM device_metadata`)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ type SavedView struct {
 }
 
 func (s *Store) ListSavedViews(ctx context.Context) ([]SavedView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,query_json,created_at,updated_at FROM saved_views ORDER BY name`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT id,name,query_json,created_at,updated_at FROM saved_views ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

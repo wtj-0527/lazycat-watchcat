@@ -22,7 +22,10 @@ import (
 
 var ErrInvalidPairingCode = errors.New("invalid or expired pairing code")
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db     *sql.DB
+	readDB *sql.DB
+}
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepathDir(path), 0o700); err != nil {
@@ -44,6 +47,17 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	readDB, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)&_pragma=foreign_keys(1)")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Keep API reads independent from collector writes. A slow process or
+	// metrics transaction must never consume every connection available to
+	// overview, device, storage, and alert endpoints.
+	readDB.SetMaxOpenConns(4)
+	readDB.SetMaxIdleConns(4)
+	s.readDB = readDB
 	return s, nil
 }
 
@@ -55,7 +69,20 @@ func filepathDir(path string) string {
 	return path[:i]
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) reader() *sql.DB {
+	if s.readDB != nil {
+		return s.readDB
+	}
+	return s.db
+}
+
+func (s *Store) Close() error {
+	var result error
+	if s.readDB != nil {
+		result = s.readDB.Close()
+	}
+	return errors.Join(result, s.db.Close())
+}
 
 func (s *Store) migrate(ctx context.Context) error {
 	stmts := []string{
@@ -441,7 +468,7 @@ func (s *Store) PairCollector(ctx context.Context, req protocol.PairCollectorReq
 }
 
 func (s *Store) ListDevices(ctx context.Context) ([]protocol.Device, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,hostname,os_version,collector_version,capabilities_json,status,created_at,last_seen_at FROM devices ORDER BY created_at DESC`)
+	rows, err := s.reader().QueryContext(ctx, `SELECT id,name,hostname,os_version,collector_version,capabilities_json,status,created_at,last_seen_at FROM devices ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
