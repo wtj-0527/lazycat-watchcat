@@ -302,12 +302,23 @@ describe('StoragePage', () => {
       })
       if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
       if (path === '/api/v1/devices/canway/io-sources?limit=12') return Promise.resolve({
-        deviceId: 'canway', collectedAt, processTotal: 128, limitations: [],
-        applications: [{
-          appId: 'community.lazycat.app.hermes-studio', appTitle: 'Hermes Studio',
-          deployId: 'community.lazycat.app.hermes-studio2', containers: ['hermes-web'],
-          processCount: 3, readRate: 2048, writeRate: 4096,
-        }],
+        deviceId: 'canway', collectedAt, processTotal: 128, applicationTotal: 2, limitations: [],
+        applications: [
+          {
+            appId: 'community.lazycat.app.hermes-studio', appTitle: 'Hermes Studio',
+            deployId: 'community.lazycat.app.hermes-studio2', userName: 'Mandy',
+            instanceStatus: 'running', containers: ['hermes-web'],
+            processCount: 3, activeProcessCount: 2, readRate: 2048, writeRate: 4096,
+            processes: [],
+          },
+          {
+            appId: 'cloud.lazycat.app.photo', appTitle: '懒猫相册',
+            deployId: 'cloud.lazycat.app.photo2', userName: 'Alice',
+            instanceStatus: 'paused', containers: [],
+            processCount: 0, activeProcessCount: 0, readRate: 0, writeRate: 0,
+            processes: [],
+          },
+        ],
         processes: [{
           pid: 4254, startTime: '100', name: 'rclone', user: 'root', state: 'R',
           cpuPercent: 10, memoryRssBytes: 1024, readBytes: 1, writeBytes: 2,
@@ -329,9 +340,14 @@ describe('StoragePage', () => {
     await flushPromises()
 
     expect(wrapper.get('.storage-io-attribution').text()).toContain('Hermes Studio')
+    expect(wrapper.get('.storage-io-attribution').text()).toContain('懒猫相册')
+    expect(wrapper.get('.storage-io-attribution').text()).toContain('2 个实例')
+    expect(wrapper.get('.storage-io-attribution').text()).toContain('当前空闲')
     expect(wrapper.get('.storage-io-attribution').text()).toContain('rclone')
     expect(wrapper.get('.storage-io-attribution').text()).toContain('9.0 KiB/s')
-    await wrapper.findAll('.storage-io-source-row')[1].trigger('click')
+    const processRow = wrapper.findAll('.storage-io-source-row').find((row) => row.text().includes('rclone'))
+    if (!processRow) throw new Error('rclone process row missing')
+    await processRow.trigger('click')
     await flushPromises()
     expect(wrapper.get('.storage-io-history').text()).toContain('rclone · PID 4254 · I/O 历史')
     expect(apiMock.mock.calls.some(([path]) => String(path).includes('/processes/4254/metrics?'))).toBe(true)

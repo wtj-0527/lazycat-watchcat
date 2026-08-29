@@ -37,15 +37,20 @@ interface IOApplicationSource {
   appTitle: string
   deployId?: string
   userId?: string
+  userName?: string
+  instanceStatus?: string
   containers: string[]
   processCount: number
+  activeProcessCount: number
   readRate: number
   writeRate: number
+  processes: IOProcessSource[]
 }
 interface IOSourcePayload {
   deviceId: string
   collectedAt: string
   processTotal: number
+  applicationTotal: number
   processes: IOProcessSource[]
   applications: IOApplicationSource[]
   limitations: string[]
@@ -73,6 +78,7 @@ const volumeHistory = ref<Record<string, ChartSeries[]>>({})
 const ioSources = ref<Record<string, IOSourcePayload>>({})
 const ioSourcesLoading = ref(false)
 const ioSourcesError = ref('')
+const ioApplicationPages = ref<Record<string, number>>({})
 const selectedIOSource = ref<SelectedIOSource>()
 const ioSourceHistory = ref<ChartSeries[]>([])
 const ioSourceHistoryLoading = ref(false)
@@ -346,9 +352,43 @@ function ioSourceDeviceName(deviceId: string) {
 function ioSourceRate(source: { readRate: number; writeRate: number }) {
   return Math.max(0, source.readRate || 0) + Math.max(0, source.writeRate || 0)
 }
-function ioSourceBarWidth(source: { readRate: number; writeRate: number }, items: Array<{ readRate: number; writeRate: number }>) {
+function ioSourceBarSegments(source: { readRate: number; writeRate: number }, items: Array<{ readRate: number; writeRate: number }>) {
+  const rate = ioSourceRate(source)
+  if (rate <= 0) return 0
   const maximum = Math.max(1, ...items.map(ioSourceRate))
-  return `${Math.max(2, ioSourceRate(source) / maximum * 100)}%`
+  return Math.max(1, Math.round(rate / maximum * 16))
+}
+function instanceStatusLabel(status?: string) {
+  const value = String(status || '').toLowerCase()
+  if (value.includes('pause') || value.includes('stop')) return '已暂停'
+  if (value.includes('start')) return '启动中'
+  if (value.includes('error') || value.includes('fail')) return '异常'
+  if (value.includes('run') || value.includes('active')) return '运行中'
+  return status || '状态未知'
+}
+function applicationInstanceMeta(application: IOApplicationSource) {
+  const identity = application.userName || application.userId || application.deployId || '系统实例'
+  const containers = `${application.containers.length} 个容器`
+  const processes = application.processCount
+    ? `${application.activeProcessCount}/${application.processCount} 个活跃 I/O 进程`
+    : '当前无可归因进程'
+  return `${identity} · ${containers} · ${processes}`
+}
+const ioApplicationPageSize = 10
+function ioApplicationPage(source: IOSourcePayload) {
+  const pages = Math.max(1, Math.ceil(source.applications.length / ioApplicationPageSize))
+  return Math.min(pages, Math.max(1, ioApplicationPages.value[source.deviceId] || 1))
+}
+function pagedIOApplications(source: IOSourcePayload) {
+  const page = ioApplicationPage(source)
+  return source.applications.slice((page - 1) * ioApplicationPageSize, page * ioApplicationPageSize)
+}
+function changeIOApplicationPage(source: IOSourcePayload, delta: number) {
+  const pages = Math.max(1, Math.ceil(source.applications.length / ioApplicationPageSize))
+  ioApplicationPages.value = {
+    ...ioApplicationPages.value,
+    [source.deviceId]: Math.min(pages, Math.max(1, ioApplicationPage(source) + delta)),
+  }
 }
 async function loadIOSources() {
   const deviceIDs = [...new Set([
@@ -634,21 +674,54 @@ async function runStorageCheck() {
             </div>
             <div class="storage-io-source-columns">
               <section class="storage-io-ranking">
-                <div class="storage-io-ranking-title"><h4>应用与容器</h4><span>{{ source.applications.length }} 项已归因</span></div>
-                <button
-                  v-for="application in source.applications"
-                  :key="`${application.appId}-${application.deployId || ''}-${application.userId || ''}`"
-                  type="button"
-                  class="storage-io-source-row"
-                  :class="{ active: selectedIOSource?.key === `application:${source.deviceId}:${application.appId}:${application.deployId || ''}:${application.userId || ''}` }"
-                  @click="selectApplicationIOSource(source.deviceId, application)"
-                >
-                  <span><b>{{ application.appTitle || application.appId }}</b><small>{{ application.containers.join('、') || application.deployId || application.appId }} · {{ application.processCount }} 个进程</small></span>
-                  <i><em :style="{ width: ioSourceBarWidth(application, source.applications) }"></em></i>
-                  <strong>{{ bytes(ioSourceRate(application)) }}/s</strong>
-                  <small class="storage-io-split">读 {{ bytes(application.readRate) }}/s · 写 {{ bytes(application.writeRate) }}/s</small>
-                </button>
-                <div v-if="!source.applications.length" class="storage-io-empty">当前活跃进程尚未匹配到应用容器。</div>
+                <div class="storage-io-ranking-title"><h4>应用实例汇总</h4><span>{{ source.applicationTotal ?? source.applications.length }} 个实例 · 活跃优先</span></div>
+                <div class="storage-io-application-list">
+                  <div
+                    v-for="application in pagedIOApplications(source)"
+                    :key="`${application.appId}-${application.deployId || ''}-${application.userId || ''}`"
+                    class="storage-io-application-entry"
+                  >
+                    <button
+                      type="button"
+                      class="storage-io-source-row storage-io-application-row"
+                      :class="{ active: selectedIOSource?.key === `application:${source.deviceId}:${application.appId}:${application.deployId || ''}:${application.userId || ''}`, idle: ioSourceRate(application) <= 0 }"
+                      @click="selectApplicationIOSource(source.deviceId, application)"
+                    >
+                      <span>
+                        <b>{{ application.appTitle || application.appId }} <small class="storage-instance-state">{{ instanceStatusLabel(application.instanceStatus) }}</small></b>
+                        <small>{{ applicationInstanceMeta(application) }}</small>
+                      </span>
+                      <span class="storage-io-segments" aria-hidden="true">
+                        <i v-for="segment in 16" :key="segment" :class="{ filled: segment <= ioSourceBarSegments(application, source.applications) }"></i>
+                      </span>
+                      <strong>{{ ioSourceRate(application) > 0 ? `${bytes(ioSourceRate(application))}/s` : '当前空闲' }}</strong>
+                      <small class="storage-io-split">读 {{ bytes(application.readRate) }}/s · 写 {{ bytes(application.writeRate) }}/s</small>
+                    </button>
+                    <div
+                      v-if="selectedIOSource?.key === `application:${source.deviceId}:${application.appId}:${application.deployId || ''}:${application.userId || ''}`"
+                      class="storage-io-child-processes"
+                    >
+                      <button
+                        v-for="process in application.processes"
+                        :key="`${process.pid}-${process.startTime}`"
+                        type="button"
+                        @click.stop="selectProcessIOSource(source.deviceId, process)"
+                      >
+                        <span><b>{{ process.name }}</b><small>PID {{ process.pid }} · {{ process.state || '未知状态' }}</small></span>
+                        <strong>{{ ioSourceRate(process) > 0 ? `${bytes(ioSourceRate(process))}/s` : '空闲' }}</strong>
+                      </button>
+                      <div v-if="!application.processes?.length" class="storage-io-child-empty">当前快照没有匹配到该实例的进程；实例仍保留显示。</div>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="source.applications.length > ioApplicationPageSize" class="storage-io-pagination">
+                  <span>第 {{ ioApplicationPage(source) }} / {{ Math.ceil(source.applications.length / ioApplicationPageSize) }} 页</span>
+                  <div>
+                    <button type="button" :disabled="ioApplicationPage(source) <= 1" @click="changeIOApplicationPage(source, -1)">上一页</button>
+                    <button type="button" :disabled="ioApplicationPage(source) >= Math.ceil(source.applications.length / ioApplicationPageSize)" @click="changeIOApplicationPage(source, 1)">下一页</button>
+                  </div>
+                </div>
+                <div v-if="!source.applications.length" class="storage-io-empty">尚未获得该设备的应用实例快照。</div>
               </section>
               <section class="storage-io-ranking">
                 <div class="storage-io-ranking-title"><h4>宿主机进程</h4><span>读写总速率</span></div>
@@ -661,7 +734,9 @@ async function runStorageCheck() {
                   @click="selectProcessIOSource(source.deviceId, process)"
                 >
                   <span><b>{{ process.name }} <small>PID {{ process.pid }}</small></b><small>{{ process.appTitle ? `${process.appTitle} · ${process.containerName || process.containerId}` : process.user || '宿主机进程' }}</small></span>
-                  <i><em :style="{ width: ioSourceBarWidth(process, source.processes) }"></em></i>
+                  <span class="storage-io-segments" aria-hidden="true">
+                    <i v-for="segment in 16" :key="segment" :class="{ filled: segment <= ioSourceBarSegments(process, source.processes) }"></i>
+                  </span>
                   <strong>{{ bytes(ioSourceRate(process)) }}/s</strong>
                   <small class="storage-io-split">读 {{ bytes(process.readRate) }}/s · 写 {{ bytes(process.writeRate) }}/s</small>
                 </button>
