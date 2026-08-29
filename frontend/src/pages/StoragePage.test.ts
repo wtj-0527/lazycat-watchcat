@@ -301,8 +301,9 @@ describe('StoragePage', () => {
         ],
       })
       if (path === '/api/v1/operations') return Promise.resolve({ capabilities: [] })
-      if (path === '/api/v1/devices/canway/io-sources?limit=12') return Promise.resolve({
-        deviceId: 'canway', collectedAt, processTotal: 128, applicationTotal: 2, limitations: [],
+      if (path === '/api/v1/devices/canway/io-sources?limit=10&page=1') return Promise.resolve({
+        deviceId: 'canway', collectedAt, processTotal: 128, activeProcessTotal: 1,
+        processPage: 1, processPageSize: 10, applicationTotal: 2, limitations: [],
         applications: [
           {
             appId: 'community.lazycat.app.hermes-studio', appTitle: 'Hermes Studio',

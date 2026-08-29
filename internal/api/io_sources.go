@@ -49,7 +49,11 @@ func (s *Server) deviceIOSources(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(r.PathValue("id"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 50 {
-		limit = 12
+		limit = 10
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page <= 0 {
+		page = 1
 	}
 	if _, err := s.store.DeviceByID(r.Context(), deviceID); store.IsNotFound(err) {
 		problem(w, http.StatusNotFound, "device_not_found", "设备不存在")
@@ -59,13 +63,8 @@ func (s *Server) deviceIOSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const candidateLimit = 200
-	readPage, err := s.store.LatestProcesses(r.Context(), deviceID, store.ProcessListOptions{Sort: "read", Order: "desc", Limit: candidateLimit})
-	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal_error", "无法读取进程 I/O")
-		return
-	}
-	writePage, err := s.store.LatestProcesses(r.Context(), deviceID, store.ProcessListOptions{Sort: "write", Order: "desc", Limit: candidateLimit})
+	const candidateLimit = 5000
+	processPage, err := s.store.LatestProcesses(r.Context(), deviceID, store.ProcessListOptions{Sort: "io", Order: "desc", Limit: candidateLimit})
 	if err != nil {
 		problem(w, http.StatusInternalServerError, "internal_error", "无法读取进程 I/O")
 		return
@@ -78,12 +77,8 @@ func (s *Server) deviceIOSources(w http.ResponseWriter, r *http.Request) {
 	applications, _ := s.store.ListRuntimeApplications(r.Context())
 	containers := ioContainerIdentities(deviceID, metrics, applications)
 
-	unique := make(map[string]protocol.ProcessSample, len(readPage.Items)+len(writePage.Items))
-	for _, item := range append(readPage.Items, writePage.Items...) {
-		unique[strconv.Itoa(item.PID)+"\x00"+item.StartTime] = item
-	}
-	allProcesses := make([]ioProcessSource, 0, len(unique))
-	for _, item := range unique {
+	allProcesses := make([]ioProcessSource, 0, len(processPage.Items))
+	for _, item := range processPage.Items {
 		source := ioProcessSource{ProcessSample: item}
 		if identity, ok := matchProcessContainer(item, containers); ok {
 			source.AppID, source.AppTitle = identity.AppID, identity.AppTitle
@@ -92,20 +87,6 @@ func (s *Server) deviceIOSources(w http.ResponseWriter, r *http.Request) {
 		}
 		allProcesses = append(allProcesses, source)
 	}
-	processes := make([]ioProcessSource, 0, len(allProcesses))
-	for _, process := range allProcesses {
-		if process.ReadRate > 0 || process.WriteRate > 0 {
-			processes = append(processes, process)
-		}
-	}
-	sort.Slice(processes, func(i, j int) bool {
-		left := processes[i].ReadRate + processes[i].WriteRate
-		right := processes[j].ReadRate + processes[j].WriteRate
-		if left != right {
-			return left > right
-		}
-		return processes[i].PID < processes[j].PID
-	})
 	type applicationAccumulator struct {
 		item       ioApplicationSource
 		containers map[string]struct{}
@@ -243,16 +224,25 @@ func (s *Server) deviceIOSources(w http.ResponseWriter, r *http.Request) {
 		}
 		return appSources[i].DeployID < appSources[j].DeployID
 	})
-	if len(processes) > limit {
-		processes = processes[:limit]
+	if processPage.Total > 0 {
+		page = min(page, (processPage.Total+limit-1)/limit)
 	}
+	activeProcessTotal := 0
+	for _, process := range allProcesses {
+		if process.ReadRate > 0 || process.WriteRate > 0 {
+			activeProcessTotal++
+		}
+	}
+	offset := (page - 1) * limit
+	if offset > len(allProcesses) {
+		offset = len(allProcesses)
+	}
+	end := min(len(allProcesses), offset+limit)
+	processes := allProcesses[offset:end]
 
-	collectedAt := readPage.CollectedAt
-	if writePage.CollectedAt.After(collectedAt) {
-		collectedAt = writePage.CollectedAt
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"deviceId": deviceID, "collectedAt": collectedAt, "processTotal": readPage.Total,
+		"deviceId": deviceID, "collectedAt": processPage.CollectedAt, "processTotal": processPage.Total,
+		"activeProcessTotal": activeProcessTotal, "processPage": page, "processPageSize": limit,
 		"processes": processes, "applications": appSources, "applicationTotal": len(appSources),
 		"limitations": []string{
 			"进程 I/O 来自 /proc/<pid>/io，包含文件系统缓存后的实际读写字节，但不能精确拆分到单块物理磁盘",

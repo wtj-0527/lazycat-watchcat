@@ -85,7 +85,8 @@ func TestDeviceIOSourcesMapsProcessesToApplicationsAndContainers(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Processes) != 3 || response.Processes[0].Name != "dockerd" {
+	if len(response.Processes) != 4 || response.Processes[0].Name != "dockerd" ||
+		response.Processes[len(response.Processes)-1].Name != "idle" {
 		t.Fatalf("processes=%+v", response.Processes)
 	}
 	var mapped ioProcessSource

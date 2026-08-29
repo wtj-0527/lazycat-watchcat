@@ -328,7 +328,7 @@ func (s *Store) LatestMetricTimestamp(ctx context.Context) (time.Time, error) {
 }
 
 func (s *Store) LatestProcesses(ctx context.Context, deviceID string, options ProcessListOptions) (ProcessPage, error) {
-	if options.Limit <= 0 || options.Limit > 200 {
+	if options.Limit <= 0 || options.Limit > 5000 {
 		options.Limit = 20
 	}
 	if options.Offset < 0 {
@@ -336,7 +336,7 @@ func (s *Store) LatestProcesses(ctx context.Context, deviceID string, options Pr
 	}
 	orderColumns := map[string]string{
 		"cpu": "cpu_percent", "memory": "memory_rss_bytes", "read": "read_rate",
-		"write": "write_rate", "pid": "pid", "name": "name", "user": "user_name",
+		"write": "write_rate", "io": "(read_rate + write_rate)", "pid": "pid", "name": "name", "user": "user_name",
 		"state": "state", "threads": "threads", "uptime": "uptime_seconds",
 	}
 	column := orderColumns[options.Sort]

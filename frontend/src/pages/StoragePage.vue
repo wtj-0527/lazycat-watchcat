@@ -50,6 +50,9 @@ interface IOSourcePayload {
   deviceId: string
   collectedAt: string
   processTotal: number
+  activeProcessTotal: number
+  processPage: number
+  processPageSize: number
   applicationTotal: number
   processes: IOProcessSource[]
   applications: IOApplicationSource[]
@@ -79,6 +82,7 @@ const ioSources = ref<Record<string, IOSourcePayload>>({})
 const ioSourcesLoading = ref(false)
 const ioSourcesError = ref('')
 const ioApplicationPages = ref<Record<string, number>>({})
+const ioProcessPages = ref<Record<string, number>>({})
 const selectedIOSource = ref<SelectedIOSource>()
 const ioSourceHistory = ref<ChartSeries[]>([])
 const ioSourceHistoryLoading = ref(false)
@@ -390,6 +394,18 @@ function changeIOApplicationPage(source: IOSourcePayload, delta: number) {
     [source.deviceId]: Math.min(pages, Math.max(1, ioApplicationPage(source) + delta)),
   }
 }
+function ioProcessPage(source: IOSourcePayload) {
+  const pages = Math.max(1, Math.ceil(source.processTotal / (source.processPageSize || 10)))
+  return Math.min(pages, Math.max(1, ioProcessPages.value[source.deviceId] || source.processPage || 1))
+}
+function changeIOProcessPage(source: IOSourcePayload, delta: number) {
+  const pages = Math.max(1, Math.ceil(source.processTotal / (source.processPageSize || 10)))
+  ioProcessPages.value = {
+    ...ioProcessPages.value,
+    [source.deviceId]: Math.min(pages, Math.max(1, ioProcessPage(source) + delta)),
+  }
+  void loadIOSources()
+}
 async function loadIOSources() {
   const deviceIDs = [...new Set([
     ...physicalDisks.value.map((disk) => disk.deviceId),
@@ -405,7 +421,7 @@ async function loadIOSources() {
   ioSourcesError.value = ''
   try {
     const results = await Promise.all(deviceIDs.map((deviceId) =>
-      api<IOSourcePayload>(`/api/v1/devices/${encodeURIComponent(deviceId)}/io-sources?limit=12`)
+      api<IOSourcePayload>(`/api/v1/devices/${encodeURIComponent(deviceId)}/io-sources?limit=10&page=${ioProcessPages.value[deviceId] || 1}`)
         .then((payload) => [deviceId, payload] as const)))
     if (request === ioSourcesRequest) {
       ioSources.value = Object.fromEntries(results)
@@ -724,23 +740,30 @@ async function runStorageCheck() {
                 <div v-if="!source.applications.length" class="storage-io-empty">尚未获得该设备的应用实例快照。</div>
               </section>
               <section class="storage-io-ranking">
-                <div class="storage-io-ranking-title"><h4>宿主机进程</h4><span>读写总速率</span></div>
+                <div class="storage-io-ranking-title"><h4>宿主机进程</h4><span>{{ source.activeProcessTotal }} 个活跃 · {{ source.processTotal }} 个总计</span></div>
                 <button
                   v-for="process in source.processes"
                   :key="`${process.pid}-${process.startTime}`"
                   type="button"
                   class="storage-io-source-row"
-                  :class="{ active: selectedIOSource?.key === `process:${source.deviceId}:${process.pid}:${process.startTime}` }"
+                  :class="{ active: selectedIOSource?.key === `process:${source.deviceId}:${process.pid}:${process.startTime}`, idle: ioSourceRate(process) <= 0 }"
                   @click="selectProcessIOSource(source.deviceId, process)"
                 >
                   <span><b>{{ process.name }} <small>PID {{ process.pid }}</small></b><small>{{ process.appTitle ? `${process.appTitle} · ${process.containerName || process.containerId}` : process.user || '宿主机进程' }}</small></span>
                   <span class="storage-io-segments" aria-hidden="true">
                     <i v-for="segment in 16" :key="segment" :class="{ filled: segment <= ioSourceBarSegments(process, source.processes) }"></i>
                   </span>
-                  <strong>{{ bytes(ioSourceRate(process)) }}/s</strong>
+                  <strong>{{ ioSourceRate(process) > 0 ? `${bytes(ioSourceRate(process))}/s` : '当前空闲' }}</strong>
                   <small class="storage-io-split">读 {{ bytes(process.readRate) }}/s · 写 {{ bytes(process.writeRate) }}/s</small>
                 </button>
-                <div v-if="!source.processes.length" class="storage-io-empty">当前采样周期没有进程产生可观测磁盘读写。</div>
+                <div v-if="!source.processes.length" class="storage-io-empty">尚无宿主机进程快照。</div>
+                <div v-if="source.processTotal > source.processPageSize" class="storage-io-pagination">
+                  <span>第 {{ ioProcessPage(source) }} / {{ Math.ceil(source.processTotal / source.processPageSize) }} 页</span>
+                  <div>
+                    <button type="button" :disabled="ioProcessPage(source) <= 1" @click="changeIOProcessPage(source, -1)">上一页</button>
+                    <button type="button" :disabled="ioProcessPage(source) >= Math.ceil(source.processTotal / source.processPageSize)" @click="changeIOProcessPage(source, 1)">下一页</button>
+                  </div>
+                </div>
               </section>
             </div>
             <section v-if="selectedIOSource?.deviceId === source.deviceId" class="storage-io-history">
