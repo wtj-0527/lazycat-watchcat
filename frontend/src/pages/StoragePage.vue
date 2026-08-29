@@ -9,6 +9,7 @@ import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { metricColors } from '@/metricColors'
+import { globalDeviceId } from '@/deviceScope'
 
 interface Payload { items: Metric[]; updatedAt: string; capabilities: Capability[]; summary: { totalBytes: number; fillWithin30Days: number } }
 interface VolumeResource {
@@ -56,7 +57,8 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
   return { ...storage, items: storage.items || [], summary: storage.summary || { totalBytes: 0, fillWithin30Days: 0 }, capabilities: operations.capabilities || [] }
 })
 
-const itemList = computed(() => data.value?.items || [])
+const itemList = computed(() => (data.value?.items || []).filter((item) =>
+  globalDeviceId.value === 'all' || item.deviceId === globalDeviceId.value))
 const riskStatus = (item: Metric) => item.risk || storageRiskStatus(item)
 const metricTime = (item: Metric) => new Date(item.collectedAt).getTime()
 function latestMetric(items: Metric[]) { return [...items].sort((a, b) => metricTime(b) - metricTime(a))[0] }
@@ -271,7 +273,7 @@ function riskTitle(item: Metric) {
   }
   return labels[item.name] || metricLabel(item)
 }
-watch(() => data.value?.updatedAt, () => { if (data.value?.updatedAt) loadAllHistory() })
+watch([() => data.value?.updatedAt, globalDeviceId], () => { if (data.value?.updatedAt) loadAllHistory() })
 
 function historyRange() {
   return historyMode.value === 'custom' && appliedCustomFrom.value && appliedCustomTo.value

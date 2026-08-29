@@ -11,5 +11,5 @@ export default defineConfig({
     assetsDir: 'assets',
     sourcemap: false,
   },
-  test: { environment: 'jsdom' },
+  test: { environment: 'jsdom', setupFiles: ['./src/testSetup.ts'] },
 })

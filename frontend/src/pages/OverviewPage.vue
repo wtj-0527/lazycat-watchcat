@@ -9,12 +9,14 @@ import DonutChart from '@/components/DonutChart.vue'
 import PageState from '@/components/PageState.vue'
 import RealtimeMetricCard from '@/components/RealtimeMetricCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import { globalDeviceId } from '@/deviceScope'
 
 const { data, loading, error, refresh } = usePolling(async () => {
   const result = await api<Overview>('/api/v1/overview')
   return { ...result, devices: result.devices || [], alerts: result.alerts || [] }
 })
 const orderedDevices = computed(() => [...(data.value?.devices || [])]
+  .filter((device) => globalDeviceId.value === 'all' || device.id === globalDeviceId.value)
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
 const storageRows = computed(() => orderedDevices.value
   .flatMap((device) => storageUsageMetrics(device).map((point) => ({ device, point })))
@@ -188,6 +190,7 @@ function alertEvidence(alert: Alert): DeviceRiskEvidence {
 function deviceRiskEvidence(device: Device): DeviceRiskEvidence[] {
   const activeAlerts = (data.value?.alerts || [])
     .filter((alert) => alert.status !== 'resolved'
+      && (globalDeviceId.value === 'all' || alert.deviceId === globalDeviceId.value)
       && (alert.deviceId === device.id || (!alert.deviceId && alert.deviceName === device.name))
       && (alert.severity === 'critical' || alert.severity === 'warning'))
     .map(alertEvidence)

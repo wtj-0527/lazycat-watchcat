@@ -13,6 +13,7 @@ import SmartSelect, { type SmartOption } from '@/components/SmartSelect.vue'
 import { appConfirm } from '@/dialog'
 import { globalRealtime } from '@/realtime'
 import { metricColors } from '@/metricColors'
+import { globalDeviceId } from '@/deviceScope'
 
 interface RuntimeUser { id: string; name: string }
 interface Payload { items: ApplicationItem[]; users: RuntimeUser[]; source: string; stale: boolean; updatedAt?: string }
@@ -64,7 +65,7 @@ const emit = defineEmits<{ toast: [message: string] }>()
 const query = ref(sessionStorage.getItem('watchcatSearch') || '')
 const statusFilter = ref('all')
 const userFilter = ref('all')
-const deviceFilter = ref('all')
+const deviceFilter = globalDeviceId
 const viewMode = ref<'detail' | 'compare'>('detail')
 const sortMetric = ref<'name' | 'cpu' | 'memory' | 'network' | 'disk'>('cpu')
 const sortDescending = ref(true)

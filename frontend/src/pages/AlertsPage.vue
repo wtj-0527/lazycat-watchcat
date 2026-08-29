@@ -11,6 +11,7 @@ import PageState from '@/components/PageState.vue'
 import BarChart from '@/components/BarChart.vue'
 import DonutChart from '@/components/DonutChart.vue'
 import { appConfirm } from '@/dialog'
+import { globalDeviceId } from '@/deviceScope'
 
 const emit = defineEmits<{ toast: [message: string] }>()
 const query = ref(sessionStorage.getItem('watchcatSearch') || '')
@@ -24,14 +25,16 @@ const { data, loading, error, refresh } = usePolling(async () => {
   const result = await api<{ items: Alert[] | null }>('/api/v1/alerts?includeResolved=true')
   return { items: result.items || [] }
 })
+const scopedItems = computed(() => (data.value?.items || []).filter((item) =>
+  globalDeviceId.value === 'all' || item.deviceId === globalDeviceId.value))
 const counts = computed(() => ({
-  all: data.value?.items.length || 0,
-  critical: data.value?.items.filter((item) => item.severity === 'critical' && item.status !== 'resolved').length || 0,
-  warning: data.value?.items.filter((item) => item.severity === 'warning' && item.status !== 'resolved').length || 0,
-  acknowledged: data.value?.items.filter((item) => item.status === 'acknowledged').length || 0,
-  resolved: data.value?.items.filter((item) => item.status === 'resolved').length || 0,
+  all: scopedItems.value.length,
+  critical: scopedItems.value.filter((item) => item.severity === 'critical' && item.status !== 'resolved').length,
+  warning: scopedItems.value.filter((item) => item.severity === 'warning' && item.status !== 'resolved').length,
+  acknowledged: scopedItems.value.filter((item) => item.status === 'acknowledged').length,
+  resolved: scopedItems.value.filter((item) => item.status === 'resolved').length,
 }))
-const filtered = computed(() => (data.value?.items || []).filter((alert) => {
+const filtered = computed(() => scopedItems.value.filter((alert) => {
   const matchesQuery = `${alert.deviceName} ${alert.resource} ${alert.message}`.toLowerCase().includes(query.value.trim().toLowerCase())
   const matchesSeverity = severityFilter.value === 'all' || alert.severity === severityFilter.value
   const observed = new Date(alert.lastSeenAt || alert.observedAt || alert.collectedAt || 0).getTime()
@@ -45,15 +48,15 @@ const filtered = computed(() => (data.value?.items || []).filter((alert) => {
   return matchesQuery && matchesFilter && matchesSeverity && matchesTime
 }))
 const alertPagination = usePagination(filtered, 20)
-watch([query, filter, severityFilter, timeFilter], alertPagination.resetPage)
+watch([query, filter, severityFilter, timeFilter, globalDeviceId], alertPagination.resetPage)
 const selectedAlert = computed(() => filtered.value.find((item) => item.fingerprint === selectedFingerprint.value) || alertPagination.pagedItems.value[0])
 watch(alertPagination.page, () => {
   selectedFingerprint.value = alertPagination.pagedItems.value[0]?.fingerprint || ''
 })
 const lifecycleDistribution = computed(() => [
-  { label: '触发中', value: (data.value?.items || []).filter((item) => item.status === 'firing').length, color: '#c51d23' },
+  { label: '触发中', value: scopedItems.value.filter((item) => item.status === 'firing').length, color: '#c51d23' },
   { label: '已确认', value: counts.value.acknowledged, color: '#c05600' },
-  { label: '已静默', value: (data.value?.items || []).filter((item) => item.status === 'silenced').length, color: '#7c3aed' },
+  { label: '已静默', value: scopedItems.value.filter((item) => item.status === 'silenced').length, color: '#7c3aed' },
   { label: '已恢复', value: counts.value.resolved, color: '#118847' },
 ])
 const severityByTime = computed(() => {
@@ -66,7 +69,7 @@ const severityByTime = computed(() => {
   ]
   return windows.map((window) => ({
     label: window.label,
-    value: (data.value?.items || []).filter((item) => {
+    value: scopedItems.value.filter((item) => {
       const observed = new Date(item.lastSeenAt || item.observedAt || item.collectedAt || 0).getTime()
       const hours = (now - observed) / 3_600_000
       return hours >= window.from && hours < window.to

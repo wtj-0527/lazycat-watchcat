@@ -7,6 +7,7 @@ import AppPagination from '@/components/AppPagination.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import PageState from '@/components/PageState.vue'
 import { appConfirm, appPrompt } from '@/dialog'
+import { globalDeviceId } from '@/deviceScope'
 
 interface Endpoint { id:string; name:string; model:string; remarkName:string; deviceApiUrl?:string; isMobile?:boolean; isTv?:boolean; lang?:string; timeZone?:string; isWifi?:boolean; online:boolean; bindingTime?:string; loginTime?:string }
 interface Session { endDeviceId:string; loginAt:string; logoutAt?:string; durationSeconds:number }
@@ -17,7 +18,7 @@ interface ApplicationsPayload {items:ApplicationItem[]}
 type UserTab = 'overview'|'access'|'endpoints'|'history'
 const userTabs:Array<{id:UserTab;label:string}>=[{id:'overview',label:'概览'},{id:'access',label:'应用权限'},{id:'endpoints',label:'登录终端'},{id:'history',label:'登录历史'}]
 const emit=defineEmits<{toast:[message:string]}>()
-const query=ref('');const device=ref('all');const status=ref('all');const selectedKey=ref('')
+const query=ref('');const device=globalDeviceId;const status=ref('all');const selectedKey=ref('')
 const activeTab=ref<UserTab>('overview');const mobileDetail=ref(false)
 const showCreate=ref(false);const newUser=ref({userId:'',password:'',role:'normal'});const busy=ref(false)
 const accessMode=ref<'all'|'selected'>('all');const accessSearch=ref('');const allowedAppIds=ref<string[]>([]);const accessBusy=ref(false)

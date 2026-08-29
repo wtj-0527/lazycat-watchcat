@@ -1138,6 +1138,13 @@ body {
 .scope-picker span, .scope-picker b { font-size: 11px; line-height: 1; }
 .scope-picker span { color: var(--muted); }
 .scope-picker b { color: var(--text); }
+.scope-picker:has(.smart-select) { display: block; height: auto; padding: 0; background: transparent; }
+.scope-picker .smart-select { width: 220px; min-width: 220px; }
+.scope-picker .smart-select-trigger { min-height: 36px; padding: 5px 10px; border-color: var(--border); background: var(--card); }
+.scope-picker .smart-select-menu { right: auto; left: 0; width: 360px; }
+.scope-picker .smart-select-trigger b { font-size: 12px; line-height: 1.2; }
+.scope-picker .smart-select-trigger small { margin-top: 2px; font-size: 10px; }
+.static-scope { align-content: center; }
 .freshness-pill { position: relative; gap: 7px; height: 30px; padding: 0 11px; background: #ecfdf5; font-size: 11px; }
 .freshness-pill::before { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; content: ""; box-shadow: 0 0 0 3px rgba(34, 197, 94, .12); }
 .freshness-pill.stale::before { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .12); }

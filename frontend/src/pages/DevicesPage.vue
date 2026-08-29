@@ -15,6 +15,7 @@ import StatusPill from '@/components/StatusPill.vue'
 import { appConfirm, appPrompt } from '@/dialog'
 import { globalRealtime } from '@/realtime'
 import { metricColors } from '@/metricColors'
+import { globalDeviceId } from '@/deviceScope'
 
 type DetailTab = 'overview' | 'system' | 'processes' | 'storage' | 'apps' | 'network' | 'events'
 const detailTabs: Array<[DetailTab, string]> = [
@@ -75,6 +76,7 @@ const { data, loading, error, refresh } = usePolling(async (): Promise<Payload> 
 
 const filteredDevices = computed(() => (data.value?.devices || [])
   .filter((device) => {
+    if (globalDeviceId.value !== 'all' && device.id !== globalDeviceId.value) return false
     const text = `${device.name} ${device.hostname} ${device.osVersion}`.toLowerCase()
     const matchesQuery = text.includes(query.value.trim().toLowerCase())
     const state = deviceState(device)
@@ -88,7 +90,7 @@ const filteredDevices = computed(() => (data.value?.devices || [])
   })
   .sort((a, b) => statusRank(deviceState(a)) - statusRank(deviceState(b))))
 const devicePagination = usePagination(filteredDevices, 20)
-watch([query, statusFilter, connectivityFilter, capabilityFilter, groupFilter], devicePagination.resetPage)
+watch([query, statusFilter, connectivityFilter, capabilityFilter, groupFilter, globalDeviceId], devicePagination.resetPage)
 
 async function showDevice(id: string) {
   detailDeviceId.value = id

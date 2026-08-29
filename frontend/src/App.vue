@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '@/api'
 import type { Overview } from '@/types'
 import { ago } from '@/utils'
@@ -13,7 +13,9 @@ import InspectionsPage from '@/pages/InspectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import AppDialog from '@/components/AppDialog.vue'
+import SmartSelect, { type SmartOption } from '@/components/SmartSelect.vue'
 import { usePolling } from '@/composables'
+import { globalDeviceId, selectGlobalDevice } from '@/deviceScope'
 import { globalPollingInterval, globalRealtime, toggleGlobalRealtime } from '@/realtime'
 import { applyTheme, storedTheme, type ThemeMode } from '@/theme'
 
@@ -52,14 +54,22 @@ let versionTimer: number | undefined
 
 const pageComponent = computed(() => pages[page.value])
 const pageLabel = computed(() => navs.find(([key]) => key === page.value)?.[1] || '总览')
+const deviceScopedPage = computed(() => ['overview', 'devices', 'apps', 'users', 'storage', 'alerts'].includes(page.value))
 const pageProps = computed(() => page.value === 'settings'
   ? { initialTab: 'thresholds' }
   : page.value === 'onboarding' ? { initialTab: 'onboarding' } : {})
 const deviceCount = computed(() => fleet.value?.stats.devices ?? 0)
+const deviceOptions = computed<SmartOption[]>(() => (fleet.value?.devices || []).map((device) => ({
+  value: device.id,
+  label: device.name,
+  meta: `${device.hostname || device.id} · ${device.online && !device.stale ? '在线' : device.stale ? '数据陈旧' : '离线'}`,
+})).sort((left, right) => left.label.localeCompare(right.label)))
+const scopedDeviceCount = computed(() => globalDeviceId.value === 'all' ? deviceCount.value : 1)
 const onlineCount = computed(() => fleet.value?.stats.online ?? 0)
 const staleCount = computed(() => fleet.value?.devices.filter((device) => device.stale).length ?? 0)
 const freshness = computed(() => ago(fleet.value?.updatedAt))
-const activeAlerts = computed(() => fleet.value?.alerts.filter((alert) => alert.status !== 'resolved') || [])
+const activeAlerts = computed(() => (fleet.value?.alerts || []).filter((alert) =>
+  alert.status !== 'resolved' && (globalDeviceId.value === 'all' || alert.deviceId === globalDeviceId.value)))
 const activeAlertCount = computed(() => activeAlerts.value.length)
 const hasCriticalAlert = computed(() => activeAlerts.value.some((alert) => alert.severity === 'critical'))
 const themes: Array<{ mode: ThemeMode; label: string; symbol: string }> = [
@@ -69,6 +79,10 @@ const themes: Array<{ mode: ThemeMode; label: string; symbol: string }> = [
 ]
 const currentTheme = computed(() => themes.find((item) => item.mode === themeMode.value) || themes[2])
 const nextTheme = computed(() => themes[(themes.findIndex((item) => item.mode === themeMode.value) + 1) % themes.length])
+
+watch(deviceOptions, (options) => {
+  if (globalDeviceId.value !== 'all' && !options.some((item) => item.value === globalDeviceId.value)) selectGlobalDevice('all')
+})
 
 function pageFromHash(): Page {
   const candidate = location.hash.slice(1).split('?')[0] as Page
@@ -164,8 +178,18 @@ onBeforeUnmount(() => {
     <header class="topbar">
       <div class="topbar-context">
         <span class="topbar-page-name">{{ pageLabel }}</span>
-        <div class="scope-picker" title="当前为全局设备范围">
-          <span>全部设备</span><b>{{ deviceCount }} 台</b>
+        <div v-if="deviceScopedPage" class="scope-picker">
+          <SmartSelect
+            :model-value="globalDeviceId"
+            :options="deviceOptions"
+            :all-label="`全部设备 · ${deviceCount} 台`"
+            control-label="全局设备筛选"
+            searchable
+            @update:model-value="selectGlobalDevice"
+          />
+        </div>
+        <div v-else class="scope-picker static-scope" title="该页面使用平台全局配置或不可变报告">
+          <span>平台范围</span><b>{{ scopedDeviceCount }} 台设备</b>
         </div>
       </div>
       <div class="topbar-actions">
