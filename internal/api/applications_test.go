@@ -243,6 +243,71 @@ func TestApplicationsUsePackageManagerAndPersistSnapshot(t *testing.T) {
 	}
 }
 
+func TestApplicationsAnnotateAccessPolicyWithoutTreatingInstancesAsPermission(t *testing.T) {
+	root := t.TempDir()
+	st, err := store.Open(filepath.Join(root, "application-access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	deviceID, err := st.EnsureLocalDevice(context.Background(), "node", "node", "linux/amd64", "1.6.0", []string{"collector.embedded"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceRuntimeApplications(context.Background(), deviceID, []store.RuntimeApplication{
+		{DeployID: "allowed-1", AppID: "app.allowed", Title: "Allowed", InstallStatus: "installed", InstanceStatus: "running", UserID: "200099", UserName: "200099"},
+		{DeployID: "legacy-1", AppID: "app.legacy", Title: "Legacy", InstallStatus: "installed", InstanceStatus: "paused", UserID: "200099", UserName: "200099"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ObserveRuntimeUsers(context.Background(), deviceID, []store.RuntimeUser{{
+		UserID: "200099", Nickname: "200099", AllowedAppIDs: []string{"app.allowed"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, nil, "../../web", time.Minute)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/applications", nil)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Devices []struct {
+				AccessPolicyKnown bool   `json:"accessPolicyKnown"`
+				AccessGranted     bool   `json:"accessGranted"`
+				AccessReason      string `json:"accessReason"`
+			} `json:"devices"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	access := map[string]struct {
+		known   bool
+		granted bool
+		reason  string
+	}{}
+	for _, item := range response.Items {
+		if len(item.Devices) != 1 {
+			t.Fatalf("devices=%+v", item.Devices)
+		}
+		access[item.ID] = struct {
+			known   bool
+			granted bool
+			reason  string
+		}{item.Devices[0].AccessPolicyKnown, item.Devices[0].AccessGranted, item.Devices[0].AccessReason}
+	}
+	if got := access["app.allowed"]; !got.known || !got.granted || got.reason != "allowed_app" {
+		t.Fatalf("allowed access=%+v", got)
+	}
+	if got := access["app.legacy"]; !got.known || got.granted || got.reason != "not_allowed" {
+		t.Fatalf("legacy access=%+v", got)
+	}
+}
+
 func TestLocalApplicationInstanceControlUsesPackageManagerAndAudits(t *testing.T) {
 	root := t.TempDir()
 	st, err := store.Open(filepath.Join(root, "control.db"))

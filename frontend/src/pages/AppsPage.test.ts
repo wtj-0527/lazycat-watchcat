@@ -31,6 +31,9 @@ function device(overrides: Partial<ApplicationDevice>): ApplicationDevice {
     builtin: false,
     userId: 'user-1',
     userName: '用户一',
+    accessPolicyKnown: true,
+    accessGranted: true,
+    accessReason: 'allowed_app',
     collectedAt: '2026-08-25T10:00:00Z',
     resources: { ...resources },
     ...overrides,
@@ -290,6 +293,42 @@ describe('AppsPage', () => {
     expect(wrapper.text()).toContain('该实例当前未运行')
     expect(wrapper.text()).toContain('已暂停')
     expect(wrapper.find('.app-instance-table').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('distinguishes real app access from legacy deployment ownership', async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path.includes('/metrics')) return {
+        appId: 'allowed', from: '2026-08-28T00:00:00Z', to: '2026-08-29T00:00:00Z',
+        bucketSeconds: 300, updatedAt: new Date().toISOString(),
+        summary: { networkReceiveRateBytes: 0, networkTransmitRateBytes: 0, networkTotalBytes: 0, blockReadRateBytes: 0, blockWriteRateBytes: 0, blockTotalBytes: 0 },
+        series: { cpuPercent: [], memoryUsage: [], networkReceiveRate: [], networkTransmitRate: [], blockReadRate: [], blockWriteRate: [] },
+      }
+      return {
+        items: [
+          application({
+            id: 'allowed', title: '已授权应用', healthy: 1,
+            devices: [device({ userId: '200099', userName: '200099', accessPolicyKnown: true, accessGranted: true, accessReason: 'allowed_app' })],
+          }),
+          application({
+            id: 'legacy', title: '遗留应用', paused: 1,
+            devices: [device({ deployId: 'legacy-1', userId: '200099', userName: '200099', status: 'paused', healthy: false, accessPolicyKnown: true, accessGranted: false, accessReason: 'not_allowed' })],
+          }),
+        ],
+        users: [{ id: '200099', name: '200099' }],
+        source: 'lazycat', stale: false, updatedAt: new Date().toISOString(),
+      }
+    })
+
+    const wrapper = mount(AppsPage)
+    await flushPromises()
+    await wrapper.get('[aria-label="实例用户"]').setValue('200099')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('该用户的部署实例')
+    expect(wrapper.text()).toContain('无权限遗留')
+    expect(wrapper.text()).toContain('有权访问')
+    expect(wrapper.text()).toContain('不代表用户仍可打开该应用')
     wrapper.unmount()
   })
 

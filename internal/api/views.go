@@ -211,6 +211,12 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	for _, device := range devices {
 		names[device.ID] = device.Name
 	}
+	userPolicies := map[string]store.RuntimeUser{}
+	if runtimeUsers, userErr := s.store.ListRuntimeUsers(r.Context()); userErr == nil {
+		for _, user := range runtimeUsers {
+			userPolicies[user.DeviceID+"\x00"+user.UserID] = user
+		}
+	}
 	type app struct {
 		ID           string                  `json:"id"`
 		Title        string                  `json:"title"`
@@ -273,11 +279,24 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 		if userID != "" {
 			users[userID] = userName
 		}
+		accessPolicyKnown, accessGranted, accessReason := false, false, "unknown"
+		if policy, ok := userPolicies[state.DeviceID+"\x00"+userID]; ok {
+			accessPolicyKnown = true
+			switch {
+			case policy.AppAccessNoLimit:
+				accessGranted, accessReason = true, "all_apps"
+			case containsString(policy.AllowedAppIDs, state.AppID):
+				accessGranted, accessReason = true, "allowed_app"
+			default:
+				accessReason = "not_allowed"
+			}
+		}
 		a.Devices = append(a.Devices, map[string]any{
 			"deviceId": state.DeviceID, "deviceName": names[state.DeviceID], "deployId": state.DeployID,
 			"healthy": state.InstanceStatus == "running", "status": state.InstanceStatus,
 			"installStatus": state.InstallStatus, "version": state.Version, "domain": state.Domain,
 			"builtin": state.Builtin, "userId": userID, "userName": userName,
+			"accessPolicyKnown": accessPolicyKnown, "accessGranted": accessGranted, "accessReason": accessReason,
 			"collectedAt": state.UpdatedAt, "resources": instanceResource,
 			"autostart":    autostart[state.DeviceID+"\x00"+state.DeployID],
 			"controllable": !applicationControlRestricted(state),
@@ -297,6 +316,15 @@ func (s *Server) applications(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(userList, func(i, j int) bool { return userList[i]["name"] < userList[j]["name"] })
 	writeJSON(w, 200, map[string]any{"items": out, "users": userList, "count": len(out), "updatedAt": updatedAt, "source": "lazycat-package-manager", "stale": s.runtimeApps != nil && s.runtimeApps.LastUID() == ""})
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func localizedAppTitle(appID, fallback string) string {

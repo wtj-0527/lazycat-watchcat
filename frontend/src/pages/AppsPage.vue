@@ -97,6 +97,18 @@ const applicationRuntimeLabel = (item: ApplicationItem) =>
   item.unhealthy > 0 ? '存在异常' : item.paused > 0 && item.healthy > 0 ? '部分暂停' : item.paused > 0 ? '已暂停' : item.healthy > 0 ? '运行中' : '状态未知'
 const runtimeStatusTone = (status: string) => status === 'running' ? 'healthy' : status === 'error' ? 'critical' : status === 'paused' ? 'warning' : 'unknown'
 const runtimeStatusLabel = (status: string) => status === 'running' ? '运行中' : status === 'paused' ? '已暂停' : status === 'error' ? '异常' : status || '未知'
+type AccessState = 'granted' | 'denied' | 'mixed' | 'unknown'
+const accessState = (devices: ApplicationItem['devices']): AccessState => {
+  const known = devices.filter((device) => device.accessPolicyKnown)
+  if (!known.length) return 'unknown'
+  const granted = known.some((device) => device.accessGranted)
+  const denied = known.some((device) => !device.accessGranted)
+  return granted && denied ? 'mixed' : granted ? 'granted' : 'denied'
+}
+const accessTone = (state: AccessState) => state === 'granted' ? 'available' : state === 'denied' ? 'restricted' : state === 'mixed' ? 'warning' : 'unknown'
+const accessLabel = (state: AccessState) => state === 'granted' ? '有权访问' : state === 'denied' ? '无权限遗留' : state === 'mixed' ? '权限不一致' : '权限未知'
+const instanceAccessState = (device: ApplicationItem['devices'][number]): AccessState =>
+  !device.accessPolicyKnown ? 'unknown' : device.accessGranted ? 'granted' : 'denied'
 const instanceKey = (deviceId: string, deployId: string) => `${deviceId}\u0000${deployId}`
 const allInstances = computed(() => (data.value?.items || []).flatMap((application) => application.devices.map((device) => ({ application, device, key: instanceKey(device.deviceId, device.deployId) }))))
 const availableDevices = computed(() => {
@@ -109,6 +121,7 @@ const availableUsers = computed(() => (data.value?.users || []).filter((user) =>
 const visibleDevices = (item: ApplicationItem) => item.devices.filter((device) =>
   (userFilter.value === 'all' || device.userId === userFilter.value)
   && (deviceFilter.value === 'all' || device.deviceId === deviceFilter.value))
+const visibleAccessState = (item: ApplicationItem) => accessState(visibleDevices(item))
 const emptyResources = (): ApplicationItem['resources'] => ({
   containers: 0, cpuPercent: 0, memoryUsage: 0, memoryLimit: 0,
   networkReceive: 0, networkTransmit: 0, blockRead: 0, blockWrite: 0,
@@ -513,7 +526,8 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
 
     <div v-if="viewMode === 'detail'" class="app-resource-layout">
       <aside class="card app-resource-list-card">
-        <div class="section-title compact"><div><h2>应用</h2><span class="muted">{{ filtered.length }} 个结果</span></div></div>
+        <div class="section-title compact"><div><h2>{{ userFilter === 'all' ? '部署实例所属应用' : '该用户的部署实例' }}</h2><span class="muted">{{ filtered.length }} 个结果</span></div></div>
+        <p v-if="userFilter !== 'all'" class="instance-scope-note">这里展示该用户名下的部署实例，并同步核对真实应用访问策略；“无权限遗留”不代表用户仍可打开该应用。</p>
         <div v-if="filtered.length" class="app-resource-list" role="table" aria-label="应用资源列表">
           <div class="app-resource-list-head" role="row">
             <button role="columnheader" @click="toggleApplicationSort('name')">应用{{ sortIndicator('name') }}</button>
@@ -523,7 +537,7 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
             <button role="columnheader" @click="toggleApplicationSort('disk')">I/O{{ sortIndicator('disk') }}</button>
           </div>
           <button v-for="item in appPagination.pagedItems.value" :key="item.id" :class="['app-resource-item', { active: selectedAppId === item.id }]" role="row" @click="selectedAppId = item.id">
-            <span role="cell" class="app-resource-name"><i :class="appStatus(item)" /><span><b>{{ item.title || item.id }}</b><small>{{ item.id }}</small></span></span>
+            <span role="cell" class="app-resource-name"><i :class="appStatus(item)" /><span><b>{{ item.title || item.id }}</b><span class="app-resource-identity"><small>{{ item.id }}</small><em v-if="userFilter !== 'all'" :class="`access-${visibleAccessState(item)}`">{{ accessLabel(visibleAccessState(item)) }}</em></span></span></span>
             <b role="cell">{{ formatNumber(scopedApplicationResources(item).cpuPercent) }}%</b>
             <small role="cell">{{ bytes(scopedApplicationResources(item).memoryUsage) }}</small>
             <small role="cell">{{ bytes(scopedApplicationResources(item).networkReceive + scopedApplicationResources(item).networkTransmit) }}</small>
@@ -543,6 +557,11 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
               <SmartSelect v-model="selectedInstanceKey" :options="selectedInstanceOptions" :all-label="`全部实例（${visibleSelectedDevices.length}）`" control-label="应用实例" searchable />
               <StatusPill v-if="selectedInstance" :status="runtimeStatusTone(selectedInstance.status)" :label="runtimeStatusLabel(selectedInstance.status)" />
               <StatusPill v-else :status="appStatus(selectedApp)" :label="applicationRuntimeLabel(selectedApp)" />
+              <StatusPill
+                v-if="selectedInstance || userFilter !== 'all'"
+                :status="accessTone(selectedInstance ? instanceAccessState(selectedInstance) : visibleAccessState(selectedApp))"
+                :label="accessLabel(selectedInstance ? instanceAccessState(selectedInstance) : visibleAccessState(selectedApp))"
+              />
             </div>
           </div>
           <div v-if="selectedInstance" class="instance-control-bar">
@@ -578,8 +597,10 @@ const comparisonGroups = computed<Array<{ metric: ComparisonMetric; title: strin
             <div><span>区间流量总和</span><strong>{{ bytes(history?.summary?.networkTotalBytes ?? 0) }}</strong><small>接收 {{ bytes(history?.summary?.networkReceiveRateBytes ?? 0) }} · 发送 {{ bytes(history?.summary?.networkTransmitRateBytes ?? 0) }}</small></div>
             <div><span>区间磁盘 IO</span><strong>{{ bytes(history?.summary?.blockTotalBytes ?? 0) }}</strong><small>读取 {{ bytes(history?.summary?.blockReadRateBytes ?? 0) }} · 写入 {{ bytes(history?.summary?.blockWriteRateBytes ?? 0) }}</small></div>
           </div>
-          <p v-if="selectedInstance || userFilter !== 'all'" class="operation-evidence">
-            容器指标已按设备、用户和部署实例归属；实例级历史从 v1.3.7 开始积累，升级前的无归属历史不会混入当前筛选。
+          <p v-if="selectedInstance || userFilter !== 'all'" class="operation-evidence" :class="{ warning: (selectedInstance ? instanceAccessState(selectedInstance) : visibleAccessState(selectedApp)) === 'denied' }">
+            {{ (selectedInstance ? instanceAccessState(selectedInstance) : visibleAccessState(selectedApp)) === 'denied'
+              ? '该部署实例仍由 Package Manager 返回，但当前应用访问策略未授权；保留展示仅用于识别和管理遗留实例。'
+              : '访问权限来自 LazyCat AppAccessPolicy；资源指标按设备、用户和部署实例归属。' }}
           </p>
         </section>
 

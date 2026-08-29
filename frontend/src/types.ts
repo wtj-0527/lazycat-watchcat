@@ -163,6 +163,9 @@ export interface ApplicationDevice {
   autostart?: boolean | null
   userId: string
   userName: string
+  accessPolicyKnown: boolean
+  accessGranted: boolean
+  accessReason: 'all_apps' | 'allowed_app' | 'not_allowed' | 'unknown'
   collectedAt: string
   resources: ApplicationResources
 }
