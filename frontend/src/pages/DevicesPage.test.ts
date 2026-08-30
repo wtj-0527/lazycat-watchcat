@@ -23,6 +23,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  location.hash = ''
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -214,6 +215,80 @@ describe('DevicesPage detail tabs', () => {
     expect(wrapper.find('.application-resource-matrix').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('全部实例资源矩阵')
     expect(wrapper.find('.device-metric-chart-grid').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('opens the canonical process view from an application deep link and can return to all host processes', async () => {
+    const collectedAt = '2026-08-30T10:00:00Z'
+    location.hash = '#devices?deviceId=d1&tab=processes&appId=app.one&appTitle=应用一&deployId=app.one2&userId=u1'
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/overview') return overview
+      if (path === '/api/v1/devices/d1') return device
+      if (path === '/api/v1/devices/d1/events') return { items: [] }
+      if (path === '/api/v1/operations') return { capabilities: [] }
+      if (path === '/api/v1/applications') return { items: [] }
+      if (path === '/api/v1/devices/d1/io-sources?limit=50&page=1') return {
+        applications: [
+          {
+            appId: 'app.one', appTitle: '应用一', deployId: 'app.one2', userId: 'u1',
+            processes: [
+              {
+                pid: 101, startTime: '100', name: 'worker-one', user: 'root', state: 'R',
+                cpuPercent: 12, memoryRssBytes: 1024, readBytes: 1, writeBytes: 2,
+                readRate: 3, writeRate: 4, threads: 2, uptimeSeconds: 60, collectedAt,
+                containerName: 'app-one-main',
+              },
+            ],
+          },
+          {
+            appId: 'app.one', appTitle: '应用一', deployId: 'app.one3', userId: 'u2',
+            processes: [
+              {
+                pid: 102, startTime: '100', name: 'other-instance', user: 'root', state: 'S',
+                cpuPercent: 2, memoryRssBytes: 512, readBytes: 1, writeBytes: 2,
+                readRate: 0, writeRate: 0, threads: 1, uptimeSeconds: 60, collectedAt,
+              },
+            ],
+          },
+          {
+            appId: 'app.two', appTitle: '应用二', deployId: 'app.two2', userId: 'u1',
+            processes: [
+              {
+                pid: 201, startTime: '100', name: 'other-app', user: 'root', state: 'S',
+                cpuPercent: 1, memoryRssBytes: 256, readBytes: 1, writeBytes: 2,
+                readRate: 0, writeRate: 0, threads: 1, uptimeSeconds: 60, collectedAt,
+              },
+            ],
+          },
+        ],
+      }
+      if (path.startsWith('/api/v1/devices/d1/processes?')) return {
+        items: [{
+          pid: 999, startTime: '100', name: 'host-process', user: 'root', state: 'S',
+          cpuPercent: 1, memoryRssBytes: 256, readBytes: 1, writeBytes: 2,
+          readRate: 0, writeRate: 0, threads: 1, uptimeSeconds: 60, collectedAt,
+        }],
+        total: 1,
+      }
+      if (path.includes('/metrics')) return { items: [] }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+
+    const wrapper = mount(DevicesPage)
+    await flushPromises()
+
+    expect(wrapper.get('#device-tab-processes').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('.process-application-scope').text()).toContain('应用一')
+    expect(wrapper.get('.process-table').text()).toContain('worker-one')
+    expect(wrapper.get('.process-table').text()).toContain('app-one-main')
+    expect(wrapper.get('.process-table').text()).not.toContain('other-instance')
+    expect(wrapper.get('.process-table').text()).not.toContain('other-app')
+
+    await wrapper.get('.process-application-scope button').trigger('click')
+    await flushPromises()
+    expect(apiMock.mock.calls.some(([path]) => String(path).startsWith('/api/v1/devices/d1/processes?'))).toBe(true)
+    expect(wrapper.find('.process-application-scope').exists()).toBe(false)
+    expect(wrapper.get('.process-table').text()).toContain('host-process')
     wrapper.unmount()
   })
 

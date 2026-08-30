@@ -48,7 +48,23 @@ const deviceEvents = ref<Array<{ id: string; type: string; title: string; detail
 const eventFilter = ref<'all' | 'alert' | 'audit'>('all')
 const deviceCapabilities = ref<Capability[]>([])
 const applicationTitles = ref<Record<string, string>>({})
-const processItems = ref<HostProcess[]>([])
+interface DisplayProcess extends HostProcess {
+  appId?: string
+  appTitle?: string
+  deployId?: string
+  userId?: string
+  containerName?: string
+}
+interface ProcessApplicationFilter {
+  appId: string
+  appTitle: string
+  deployId?: string
+  userId?: string
+}
+interface DeviceIOSourcePayload {
+  applications: Array<ProcessApplicationFilter & { processes?: DisplayProcess[] }>
+}
+const processItems = ref<DisplayProcess[]>([])
 const processTotal = ref(0)
 const processPage = ref(1)
 const processPageSize = ref(20)
@@ -60,6 +76,19 @@ const processError = ref('')
 const selectedProcess = ref<HostProcess>()
 const processHistory = ref<HostProcess[]>([])
 const processHistoryLoading = ref(false)
+const processApplicationFilter = ref<ProcessApplicationFilter>()
+const processDeepLink = (() => {
+  const params = new URLSearchParams(location.hash.split('?')[1] || '')
+  return {
+    deviceId: params.get('deviceId') || '',
+    tab: params.get('tab') || '',
+    appId: params.get('appId') || '',
+    appTitle: params.get('appTitle') || '',
+    deployId: params.get('deployId') || '',
+    userId: params.get('userId') || '',
+  }
+})()
+let processDeepLinkApplied = false
 const realtimeMetricNames = [
   'system.cpu.usage', 'system.memory.usage', 'system.swap.usage', 'system.load.1m',
   'filesystem.root.usage', 'btrfs.usage', 'disk.temperature',
@@ -92,11 +121,12 @@ const filteredDevices = computed(() => (data.value?.devices || [])
 const devicePagination = usePagination(filteredDevices, 20)
 watch([query, statusFilter, connectivityFilter, capabilityFilter, groupFilter, globalDeviceId], devicePagination.resetPage)
 
-async function showDevice(id: string) {
+async function showDevice(id: string, initialTab: DetailTab = 'overview') {
   detailDeviceId.value = id
   detailLoading.value = true
   detailError.value = ''
-  selectedTab.value = 'overview'
+  selectedTab.value = initialTab === 'processes' ? 'overview' : initialTab
+  if (initialTab !== 'processes') processApplicationFilter.value = undefined
   try {
     selected.value = await api<Device>(`/api/v1/devices/${encodeURIComponent(id)}`)
     const [events, operations, applications] = await Promise.all([
@@ -108,6 +138,7 @@ async function showDevice(id: string) {
     deviceCapabilities.value = (operations.capabilities || []).filter((item) => !item.deviceId || item.deviceId === id)
     applicationTitles.value = Object.fromEntries((applications.items || []).map((item) => [item.id, item.title || item.id]))
     await loadTrend(id)
+    if (initialTab === 'processes') selectedTab.value = 'processes'
   } catch (reason) {
     detailError.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
@@ -129,6 +160,40 @@ async function loadProcesses() {
   processLoading.value = true
   processError.value = ''
   try {
+    if (processApplicationFilter.value) {
+      const filter = processApplicationFilter.value
+      const result = await api<DeviceIOSourcePayload>(`/api/v1/devices/${encodeURIComponent(id)}/io-sources?limit=50&page=1`)
+      const matches = (result.applications || []).filter((application) =>
+        application.appId === filter.appId
+        && (!filter.deployId || application.deployId === filter.deployId)
+        && (!filter.userId || application.userId === filter.userId))
+      const unique = new Map<string, DisplayProcess>()
+      for (const process of matches.flatMap((application) => application.processes || [])) {
+        unique.set(`${process.pid}\u0000${process.startTime}`, process)
+      }
+      let items = [...unique.values()]
+      const query = processQuery.value.trim().toLowerCase()
+      if (query) {
+        items = items.filter((item) =>
+          `${item.pid} ${item.name} ${item.user} ${item.command || ''} ${item.containerName || ''}`.toLowerCase().includes(query))
+      }
+      const direction = processOrder.value === 'asc' ? 1 : -1
+      const value = (item: DisplayProcess): string | number => ({
+        pid: item.pid, name: item.name, user: item.user, state: item.state,
+        cpu: item.cpuPercent, memory: item.memoryRssBytes, read: item.readRate,
+        write: item.writeRate, threads: item.threads, uptime: item.uptimeSeconds,
+      } as Record<string, string | number>)[processSort.value] ?? item.cpuPercent
+      items.sort((left, right) => {
+        const a = value(left)
+        const b = value(right)
+        if (typeof a === 'number' && typeof b === 'number') return (a - b) * direction
+        return String(a).localeCompare(String(b)) * direction
+      })
+      processTotal.value = items.length
+      const offset = (processPage.value - 1) * processPageSize.value
+      processItems.value = items.slice(offset, offset + processPageSize.value)
+      return
+    }
     const params = new URLSearchParams({
       page: String(processPage.value), limit: String(processPageSize.value),
       sort: processSort.value, order: processOrder.value,
@@ -142,6 +207,11 @@ async function loadProcesses() {
   } finally {
     processLoading.value = false
   }
+}
+function clearProcessApplicationFilter() {
+  processApplicationFilter.value = undefined
+  processPage.value = 1
+  void loadProcesses()
 }
 async function selectProcess(item: HostProcess) {
   selectedProcess.value = item
@@ -713,6 +783,18 @@ watch(() => data.value, (payload) => {
     void loadDeviceEvents(fresh.id)
   }
 }, { flush: 'post' })
+watch(() => data.value?.devices, async (devices) => {
+  if (processDeepLinkApplied || processDeepLink.tab !== 'processes' || !processDeepLink.deviceId || !processDeepLink.appId) return
+  if (!(devices || []).some((device) => device.id === processDeepLink.deviceId)) return
+  processDeepLinkApplied = true
+  processApplicationFilter.value = {
+    appId: processDeepLink.appId,
+    appTitle: processDeepLink.appTitle || processDeepLink.appId,
+    deployId: processDeepLink.deployId || undefined,
+    userId: processDeepLink.userId || undefined,
+  }
+  await showDevice(processDeepLink.deviceId, 'processes')
+}, { immediate: true })
 watch(globalRealtime, (enabled) => {
   if (!enabled || !selected.value) return
   appendLatestTrend(selected.value)
@@ -891,6 +973,10 @@ watch(selectedTab, (tab) => {
         </section>
 
         <section v-else-if="selectedTab === 'processes'" class="device-detail-insights process-insights">
+          <div v-if="processApplicationFilter" class="process-application-scope">
+            <span><small>当前应用</small><b>{{ processApplicationFilter.appTitle }}</b><code>{{ processApplicationFilter.deployId || processApplicationFilter.appId }}</code></span>
+            <button class="secondary-button" @click="clearProcessApplicationFilter">查看全部宿主机进程</button>
+          </div>
           <div class="detail-kpi-grid">
             <article><span>进程数</span><strong>{{ processKpis.total }}</strong><small>当前宿主机快照</small></article>
             <article><span>运行中</span><strong>{{ processKpis.running }}</strong><small>当前页状态为 R</small></article>
@@ -919,7 +1005,7 @@ watch(selectedTab, (tab) => {
               </tr></thead>
               <tbody>
                 <tr v-for="item in processItems" :key="`${item.pid}:${item.startTime}`" :class="{ selected: selectedProcess?.pid === item.pid && selectedProcess?.startTime === item.startTime }" @click="selectProcess(item)">
-                  <td>{{ item.pid }}</td><td><b>{{ item.name }}</b><small :title="item.command">{{ item.command || item.cgroup || '无命令行' }}</small></td><td>{{ item.user || '未知' }}</td><td>{{ item.state }}</td>
+                  <td>{{ item.pid }}</td><td><b>{{ item.name }}</b><small :title="item.command">{{ item.containerName || item.command || item.cgroup || '无命令行' }}</small></td><td>{{ item.user || '未知' }}</td><td>{{ item.state }}</td>
                   <td>{{ formatNumber(item.cpuPercent) }}%</td><td>{{ bytes(item.memoryRssBytes) }}</td><td>{{ bytes(item.readRate) }}/s</td><td>{{ bytes(item.writeRate) }}/s</td><td>{{ item.threads }}</td><td>{{ formatNumber(item.uptimeSeconds / 3600, 1) }} 小时</td>
                 </tr>
               </tbody>

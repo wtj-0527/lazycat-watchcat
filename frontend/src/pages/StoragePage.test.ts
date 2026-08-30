@@ -291,7 +291,7 @@ describe('StoragePage', () => {
     wrapper.unmount()
   })
 
-  it('shows attributed application and process I/O and loads source history', async () => {
+  it('shows application I/O attribution, loads its history, and links to the canonical process view', async () => {
     const collectedAt = new Date().toISOString()
     apiMock.mockImplementation((path: string) => {
       if (path === '/api/v1/storage') return Promise.resolve({
@@ -320,18 +320,12 @@ describe('StoragePage', () => {
             processes: [],
           },
         ],
-        processes: [{
-          pid: 4254, startTime: '100', name: 'rclone', user: 'root', state: 'R',
-          cpuPercent: 10, memoryRssBytes: 1024, readBytes: 1, writeBytes: 2,
-          readRate: 1024, writeRate: 8192, threads: 4, uptimeSeconds: 60, collectedAt,
-        }],
       })
-      if (path.includes('/processes/4254/metrics?')) return Promise.resolve({
-        items: [{
-          pid: 4254, startTime: '100', name: 'rclone', user: 'root', state: 'R',
-          cpuPercent: 10, memoryRssBytes: 1024, readBytes: 1, writeBytes: 2,
-          readRate: 1024, writeRate: 8192, threads: 4, uptimeSeconds: 60, collectedAt,
-        }],
+      if (path.includes('/api/v1/applications/community.lazycat.app.hermes-studio/metrics?')) return Promise.resolve({
+        series: {
+          blockReadRate: [{ value: 2048, collectedAt }],
+          blockWriteRate: [{ value: 4096, collectedAt }],
+        },
       })
       if (path.includes('/metrics?')) return Promise.resolve({ items: [] })
       return Promise.reject(new Error(`Unexpected API path: ${path}`))
@@ -344,14 +338,24 @@ describe('StoragePage', () => {
     expect(wrapper.get('.storage-io-attribution').text()).toContain('懒猫相册')
     expect(wrapper.get('.storage-io-attribution').text()).toContain('2 个实例')
     expect(wrapper.get('.storage-io-attribution').text()).toContain('当前空闲')
-    expect(wrapper.get('.storage-io-attribution').text()).toContain('rclone')
-    expect(wrapper.get('.storage-io-attribution').text()).toContain('9.0 KiB/s')
-    const processRow = wrapper.findAll('.storage-io-source-row').find((row) => row.text().includes('rclone'))
-    if (!processRow) throw new Error('rclone process row missing')
-    await processRow.trigger('click')
+    expect(wrapper.get('.storage-io-attribution').text()).not.toContain('宿主机进程')
+    expect(wrapper.get('.storage-io-attribution').text()).not.toContain('rclone')
+    expect(wrapper.find('.storage-io-child-processes').exists()).toBe(false)
+
+    const applicationRow = wrapper.findAll('.storage-io-source-row').find((row) => row.text().includes('Hermes Studio'))
+    if (!applicationRow) throw new Error('Hermes Studio application row missing')
+    await applicationRow.trigger('click')
     await flushPromises()
-    expect(wrapper.get('.storage-io-history').text()).toContain('rclone · PID 4254 · I/O 历史')
-    expect(apiMock.mock.calls.some(([path]) => String(path).includes('/processes/4254/metrics?'))).toBe(true)
+    expect(wrapper.get('.storage-io-history').text()).toContain('Hermes Studio · I/O 历史')
+    expect(wrapper.get('.storage-io-history').text()).toContain('应用容器块设备读写速率')
+    expect(apiMock.mock.calls.some(([path]) => String(path).includes('/applications/community.lazycat.app.hermes-studio/metrics?'))).toBe(true)
+
+    const processLink = wrapper.findAll('.storage-process-link').find((button) => button.element.parentElement?.textContent?.includes('Hermes Studio'))
+    if (!processLink) throw new Error('Hermes Studio process link missing')
+    await processLink.trigger('click')
+    expect(location.hash).toContain('devices?')
+    expect(location.hash).toContain('appId=community.lazycat.app.hermes-studio')
+    expect(location.hash).toContain('deployId=community.lazycat.app.hermes-studio2')
     wrapper.unmount()
   })
 })

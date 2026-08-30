@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
-import type { Capability, HostProcess, Metric } from '@/types'
+import type { Capability, Metric } from '@/types'
 import { ago, bytes, dateTime, formatMetricValue, metricLabel, monthDay, parseBeijingDateTimeInput, storageRiskAdvice, storageRiskStatus, toBeijingDateTimeInput } from '@/utils'
 import PageState from '@/components/PageState.vue'
 import LineChart, { type ChartSeries } from '@/components/LineChart.vue'
@@ -24,14 +24,6 @@ interface VolumeResource {
   backingDevice: string
   physicalDevice: string
 }
-interface IOProcessSource extends HostProcess {
-  appId?: string
-  appTitle?: string
-  deployId?: string
-  userId?: string
-  containerId?: string
-  containerName?: string
-}
 interface IOApplicationSource {
   appId: string
   appTitle: string
@@ -44,7 +36,6 @@ interface IOApplicationSource {
   activeProcessCount: number
   readRate: number
   writeRate: number
-  processes: IOProcessSource[]
 }
 interface IOSourcePayload {
   deviceId: string
@@ -54,16 +45,14 @@ interface IOSourcePayload {
   processPage: number
   processPageSize: number
   applicationTotal: number
-  processes: IOProcessSource[]
   applications: IOApplicationSource[]
   limitations: string[]
 }
 interface SelectedIOSource {
   key: string
-  type: 'process' | 'application'
+  type: 'application'
   deviceId: string
   label: string
-  process?: IOProcessSource
   application?: IOApplicationSource
 }
 
@@ -82,7 +71,6 @@ const ioSources = ref<Record<string, IOSourcePayload>>({})
 const ioSourcesLoading = ref(false)
 const ioSourcesError = ref('')
 const ioApplicationPages = ref<Record<string, number>>({})
-const ioProcessPages = ref<Record<string, number>>({})
 const selectedIOSource = ref<SelectedIOSource>()
 const ioSourceHistory = ref<ChartSeries[]>([])
 const ioSourceHistoryLoading = ref(false)
@@ -394,18 +382,6 @@ function changeIOApplicationPage(source: IOSourcePayload, delta: number) {
     [source.deviceId]: Math.min(pages, Math.max(1, ioApplicationPage(source) + delta)),
   }
 }
-function ioProcessPage(source: IOSourcePayload) {
-  const pages = Math.max(1, Math.ceil(source.processTotal / (source.processPageSize || 10)))
-  return Math.min(pages, Math.max(1, ioProcessPages.value[source.deviceId] || source.processPage || 1))
-}
-function changeIOProcessPage(source: IOSourcePayload, delta: number) {
-  const pages = Math.max(1, Math.ceil(source.processTotal / (source.processPageSize || 10)))
-  ioProcessPages.value = {
-    ...ioProcessPages.value,
-    [source.deviceId]: Math.min(pages, Math.max(1, ioProcessPage(source) + delta)),
-  }
-  void loadIOSources()
-}
 async function loadIOSources() {
   const deviceIDs = [...new Set([
     ...physicalDisks.value.map((disk) => disk.deviceId),
@@ -421,7 +397,7 @@ async function loadIOSources() {
   ioSourcesError.value = ''
   try {
     const results = await Promise.all(deviceIDs.map((deviceId) =>
-      api<IOSourcePayload>(`/api/v1/devices/${encodeURIComponent(deviceId)}/io-sources?limit=10&page=${ioProcessPages.value[deviceId] || 1}`)
+      api<IOSourcePayload>(`/api/v1/devices/${encodeURIComponent(deviceId)}/io-sources?limit=10&page=1`)
         .then((payload) => [deviceId, payload] as const)))
     if (request === ioSourcesRequest) {
       ioSources.value = Object.fromEntries(results)
@@ -437,31 +413,6 @@ async function loadIOSources() {
     }
   } finally {
     if (request === ioSourcesRequest) ioSourcesLoading.value = false
-  }
-}
-async function selectProcessIOSource(deviceId: string, process: IOProcessSource) {
-  const selected: SelectedIOSource = {
-    key: `process:${deviceId}:${process.pid}:${process.startTime}`,
-    type: 'process', deviceId, label: `${process.name} · PID ${process.pid}`, process,
-  }
-  selectedIOSource.value = selected
-  const request = ++ioHistoryRequest
-  ioSourceHistoryLoading.value = true
-  ioSourceHistoryError.value = ''
-  try {
-    const result = await api<{ items: HostProcess[] }>(`/api/v1/devices/${encodeURIComponent(deviceId)}/processes/${process.pid}/metrics?startTime=${encodeURIComponent(process.startTime)}&${historyRange()}`)
-    if (request !== ioHistoryRequest) return
-    ioSourceHistory.value = [
-      { name: '读取', color: metricColors.read, points: (result.items || []).map((item) => ({ value: item.readRate / 1024, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt), timestamp: new Date(item.collectedAt).getTime() })) },
-      { name: '写入', color: metricColors.write, points: (result.items || []).map((item) => ({ value: item.writeRate / 1024, at: dateTime(item.collectedAt), label: monthDay(item.collectedAt), timestamp: new Date(item.collectedAt).getTime() })) },
-    ]
-  } catch (reason) {
-    if (request === ioHistoryRequest) {
-      ioSourceHistory.value = []
-      ioSourceHistoryError.value = reason instanceof Error ? reason.message : String(reason)
-    }
-  } finally {
-    if (request === ioHistoryRequest) ioSourceHistoryLoading.value = false
   }
 }
 async function selectApplicationIOSource(deviceId: string, application: IOApplicationSource) {
@@ -495,10 +446,21 @@ async function selectApplicationIOSource(deviceId: string, application: IOApplic
     if (request === ioHistoryRequest) ioSourceHistoryLoading.value = false
   }
 }
+function openApplicationProcesses(deviceId: string, application: IOApplicationSource) {
+  selectGlobalDevice(deviceId)
+  const params = new URLSearchParams({
+    deviceId,
+    tab: 'processes',
+    appId: application.appId,
+    appTitle: application.appTitle || application.appId,
+  })
+  if (application.deployId) params.set('deployId', application.deployId)
+  if (application.userId) params.set('userId', application.userId)
+  location.hash = `devices?${params}`
+}
 function reloadSelectedIOSourceHistory() {
   const selected = selectedIOSource.value
   if (!selected) return
-  if (selected.type === 'process' && selected.process) void selectProcessIOSource(selected.deviceId, selected.process)
   if (selected.type === 'application' && selected.application) void selectApplicationIOSource(selected.deviceId, selected.application)
 }
 watch(() => data.value?.updatedAt, () => {
@@ -685,10 +647,10 @@ async function runStorageCheck() {
         <div v-else class="storage-io-device-list">
           <article v-for="source in visibleIOSources" :key="source.deviceId" class="storage-io-device">
             <div class="storage-io-device-heading">
-              <div><b>{{ ioSourceDeviceName(source.deviceId) }}</b><small>{{ source.processTotal }} 个宿主机进程 · 采集于 {{ dateTime(source.collectedAt) }}</small></div>
+              <div><b>{{ ioSourceDeviceName(source.deviceId) }}</b><small>{{ source.applicationTotal ?? source.applications.length }} 个应用实例 · 采集于 {{ dateTime(source.collectedAt) }}</small></div>
               <span>当前速率</span>
             </div>
-            <div class="storage-io-source-columns">
+            <div class="storage-io-source-columns single">
               <section class="storage-io-ranking">
                 <div class="storage-io-ranking-title"><h4>应用实例汇总</h4><span>{{ source.applicationTotal ?? source.applications.length }} 个实例 · 活跃优先</span></div>
                 <div class="storage-io-application-list">
@@ -713,21 +675,7 @@ async function runStorageCheck() {
                       <strong>{{ ioSourceRate(application) > 0 ? `${bytes(ioSourceRate(application))}/s` : '当前空闲' }}</strong>
                       <small class="storage-io-split">读 {{ bytes(application.readRate) }}/s · 写 {{ bytes(application.writeRate) }}/s</small>
                     </button>
-                    <div
-                      v-if="selectedIOSource?.key === `application:${source.deviceId}:${application.appId}:${application.deployId || ''}:${application.userId || ''}`"
-                      class="storage-io-child-processes"
-                    >
-                      <button
-                        v-for="process in application.processes"
-                        :key="`${process.pid}-${process.startTime}`"
-                        type="button"
-                        @click.stop="selectProcessIOSource(source.deviceId, process)"
-                      >
-                        <span><b>{{ process.name }}</b><small>PID {{ process.pid }} · {{ process.state || '未知状态' }}</small></span>
-                        <strong>{{ ioSourceRate(process) > 0 ? `${bytes(ioSourceRate(process))}/s` : '空闲' }}</strong>
-                      </button>
-                      <div v-if="!application.processes?.length" class="storage-io-child-empty">当前快照没有匹配到该实例的进程；实例仍保留显示。</div>
-                    </div>
+                    <button type="button" class="storage-process-link" @click="openApplicationProcesses(source.deviceId, application)">查看相关进程</button>
                   </div>
                 </div>
                 <div v-if="source.applications.length > ioApplicationPageSize" class="storage-io-pagination">
@@ -739,37 +687,10 @@ async function runStorageCheck() {
                 </div>
                 <div v-if="!source.applications.length" class="storage-io-empty">尚未获得该设备的应用实例快照。</div>
               </section>
-              <section class="storage-io-ranking">
-                <div class="storage-io-ranking-title"><h4>宿主机进程</h4><span>{{ source.activeProcessTotal }} 个活跃 · {{ source.processTotal }} 个总计</span></div>
-                <button
-                  v-for="process in source.processes"
-                  :key="`${process.pid}-${process.startTime}`"
-                  type="button"
-                  class="storage-io-source-row"
-                  :class="{ active: selectedIOSource?.key === `process:${source.deviceId}:${process.pid}:${process.startTime}`, idle: ioSourceRate(process) <= 0 }"
-                  @click="selectProcessIOSource(source.deviceId, process)"
-                >
-                  <span><b>{{ process.name }} <small>PID {{ process.pid }}</small></b><small>{{ process.appTitle ? `${process.appTitle} · ${process.containerName || process.containerId}` : process.user || '宿主机进程' }}</small></span>
-                  <span class="storage-io-segments" aria-hidden="true">
-                    <i v-for="segment in 16" :key="segment" :class="{ filled: segment <= ioSourceBarSegments(process, source.processes) }"></i>
-                  </span>
-                  <strong>{{ ioSourceRate(process) > 0 ? `${bytes(ioSourceRate(process))}/s` : '当前空闲' }}</strong>
-                  <small class="storage-io-split">读 {{ bytes(process.readRate) }}/s · 写 {{ bytes(process.writeRate) }}/s</small>
-                </button>
-                <div v-if="!source.processes.length" class="storage-io-empty">尚无宿主机进程快照。</div>
-                <div v-if="source.processTotal > source.processPageSize" class="storage-io-pagination">
-                  <span>第 {{ ioProcessPage(source) }} / {{ Math.ceil(source.processTotal / source.processPageSize) }} 页</span>
-                  <div>
-                    <button type="button" :disabled="ioProcessPage(source) <= 1" @click="changeIOProcessPage(source, -1)">上一页</button>
-                    <button type="button" :disabled="ioProcessPage(source) >= Math.ceil(source.processTotal / source.processPageSize)" @click="changeIOProcessPage(source, 1)">下一页</button>
-                  </div>
-                </div>
-              </section>
             </div>
             <section v-if="selectedIOSource?.deviceId === source.deviceId" class="storage-io-history">
               <div class="storage-io-history-heading">
-                <div><h4>{{ selectedIOSource.label }} · I/O 历史</h4><span>{{ selectedIOSource.type === 'process' ? '进程实际读写速率' : '容器块设备读写速率' }}</span></div>
-                <span v-if="selectedIOSource.process?.appTitle">{{ selectedIOSource.process.appTitle }} · {{ selectedIOSource.process.containerName }}</span>
+                <div><h4>{{ selectedIOSource.label }} · I/O 历史</h4><span>应用容器块设备读写速率</span></div>
               </div>
               <div v-if="ioSourceHistoryLoading" class="inline-empty">正在读取 I/O 历史…</div>
               <div v-else-if="ioSourceHistoryError" class="inline-empty">{{ ioSourceHistoryError }}</div>
