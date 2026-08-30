@@ -62,6 +62,7 @@ type Server struct {
 	alertLastSync       time.Time
 	analytics           chan struct{}
 	docker              dockerMaintenance
+	upgradeDocker       *collector.DockerCollector
 	dockerPrune         chan struct{}
 	upstream            *collector.Upstream
 	upgradeCoordinator  *upgradecoord.Manager
@@ -86,6 +87,9 @@ func (s *Server) ConfigureRuntimeUsers(source runtimeUserManager, localDeviceID 
 }
 func (s *Server) ConfigureDockerMaintenance(docker *collector.DockerCollector, localDeviceID string) {
 	s.docker, s.localDeviceID = docker, localDeviceID
+}
+func (s *Server) ConfigureUpgradeDocker(docker *collector.DockerCollector) {
+	s.upgradeDocker = docker
 }
 func (s *Server) ConfigureUpstream(upstream *collector.Upstream) { s.upstream = upstream }
 func (s *Server) ConfigureUpgradeCoordinator(manager *upgradecoord.Manager) {

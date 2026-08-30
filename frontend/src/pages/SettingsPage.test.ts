@@ -40,6 +40,33 @@ afterEach(() => {
 })
 
 describe('SettingsPage tabs', () => {
+  it('shows the real Hermes Studio rootfs copy percentage', async () => {
+    const base = apiMock.getMockImplementation()!
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/upgrade-coordinator') return {
+        active: {
+          requestId: 'deploy-image', appId: 'community.lazycat.app.hermes-studio',
+          instanceId: 'hermesstudio5', phase: 'copy-usr', percent: 23,
+          completedBytes: 389 * 1024 * 1024, totalBytes: 1500 * 1024 * 1024, updatedAt: now,
+        },
+        queue: [{ requestId: 'next', appId: 'community.lazycat.app.hermes-studio', instanceId: 'hermesstudio6', phase: 'waiting' }],
+        updatedAt: now,
+      }
+      return base(path)
+    })
+
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+    await wrapper.get('#settings-tab-maintenance').trigger('click')
+
+    expect(wrapper.text()).toContain('真实复制进度')
+    expect(wrapper.text()).toContain('23%')
+    expect(wrapper.text()).toContain('复制 /usr')
+    expect(wrapper.text()).toContain('hermesstudio6')
+    expect(wrapper.get('[role="progressbar"]').attributes('aria-valuenow')).toBe('23')
+    wrapper.unmount()
+  })
+
   it('uses roving tabindex and supports arrow, Home, and End navigation', async () => {
     const wrapper = mount(SettingsPage, { attachTo: document.body, props: { initialTab: 'groups' } })
     await flushPromises()

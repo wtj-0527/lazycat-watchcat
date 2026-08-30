@@ -11,6 +11,17 @@ import (
 )
 
 func (s *Server) upgradeCoordinatorStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.upgradeDocker != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		active, queue, err := s.upgradeDocker.UpgradeQueue(ctx)
+		cancel()
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "ok", "active": active, "queue": queue, "updatedAt": time.Now().UTC(),
+			})
+			return
+		}
+	}
 	if s.docker != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		active, queue, err := s.docker.UpgradeQueue(ctx)

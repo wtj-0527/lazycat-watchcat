@@ -4,3 +4,8 @@ buildscript: |
   rm -rf dist/content
   mkdir -p dist/content
 contentdir: ./dist/content
+compose_override:
+  services:
+    watchcat:
+      volumes:
+        - /data/playground/docker.sock:/lzcapp/run/hermes-upgrade-docker.sock

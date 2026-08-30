@@ -88,6 +88,9 @@ func main() {
 	embedded.SetUpstream(upstream)
 	handlers.ConfigureUpstream(upstream)
 	handlers.ConfigureDockerMaintenance(embedded.Docker(), embedded.DeviceID())
+	if socket := os.Getenv("WATCHCAT_UPGRADE_DOCKER_SOCKET"); socket != "" {
+		handlers.ConfigureUpgradeDocker(collector.NewDockerCollector(socket))
+	}
 	var runtimeSource *runtimeapps.Source
 	runtimeCtx, runtimeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	runtimeSource, runtimeErr := runtimeapps.NewPersistent(runtimeCtx, filepath.Join(cfg.DataDir, "runtime-user-id"))

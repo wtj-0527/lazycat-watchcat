@@ -31,6 +31,7 @@ const processHelperRole = "process-snapshot"
 
 var smartBlockDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 var dockerImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var upgradeProgressName = regexp.MustCompile(`^hermes-studio-rootfs-progress-[a-f0-9]+-(.+)-p([0-9]{3})-c([0-9]+)-t([0-9]+)-u([0-9]+)$`)
 var safeBtrfsMount = regexp.MustCompile(`^/lzcsys/(?:data|var|run/mnt/[A-Za-z0-9._-]+|storage/[A-Za-z0-9._-]+)$`)
 var safeFilesystemMount = regexp.MustCompile(`^/lzcsys/(?:data|var|run/(?:mnt|media)/[A-Za-z0-9._-]+|storage/[A-Za-z0-9._-]+)$`)
 var safeBtrfsDevice = regexp.MustCompile(`^/dev/(?:sd[a-z]+[0-9]+|nvme[0-9]+n[0-9]+p[0-9]+|mapper/[A-Za-z0-9._+-]+)$`)
@@ -126,13 +127,52 @@ type ImageDeleteResult struct {
 }
 
 type UpgradeQueueEntry struct {
-	RequestID  string    `json:"requestId"`
-	AppID      string    `json:"appId"`
-	InstanceID string    `json:"instanceId"`
-	UserID     string    `json:"userId,omitempty"`
-	Container  string    `json:"container"`
-	Active     bool      `json:"active"`
-	CreatedAt  time.Time `json:"createdAt"`
+	RequestID      string    `json:"requestId"`
+	AppID          string    `json:"appId"`
+	InstanceID     string    `json:"instanceId"`
+	UserID         string    `json:"userId,omitempty"`
+	Container      string    `json:"container"`
+	Active         bool      `json:"active"`
+	CreatedAt      time.Time `json:"createdAt"`
+	Phase          string    `json:"phase,omitempty"`
+	Percent        int       `json:"percent"`
+	CompletedBytes int64     `json:"completedBytes,omitempty"`
+	TotalBytes     int64     `json:"totalBytes,omitempty"`
+	UpdatedAt      time.Time `json:"updatedAt,omitempty"`
+}
+
+type upgradeProgress struct {
+	phase          string
+	percent        int
+	completedBytes int64
+	totalBytes     int64
+	updatedAt      time.Time
+}
+
+func parseUpgradeProgressName(name string) (upgradeProgress, bool) {
+	match := upgradeProgressName.FindStringSubmatch(strings.TrimPrefix(name, "/"))
+	if len(match) != 6 {
+		return upgradeProgress{}, false
+	}
+	percent, errPercent := strconv.Atoi(match[2])
+	completedMiB, errCompleted := strconv.ParseInt(match[3], 10, 64)
+	totalMiB, errTotal := strconv.ParseInt(match[4], 10, 64)
+	updatedUnix, errUpdated := strconv.ParseInt(match[5], 10, 64)
+	if errPercent != nil || errCompleted != nil || errTotal != nil || errUpdated != nil {
+		return upgradeProgress{}, false
+	}
+	if percent < 0 {
+		percent = 0
+	} else if percent > 100 {
+		percent = 100
+	}
+	return upgradeProgress{
+		phase:          match[1],
+		percent:        percent,
+		completedBytes: completedMiB * 1024 * 1024,
+		totalBytes:     totalMiB * 1024 * 1024,
+		updatedAt:      time.Unix(updatedUnix, 0).UTC(),
+	}, true
 }
 
 type dockerCreateResponse struct {
@@ -508,6 +548,18 @@ func (d *DockerCollector) UpgradeQueue(ctx context.Context) (*UpgradeQueueEntry,
 	}
 	var active *UpgradeQueueEntry
 	queue := make([]UpgradeQueueEntry, 0)
+	progressByRequest := make(map[string]upgradeProgress)
+	for _, item := range containers {
+		if item.Labels["community.lazycat.app.hermes.upgrade.progress"] != "true" {
+			continue
+		}
+		for _, name := range item.Names {
+			if progress, ok := parseUpgradeProgressName(name); ok {
+				progressByRequest[item.Labels["community.lazycat.app.hermes.upgrade.request"]] = progress
+				break
+			}
+		}
+	}
 	for _, item := range containers {
 		isActive := item.Labels["community.lazycat.app.hermes.upgrade.active"] == "true"
 		isQueued := item.Labels["community.lazycat.app.hermes.upgrade.queue"] == "true"
@@ -526,6 +578,15 @@ func (d *DockerCollector) UpgradeQueue(ctx context.Context) (*UpgradeQueueEntry,
 			Container:  name,
 			Active:     isActive,
 			CreatedAt:  time.Unix(item.Created, 0).UTC(),
+		}
+		if progress, ok := progressByRequest[entry.RequestID]; ok {
+			entry.Phase = progress.phase
+			entry.Percent = progress.percent
+			entry.CompletedBytes = progress.completedBytes
+			entry.TotalBytes = progress.totalBytes
+			entry.UpdatedAt = progress.updatedAt
+		} else if isQueued {
+			entry.Phase = "waiting"
 		}
 		if isActive {
 			copy := entry

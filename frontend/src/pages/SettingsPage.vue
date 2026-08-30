@@ -39,9 +39,12 @@ interface PairingCode { code: string; expiresAt: string }
 interface UpstreamStatus { paired: boolean; hubUrl?: string; deviceId?: string; lastSuccessAt?: string; lastError?: string }
 interface RestoreResult { status: string; backup: string; message: string }
 interface OperationEvidence { status: 'success' | 'warning' | 'error'; message: string }
-interface UpgradeRequest { requestId: string; appId: string; instanceId: string; userId?: string; enqueuedAt: string; lastSeenAt: string }
-interface UpgradeLease extends UpgradeRequest { expiresAt: string }
-interface UpgradeCoordinator { active?: UpgradeLease; queue: UpgradeRequest[]; updatedAt: string }
+interface UpgradeRequest {
+  requestId: string; appId: string; instanceId: string; userId?: string
+  createdAt?: string; enqueuedAt?: string; lastSeenAt?: string
+  phase?: string; percent?: number; completedBytes?: number; totalBytes?: number; updatedAt?: string
+}
+interface UpgradeCoordinator { active?: UpgradeRequest; queue: UpgradeRequest[]; updatedAt: string }
 type Tab = 'onboarding' | 'groups' | 'capabilities' | 'thresholds' | 'notifications' | 'maintenance' | 'retention' | 'audit'
 const tabs: Array<[Tab, string]> = [
   ['groups', '设备组与标签'], ['capabilities', 'Collector 能力'], ['thresholds', '告警阈值'],
@@ -120,6 +123,20 @@ const backupPagination = usePagination(backupItems, 10)
 const danglingPagination = usePagination(danglingImages, 10)
 const cachedPagination = usePagination(cachedImages, 10)
 const auditPagination = usePagination(auditItems, 20)
+
+function upgradePhase(phase?: string) {
+  if (!phase) return '准备中'
+  const labels: Record<string, string> = {
+    waiting: '等待执行',
+    calculating: '计算快照大小',
+    preparing: '准备快照',
+    completed: '已完成',
+  }
+  if (labels[phase]) return labels[phase]
+  if (phase.startsWith('cleanup-')) return `清理 /${phase.slice(8)}`
+  if (phase.startsWith('copy-')) return `复制 /${phase.slice(5)}`
+  return phase
+}
 
 async function createPairingCode() {
   pairingLoading.value = true
@@ -608,7 +625,27 @@ async function deleteUnusedImage(image: UnusedImage) {
         <div><span>升级串行协调</span><b>{{ data.upgradeCoordinator.active ? '正在执行' : '空闲' }}</b><StatusPill :status="data.upgradeCoordinator.active ? 'warning' : 'healthy'" /></div>
         <div><span>当前实例</span><b>{{ data.upgradeCoordinator.active?.instanceId || '无' }}</b></div>
         <div><span>等待队列</span><b>{{ data.upgradeCoordinator.queue.length }} 个实例</b></div>
-        <div><span>租约有效期</span><b>{{ data.upgradeCoordinator.active ? dateTime(data.upgradeCoordinator.active.expiresAt) : '—' }}</b></div>
+        <div><span>当前阶段</span><b>{{ data.upgradeCoordinator.active ? upgradePhase(data.upgradeCoordinator.active.phase) : '—' }}</b></div>
+        <div v-if="data.upgradeCoordinator.active" class="upgrade-progress-card">
+          <div class="upgrade-progress-heading">
+            <div>
+              <span>真实复制进度</span>
+              <b>{{ data.upgradeCoordinator.active.percent ?? 0 }}%</b>
+            </div>
+            <small v-if="data.upgradeCoordinator.active.totalBytes">
+              {{ bytes(data.upgradeCoordinator.active.completedBytes || 0) }} / {{ bytes(data.upgradeCoordinator.active.totalBytes) }}
+            </small>
+          </div>
+          <div class="upgrade-progress-track" role="progressbar" aria-label="Hermes Studio 升级进度" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="data.upgradeCoordinator.active.percent ?? 0">
+            <i :style="{ width: `${data.upgradeCoordinator.active.percent ?? 0}%` }" />
+          </div>
+          <small v-if="data.upgradeCoordinator.active.updatedAt">最近更新 {{ ago(data.upgradeCoordinator.active.updatedAt) }}</small>
+        </div>
+      </div>
+      <div v-if="data.upgradeCoordinator.queue.length" class="upgrade-waiting-list">
+        <div v-for="(item, index) in data.upgradeCoordinator.queue" :key="item.requestId">
+          <span>{{ index + 1 }}</span><b>{{ item.instanceId || item.requestId }}</b><small>{{ upgradePhase(item.phase) }}</small>
+        </div>
       </div>
       <div class="maintenance-form"><input v-model="maintenanceName" placeholder="窗口名称"><input v-model="maintenanceStart" type="datetime-local" aria-label="开始时间（北京时间）" title="北京时间"><input v-model="maintenanceEnd" type="datetime-local" aria-label="结束时间（北京时间）" title="北京时间"><button class="primary-button" @click="addMaintenanceWindow">创建窗口</button></div>
       <div class="backup-list"><div v-for="item in maintenancePagination.pagedItems.value" :key="item.id" class="backup-row"><div><b>{{ item.name }}</b><p>{{ dateTime(item.startsAt) }} — {{ dateTime(item.endsAt) }}</p></div><div><StatusPill :status="item.enabled ? 'available' : 'unknown'" /><button class="tiny danger-button" @click="deleteMaintenanceWindow(item.id)">删除</button></div></div><div v-if="!data.windows.length" class="inline-empty">尚无维护窗口。</div></div>

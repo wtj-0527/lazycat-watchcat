@@ -173,3 +173,21 @@ func TestSummarizeImagePruneCountsUniqueDeletedImages(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 }
+
+func TestParseUpgradeProgressName(t *testing.T) {
+	progress, ok := parseUpgradeProgressName(
+		"/hermes-studio-rootfs-progress-acde1234-copy-usr-p023-c389-t1500-u1788060000",
+	)
+	if !ok {
+		t.Fatal("expected progress marker to parse")
+	}
+	if progress.phase != "copy-usr" || progress.percent != 23 {
+		t.Fatalf("progress=%+v", progress)
+	}
+	if progress.completedBytes != 389*1024*1024 || progress.totalBytes != 1500*1024*1024 {
+		t.Fatalf("bytes=%d/%d", progress.completedBytes, progress.totalBytes)
+	}
+	if !progress.updatedAt.Equal(time.Unix(1788060000, 0).UTC()) {
+		t.Fatalf("updatedAt=%s", progress.updatedAt)
+	}
+}

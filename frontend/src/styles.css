@@ -358,6 +358,21 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .capability-list p { margin: 3px 0; color: var(--secondary); }
 .capability-list small { color: var(--muted); }
 .settings-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.upgrade-coordinator-summary .upgrade-progress-card {
+  grid-column: 1 / -1;
+  min-height: 112px;
+  gap: 10px;
+}
+.upgrade-progress-heading { width: 100%; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.upgrade-progress-heading > div { display: flex; flex-direction: column; gap: 4px; }
+.upgrade-progress-heading b { font-size: 28px; line-height: 1; color: var(--text); }
+.upgrade-progress-heading small, .upgrade-progress-card > small { color: var(--muted); }
+.upgrade-progress-track { width: 100%; height: 9px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.upgrade-progress-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--cyan)); transition: width .35s ease; }
+.upgrade-waiting-list { display: grid; gap: 8px; margin-top: 12px; }
+.upgrade-waiting-list > div { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); }
+.upgrade-waiting-list span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 11px; font-weight: 800; }
+.upgrade-waiting-list small { color: var(--muted); }
 .retention-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
 .image-cleanup-card { margin-top: 16px; }
 .image-cleanup-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }
