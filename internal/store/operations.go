@@ -156,8 +156,13 @@ func (s *Store) ListSystemStates(ctx context.Context) ([]SystemStateItem, error)
 }
 
 func (s *Store) QueueNotification(ctx context.Context, dedupeKey, title, body, deeplink string) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	settings := s.NotificationSettings(ctx)
+	if !settings.Enabled || !settings.InspectionResults {
+		return nil
+	}
+	current := time.Now().UTC()
+	now := current.Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notification_outbox(dedupe_key,alert_fingerprint,transition,title,body,deeplink,next_attempt_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		dedupeKey, "system", "inspection", title, body, deeplink, now, now)
+		dedupeKey, "system", "inspection", title, body, deeplink, notificationNextAttempt(current, settings).Format(time.RFC3339Nano), now)
 	return err
 }

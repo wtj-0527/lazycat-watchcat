@@ -21,6 +21,7 @@ const timeFilter = ref('168')
 const actionEvidence = ref<{ status: 'success' | 'warning' | 'error'; message: string }>()
 const actionLoading = ref('')
 const selectedFingerprint = ref('')
+const acceptDurationMinutes = ref(0)
 const { data, loading, error, refresh } = usePolling(async () => {
   const result = await api<{ items: Alert[] | null }>('/api/v1/alerts?includeResolved=true')
   return { items: result.items || [] }
@@ -29,9 +30,10 @@ const scopedItems = computed(() => (data.value?.items || []).filter((item) =>
   globalDeviceId.value === 'all' || item.deviceId === globalDeviceId.value))
 const counts = computed(() => ({
   all: scopedItems.value.length,
-  critical: scopedItems.value.filter((item) => item.severity === 'critical' && item.status !== 'resolved').length,
-  warning: scopedItems.value.filter((item) => item.severity === 'warning' && item.status !== 'resolved').length,
+  critical: scopedItems.value.filter((item) => item.severity === 'critical' && !['resolved', 'accepted'].includes(item.status)).length,
+  warning: scopedItems.value.filter((item) => item.severity === 'warning' && !['resolved', 'accepted'].includes(item.status)).length,
   acknowledged: scopedItems.value.filter((item) => item.status === 'acknowledged').length,
+  accepted: scopedItems.value.filter((item) => item.status === 'accepted').length,
   resolved: scopedItems.value.filter((item) => item.status === 'resolved').length,
 }))
 const filtered = computed(() => scopedItems.value.filter((alert) => {
@@ -41,7 +43,7 @@ const filtered = computed(() => scopedItems.value.filter((alert) => {
   const matchesTime = timeFilter.value === 'all' || observed >= Date.now() - Number(timeFilter.value) * 60 * 60 * 1000
   let matchesFilter = false
   if (filter.value === 'all') matchesFilter = true
-  else if (filter.value === 'active') matchesFilter = alert.status !== 'resolved'
+  else if (filter.value === 'active') matchesFilter = !['resolved', 'accepted'].includes(alert.status)
   else if (filter.value === 'critical' || filter.value === 'warning') {
     matchesFilter = alert.severity === filter.value && alert.status !== 'resolved'
   } else matchesFilter = alert.status === filter.value
@@ -57,6 +59,7 @@ const lifecycleDistribution = computed(() => [
   { label: '触发中', value: scopedItems.value.filter((item) => item.status === 'firing').length, color: '#c51d23' },
   { label: '已确认', value: counts.value.acknowledged, color: '#c05600' },
   { label: '已静默', value: scopedItems.value.filter((item) => item.status === 'silenced').length, color: '#7c3aed' },
+  { label: '已接受', value: counts.value.accepted, color: '#2563eb' },
   { label: '已恢复', value: counts.value.resolved, color: '#118847' },
 ])
 const severityByTime = computed(() => {
@@ -94,13 +97,17 @@ async function action(fingerprint: string, name: string) {
   actionEvidence.value = undefined
   try {
     const result = await api<{ fingerprint: string; status: string }>(`/api/v1/alerts/${encodeURIComponent(fingerprint)}/${name}`, {
-      method: 'POST', body: name === 'silence' ? JSON.stringify({ durationMinutes: 1440 }) : undefined,
+      method: 'POST',
+      body: name === 'silence'
+        ? JSON.stringify({ durationMinutes: 1440 })
+        : name === 'accept' ? JSON.stringify({ durationMinutes: acceptDurationMinutes.value }) : undefined,
     })
     const refreshed = await refresh()
-    const expected = name === 'acknowledge' ? 'acknowledged' : 'silenced'
+    const expected = name === 'acknowledge' ? 'acknowledged' : name === 'accept' ? 'accepted' : name === 'unaccept' ? 'firing' : 'silenced'
     const current = refreshed?.items.find((item) => item.fingerprint === fingerprint)
     if (result.fingerprint === fingerprint && current?.status === expected) {
-      actionEvidence.value = { status: 'success', message: `已回读确认告警状态：${expected === 'acknowledged' ? '已确认' : '已静默 24 小时'}` }
+      const label = expected === 'acknowledged' ? '已确认' : expected === 'accepted' ? '已接受风险，不再通知' : expected === 'firing' ? '已取消接受' : '已静默 24 小时'
+      actionEvidence.value = { status: 'success', message: `已回读确认告警状态：${label}` }
       emit('toast', '告警状态已更新并回读确认')
     } else {
       actionEvidence.value = { status: 'warning', message: '写入请求已返回，但告警列表回读尚未确认目标状态' }
@@ -130,6 +137,7 @@ async function bulkAcknowledge() {
       <button :class="{ active: filter === 'active' }" @click="filter = 'active'">触发中 <b>{{ counts.critical + counts.warning }}</b></button>
       <button :class="{ active: filter === 'acknowledged' }" @click="filter = 'acknowledged'">已确认 <b>{{ counts.acknowledged }}</b></button>
       <button :class="{ active: filter === 'silenced' }" @click="filter = 'silenced'">已静默 <b>{{ data?.items.filter((item) => item.status === 'silenced').length || 0 }}</b></button>
+      <button :class="{ active: filter === 'accepted' }" @click="filter = 'accepted'">已接受 <b>{{ counts.accepted }}</b></button>
       <button :class="{ active: filter === 'resolved' }" @click="filter = 'resolved'">已恢复 <b>{{ counts.resolved }}</b></button>
     </div>
     <div class="filter-bar alert-search-bar">
@@ -172,8 +180,16 @@ async function bulkAcknowledge() {
           <i>→</i>
         </button>
         <div v-if="selectedAlert.status !== 'resolved'" class="alert-detail-actions">
-          <button class="secondary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'silence')">静默通知</button>
-          <button class="primary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'acknowledge')">确认并回读</button>
+          <template v-if="selectedAlert.status === 'accepted'">
+            <a class="secondary-button" href="#notifications">查看通知设置</a>
+            <button class="primary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'unaccept')">取消接受风险</button>
+          </template>
+          <template v-else>
+            <button class="secondary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'silence')">静默 24 小时</button>
+            <button class="secondary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'acknowledge')">确认</button>
+            <label class="accept-risk-control"><span>接受期限</span><select v-model.number="acceptDurationMinutes"><option :value="0">永久</option><option :value="10080">7 天</option><option :value="43200">30 天</option></select></label>
+            <button class="primary-button" :disabled="Boolean(actionLoading)" @click="action(selectedAlert.fingerprint, 'accept')">接受风险并停止通知</button>
+          </template>
         </div>
         <div class="recovery-note"><b>当前不能恢复</b><span>规则仍成立；恢复将由系统在证据低于恢复阈值后自动产生。</span></div>
         <a class="section-link" href="#settings">查看完整审计记录 →</a>

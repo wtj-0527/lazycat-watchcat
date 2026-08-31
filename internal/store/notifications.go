@@ -53,6 +53,9 @@ func (s *Store) NotificationSummary(ctx context.Context) (NotificationSummary, e
 
 func (s *Store) NextNotification(ctx context.Context) (PendingNotification, error) {
 	var n PendingNotification
+	if !s.NotificationSettings(ctx).Enabled {
+		return n, sql.ErrNoRows
+	}
 	err := s.db.QueryRowContext(ctx, `SELECT id,alert_fingerprint,transition,title,body,deeplink,attempts FROM notification_outbox WHERE status='pending' AND next_attempt_at<=? ORDER BY id LIMIT 1`, time.Now().UTC().Format(time.RFC3339Nano)).
 		Scan(&n.ID, &n.AlertFingerprint, &n.Transition, &n.Title, &n.Body, &n.Deeplink, &n.Attempts)
 	return n, err

@@ -373,6 +373,55 @@ td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px
 .upgrade-waiting-list > div { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); }
 .upgrade-waiting-list span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 11px; font-weight: 800; }
 .upgrade-waiting-list small { color: var(--muted); }
+.notification-page-heading { align-items: flex-end; }
+.notification-page-heading p, .notification-section .section-title p { margin: 5px 0 0; color: var(--muted); }
+.notification-heading-actions { display: flex; gap: 10px; }
+.notification-master { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 14px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 9%, var(--surface)), var(--surface)); }
+.notification-master.disabled { border-color: var(--border); filter: saturate(.65); }
+.notification-master > div { display: flex; align-items: center; gap: 13px; }
+.notification-master > div > div { display: flex; flex-direction: column; gap: 4px; }
+.notification-master small { color: var(--muted); }
+.notification-master-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: var(--accent); color: #fff; }
+.toggle-control { display: flex; align-items: center; gap: 9px; border: 0; background: transparent; color: var(--muted); font-weight: 750; cursor: pointer; }
+.toggle-control i, .mini-toggle, .quiet-hours-toggle > i { position: relative; width: 42px; height: 24px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 26%, var(--surface)); transition: .2s ease; }
+.toggle-control i::after, .mini-toggle em, .quiet-hours-toggle > i em { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(15,23,42,.2); transition: .2s ease; }
+.toggle-control.active i, .mini-toggle.active, .quiet-hours-toggle.active > i { background: var(--accent); }
+.toggle-control.active i::after, .mini-toggle.active em, .quiet-hours-toggle.active > i em { transform: translateX(18px); }
+.notification-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin: 14px 0; }
+.notification-summary-grid > div { display: flex; flex-direction: column; gap: 5px; min-height: 92px; padding: 15px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface); }
+.notification-summary-grid span, .notification-summary-grid small { color: var(--muted); font-size: 12px; }
+.notification-summary-grid b { font-size: 18px; }
+.notification-settings-layout { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(320px,.8fr); gap: 14px; }
+.notification-section { padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.notification-option-list { display: grid; gap: 8px; }
+.notification-option-list > button, .quiet-hours-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 12px 13px; border: 1px solid var(--border-subtle); border-radius: 10px; background: color-mix(in srgb, var(--surface) 92%, var(--accent)); color: var(--text); text-align: left; cursor: pointer; }
+.notification-option-list > button > span, .quiet-hours-toggle > span { display: flex; flex-direction: column; gap: 4px; }
+.notification-option-list small, .quiet-hours-toggle small { color: var(--muted); }
+.notification-form { display: grid; gap: 12px; }
+.notification-form > label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.notification-form select, .notification-form input, .accept-risk-control select { min-height: 40px; padding: 0 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.quiet-hours-toggle > i { flex: 0 0 auto; }
+.quiet-hours-range { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 10px; }
+.quiet-hours-range label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+.quiet-hours-range > i { padding-bottom: 11px; color: var(--muted); font-style: normal; }
+.accepted-risk-section { margin-top: 14px; }
+.accepted-risk-list { display: grid; gap: 9px; }
+.accepted-risk-list article { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 10px; }
+.accepted-risk-list article > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.accepted-risk-list small, .accepted-risk-list em { color: var(--muted); font-size: 11px; font-style: normal; }
+.accept-risk-control { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
+.accept-risk-control select { min-height: 34px; }
+@media (max-width: 900px) {
+  .notification-summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .notification-settings-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .notification-page-heading, .notification-master { align-items: stretch; flex-direction: column; }
+  .notification-heading-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .notification-summary-grid { grid-template-columns: 1fr; }
+  .accepted-risk-list article { grid-template-columns: auto minmax(0,1fr); }
+  .accepted-risk-list article button { grid-column: 1 / -1; }
+}
 .retention-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
 .image-cleanup-card { margin-top: 16px; }
 .image-cleanup-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }

@@ -72,7 +72,7 @@ describe('SettingsPage tabs', () => {
     await flushPromises()
     const tabs = wrapper.findAll('[role="tab"]')
 
-    expect(tabs).toHaveLength(7)
+    expect(tabs).toHaveLength(6)
     for (const item of tabs) {
       expect(document.getElementById(item.attributes('aria-controls')!)).not.toBeNull()
     }

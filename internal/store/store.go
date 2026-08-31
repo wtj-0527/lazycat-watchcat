@@ -406,6 +406,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(12, datetime('now'))`)
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE alert_instances ADD COLUMN accepted_at TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration alert accepted_at: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE alert_instances ADD COLUMN accepted_until TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migration alert accepted_until: %w", err)
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(13, datetime('now'))`)
 	return nil
 }
 

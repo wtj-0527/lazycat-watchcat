@@ -1024,6 +1024,18 @@ func (s *Server) alertAction(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusConflict, "alert_resolution_automatic", "告警仅在规则不再成立时自动恢复；请先处理原因并等待下一次规则评估")
 		return
 	}
+	if action == "unaccept" {
+		if err := s.store.CancelAcceptedRisk(r.Context(), fingerprint); err != nil {
+			if err == store.ErrAlertNotFound {
+				problem(w, 404, "alert_not_found", "已接受风险不存在")
+			} else {
+				problem(w, 400, "alert_action_failed", err.Error())
+			}
+			return
+		}
+		writeJSON(w, 200, map[string]any{"fingerprint": fingerprint, "status": "firing"})
+		return
+	}
 	var req struct {
 		DurationMinutes int `json:"durationMinutes"`
 	}

@@ -27,14 +27,14 @@ type Alert struct {
 	LastSeenAt      time.Time  `json:"lastSeenAt"`
 	AcknowledgedAt  *time.Time `json:"acknowledgedAt,omitempty"`
 	SilencedUntil   *time.Time `json:"silencedUntil,omitempty"`
+	AcceptedAt      *time.Time `json:"acceptedAt,omitempty"`
+	AcceptedUntil   *time.Time `json:"acceptedUntil,omitempty"`
 	ResolvedAt      *time.Time `json:"resolvedAt,omitempty"`
 	OccurrenceCount int        `json:"occurrenceCount"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 var ErrAlertNotFound = errors.New("alert not found")
-
-const notificationCooldown = 10 * time.Minute
 
 func (s *Store) ReconcileAlerts(ctx context.Context, signals []AlertSignal) error {
 	now := time.Now().UTC()
@@ -53,9 +53,9 @@ func (s *Store) ReconcileAlerts(ctx context.Context, signals []AlertSignal) erro
 			signal.ObservedAt = now
 		}
 		var status, severity, previousSeen string
-		var silenced sql.NullString
+		var silenced, accepted sql.NullString
 		var occurrences int
-		err := tx.QueryRowContext(ctx, `SELECT status,severity,silenced_until,occurrence_count,last_seen_at FROM alert_instances WHERE fingerprint=?`, signal.Fingerprint).Scan(&status, &severity, &silenced, &occurrences, &previousSeen)
+		err := tx.QueryRowContext(ctx, `SELECT status,severity,silenced_until,accepted_until,occurrence_count,last_seen_at FROM alert_instances WHERE fingerprint=?`, signal.Fingerprint).Scan(&status, &severity, &silenced, &accepted, &occurrences, &previousSeen)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			if _, err := tx.ExecContext(ctx, `INSERT INTO alert_instances(fingerprint,device_id,device_name,severity,status,resource,message,value,unit,first_seen_at,last_seen_at,occurrence_count,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -69,7 +69,9 @@ func (s *Store) ReconcileAlerts(ctx context.Context, signals []AlertSignal) erro
 			return err
 		default:
 			nextStatus := status
-			if status == "resolved" || (status == "silenced" && (!silenced.Valid || parseTime(silenced.String).Before(now))) {
+			if status == "resolved" ||
+				(status == "silenced" && (!silenced.Valid || parseTime(silenced.String).Before(now))) ||
+				(status == "accepted" && accepted.Valid && parseTime(accepted.String).Before(now)) {
 				nextStatus = "firing"
 			}
 			if signal.ObservedAt.After(parseTime(previousSeen)) {
@@ -83,14 +85,18 @@ func (s *Store) ReconcileAlerts(ctx context.Context, signals []AlertSignal) erro
 				if err := recordAlertTransition(ctx, tx, signal, status, nextStatus, "threshold-reentered", now, true); err != nil {
 					return err
 				}
-			} else if severity != signal.Severity && signal.Severity == "critical" && nextStatus != "silenced" {
+			} else if severity != signal.Severity && signal.Severity == "critical" && nextStatus != "silenced" && nextStatus != "accepted" {
 				if err := recordAlertTransition(ctx, tx, signal, status, status, "severity-escalated", now, true); err != nil {
 					return err
 				}
 			}
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT fingerprint,device_id,device_name,severity,resource,message,value,unit FROM alert_instances WHERE status IN ('firing','acknowledged','silenced')`)
+	rows, err := tx.QueryContext(ctx, `SELECT fingerprint,device_id,device_name,severity,resource,message,value,unit
+		FROM alert_instances
+		WHERE status IN ('firing','acknowledged','silenced')
+		   OR (status='accepted' AND accepted_until IS NOT NULL AND accepted_until<=?)`,
+		now.Format(time.RFC3339Nano))
 	if err != nil {
 		return err
 	}
@@ -128,6 +134,7 @@ func recordAlertTransition(ctx context.Context, tx *sql.Tx, a AlertSignal, from,
 	if !notify {
 		return nil
 	}
+	settings := notificationSettingsTx(ctx, tx)
 	var maintenance int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM maintenance_windows WHERE enabled=1 AND starts_at<=? AND ends_at>?`,
 		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)).Scan(&maintenance); err == nil && maintenance > 0 {
@@ -141,9 +148,12 @@ func recordAlertTransition(ctx context.Context, tx *sql.Tx, a AlertSignal, from,
 		title = "WatchCat 告警已恢复"
 		body = fmt.Sprintf("%s · %s：%s", a.DeviceName, a.Resource, a.Message)
 	}
+	if !notificationEventEnabled(settings, a.Severity, transition, from) {
+		return nil
+	}
 	var recent int
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE alert_fingerprint=? AND transition=? AND created_at>=?`,
-		a.Fingerprint, transition, now.Add(-notificationCooldown).Format(time.RFC3339Nano)).Scan(&recent)
+		a.Fingerprint, transition, now.Add(-time.Duration(settings.CooldownMinutes)*time.Minute).Format(time.RFC3339Nano)).Scan(&recent)
 	if err != nil {
 		return err
 	}
@@ -152,12 +162,12 @@ func recordAlertTransition(ctx context.Context, tx *sql.Tx, a AlertSignal, from,
 	}
 	dedupe := fmt.Sprintf("%s:%s:%d", a.Fingerprint, transition, now.UTC().UnixNano())
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_outbox(dedupe_key,alert_fingerprint,transition,title,body,deeplink,next_attempt_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		dedupe, a.Fingerprint, transition, title, body, "lzc://community.lazycat.app.watchcat/alerts", now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+		dedupe, a.Fingerprint, transition, title, body, "lzc://community.lazycat.app.watchcat/alerts", notificationNextAttempt(now, settings).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) ListAlerts(ctx context.Context, includeResolved bool) ([]Alert, error) {
-	query := `SELECT fingerprint,device_id,device_name,severity,status,resource,message,value,unit,first_seen_at,last_seen_at,acknowledged_at,silenced_until,resolved_at,occurrence_count,updated_at FROM alert_instances`
+	query := `SELECT fingerprint,device_id,device_name,severity,status,resource,message,value,unit,first_seen_at,last_seen_at,acknowledged_at,silenced_until,accepted_at,accepted_until,resolved_at,occurrence_count,updated_at FROM alert_instances`
 	if !includeResolved {
 		query += ` WHERE status!='resolved'`
 	}
@@ -171,13 +181,14 @@ func (s *Store) ListAlerts(ctx context.Context, includeResolved bool) ([]Alert, 
 	for rows.Next() {
 		var a Alert
 		var first, last, updated string
-		var ack, silence, resolved sql.NullString
-		if err := rows.Scan(&a.Fingerprint, &a.DeviceID, &a.DeviceName, &a.Severity, &a.Status, &a.Resource, &a.Message, &a.Value, &a.Unit, &first, &last, &ack, &silence, &resolved, &a.OccurrenceCount, &updated); err != nil {
+		var ack, silence, acceptedAt, acceptedUntil, resolved sql.NullString
+		if err := rows.Scan(&a.Fingerprint, &a.DeviceID, &a.DeviceName, &a.Severity, &a.Status, &a.Resource, &a.Message, &a.Value, &a.Unit, &first, &last, &ack, &silence, &acceptedAt, &acceptedUntil, &resolved, &a.OccurrenceCount, &updated); err != nil {
 			return nil, err
 		}
 		a.ObservedAt = parseTime(last)
 		a.FirstSeenAt, a.LastSeenAt, a.UpdatedAt = parseTime(first), parseTime(last), parseTime(updated)
-		a.AcknowledgedAt, a.SilencedUntil, a.ResolvedAt = nullableTime(ack), nullableTime(silence), nullableTime(resolved)
+		a.AcknowledgedAt, a.SilencedUntil = nullableTime(ack), nullableTime(silence)
+		a.AcceptedAt, a.AcceptedUntil, a.ResolvedAt = nullableTime(acceptedAt), nullableTime(acceptedUntil), nullableTime(resolved)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -210,6 +221,13 @@ func (s *Store) SetAlertState(ctx context.Context, fingerprint, action string, s
 			silenceFor = 24 * time.Hour
 		}
 		result, err = tx.ExecContext(ctx, `UPDATE alert_instances SET status='silenced',silenced_until=?,updated_at=? WHERE fingerprint=? AND status!='resolved'`, now.Add(silenceFor).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), fingerprint)
+	case "accept":
+		var until any
+		if silenceFor > 0 {
+			until = now.Add(silenceFor).Format(time.RFC3339Nano)
+		}
+		result, err = tx.ExecContext(ctx, `UPDATE alert_instances SET status='accepted',accepted_at=?,accepted_until=?,updated_at=? WHERE fingerprint=? AND status!='resolved'`,
+			now.Format(time.RFC3339Nano), until, now.Format(time.RFC3339Nano), fingerprint)
 	default:
 		return errors.New("unsupported alert action")
 	}
@@ -219,7 +237,7 @@ func (s *Store) SetAlertState(ctx context.Context, fingerprint, action string, s
 	if n, _ := result.RowsAffected(); n != 1 {
 		return ErrAlertNotFound
 	}
-	if err := recordAlertTransition(ctx, tx, a, old, map[string]string{"acknowledge": "acknowledged", "silence": "silenced"}[action], "user-"+action, now, false); err != nil {
+	if err := recordAlertTransition(ctx, tx, a, old, map[string]string{"acknowledge": "acknowledged", "silence": "silenced", "accept": "accepted"}[action], "user-"+action, now, false); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_log(action,subject_type,subject_id,metadata_json,created_at) VALUES(?,?,?,?,?)`, "alert."+action, "alert", fingerprint, "{}", now.Format(time.RFC3339Nano))

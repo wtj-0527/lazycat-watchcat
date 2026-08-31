@@ -9,6 +9,7 @@ import AppsPage from '@/pages/AppsPage.vue'
 import UsersPage from '@/pages/UsersPage.vue'
 import StoragePage from '@/pages/StoragePage.vue'
 import AlertsPage from '@/pages/AlertsPage.vue'
+import NotificationsPage from '@/pages/NotificationsPage.vue'
 import InspectionsPage from '@/pages/InspectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import AppIcon from '@/components/AppIcon.vue'
@@ -20,10 +21,10 @@ import { globalPollingInterval, globalRealtime, toggleGlobalRealtime } from '@/r
 import { applyTheme, storedTheme, type ThemeMode } from '@/theme'
 import { frontendVersion, versionReload } from '@/version'
 
-type Page = 'overview' | 'devices' | 'apps' | 'users' | 'storage' | 'alerts' | 'inspections' | 'onboarding' | 'settings'
+type Page = 'overview' | 'devices' | 'apps' | 'users' | 'storage' | 'alerts' | 'notifications' | 'inspections' | 'onboarding' | 'settings'
 const navs: Array<[Page, string]> = [
   ['overview', '总览'], ['devices', '设备'], ['apps', '应用'], ['users', '用户'],
-  ['storage', '存储'], ['alerts', '告警'], ['inspections', '巡检'],
+  ['storage', '存储'], ['alerts', '告警'], ['notifications', '通知'], ['inspections', '巡检'],
   ['onboarding', '接入'], ['settings', '设置'],
 ]
 const pages = {
@@ -33,6 +34,7 @@ const pages = {
   users: UsersPage,
   storage: StoragePage,
   alerts: AlertsPage,
+  notifications: NotificationsPage,
   inspections: InspectionsPage,
   onboarding: SettingsPage,
   settings: SettingsPage,
@@ -70,7 +72,7 @@ const onlineCount = computed(() => fleet.value?.stats.online ?? 0)
 const staleCount = computed(() => fleet.value?.devices.filter((device) => device.stale).length ?? 0)
 const freshness = computed(() => ago(fleet.value?.updatedAt))
 const activeAlerts = computed(() => (fleet.value?.alerts || []).filter((alert) =>
-  alert.status !== 'resolved' && (globalDeviceId.value === 'all' || alert.deviceId === globalDeviceId.value)))
+  alert.status !== 'resolved' && alert.status !== 'accepted' && (globalDeviceId.value === 'all' || alert.deviceId === globalDeviceId.value)))
 const activeAlertCount = computed(() => activeAlerts.value.length)
 const hasCriticalAlert = computed(() => activeAlerts.value.some((alert) => alert.severity === 'critical'))
 const themes: Array<{ mode: ThemeMode; label: string; symbol: string }> = [

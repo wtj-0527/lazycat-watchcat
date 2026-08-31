@@ -45,10 +45,10 @@ interface UpgradeRequest {
   phase?: string; percent?: number; completedBytes?: number; totalBytes?: number; updatedAt?: string
 }
 interface UpgradeCoordinator { active?: UpgradeRequest; queue: UpgradeRequest[]; updatedAt: string }
-type Tab = 'onboarding' | 'groups' | 'capabilities' | 'thresholds' | 'notifications' | 'maintenance' | 'retention' | 'audit'
+type Tab = 'onboarding' | 'groups' | 'capabilities' | 'thresholds' | 'maintenance' | 'retention' | 'audit'
 const tabs: Array<[Tab, string]> = [
   ['groups', '设备组与标签'], ['capabilities', 'Collector 能力'], ['thresholds', '告警阈值'],
-  ['notifications', '通知渠道'], ['maintenance', '维护窗口'], ['retention', '数据保留'], ['audit', '用户与审计'],
+  ['maintenance', '维护窗口'], ['retention', '数据保留'], ['audit', '用户与审计'],
 ]
 const props = defineProps<{ initialTab?: Tab }>()
 const isOnboardingRoute = computed(() => props.initialTab === 'onboarding')
@@ -232,11 +232,6 @@ async function addMaintenanceWindow() {
 async function deleteMaintenanceWindow(id: string) {
   await api(`/api/v1/maintenance-windows/${encodeURIComponent(id)}`, { method: 'DELETE' })
   await refresh()
-}
-async function sendTestNotification() {
-  await api('/api/v1/notifications/test', { method: 'POST' })
-  settingsEvidence.value = { status: 'success', message: '测试通知已进入持久投递队列' }
-  emit('toast', '测试通知已排队')
 }
 async function saveOperationalSettings() {
   if (!data.value) return
@@ -611,11 +606,6 @@ async function deleteUnusedImage(image: UnusedImage) {
         <tr v-for="rule in rulePagination.pagedItems.value" :key="rule.metric"><td><b>{{ rule.label }}</b></td><td><code>{{ rule.metric }}</code></td><td><input v-model.number="rule.warning" type="number" min="0"></td><td><input v-model.number="rule.critical" type="number" min="0"></td><td><input v-model="rule.enabled" type="checkbox"></td></tr>
       </tbody></table></div>
       <AppPagination v-model:page="rulePagination.page.value" v-model:page-size="rulePagination.pageSize.value" :total="rulePagination.total.value" :page-count="rulePagination.pageCount.value" :range-start="rulePagination.rangeStart.value" :range-end="rulePagination.rangeEnd.value" label="告警阈值分页" />
-    </section>
-
-    <section v-else-if="data && tab === 'notifications'" class="card">
-      <div class="section-title"><div><h2>通知渠道</h2></div><button class="secondary-button" @click="sendTestNotification">发送测试通知</button></div>
-      <div class="settings-grid"><div><span>当前渠道</span><b>{{ data.settings.notificationChannel === 'lazycat' ? 'LazyCat 系统通知' : data.settings.notificationChannel }}</b><StatusPill status="available" /></div><div><span>投递策略</span><b>{{ data.settings.notificationDelivery === 'outbox-retry' ? '持久队列重试' : data.settings.notificationDelivery }}</b><StatusPill status="available" /></div><div><span>待发送</span><b>{{ data.stability.pendingNotifications }}</b><StatusPill :status="data.stability.pendingNotifications ? 'warning' : 'healthy'" /></div></div>
     </section>
 
     <section v-else-if="data && tab === 'maintenance'" class="card">

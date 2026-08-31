@@ -64,6 +64,8 @@ export interface Alert {
   lastSeenAt?: string
   observedAt?: string
   collectedAt?: string
+  acceptedAt?: string
+  acceptedUntil?: string
 }
 
 export interface Overview {

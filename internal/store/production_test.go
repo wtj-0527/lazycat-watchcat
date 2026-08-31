@@ -97,6 +97,68 @@ func TestPersistentAlertStateMachine(t *testing.T) {
 	}
 }
 
+func TestAcceptedRiskSuppressesNotificationsUntilCancelled(t *testing.T) {
+	ctx := context.Background()
+	st, paired := testStoreDevice(t)
+	defer st.Close()
+	signal := AlertSignal{
+		Fingerprint: "accepted-risk", DeviceID: paired.DeviceID, DeviceName: "节点一",
+		Severity: "critical", Resource: "/dev/sda", Message: "Btrfs 设备错误", Value: 1,
+		ObservedAt: time.Now().UTC(),
+	}
+	if err := st.ReconcileAlerts(ctx, []AlertSignal{signal}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAlertState(ctx, signal.Fingerprint, "accept", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReconcileAlerts(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	alerts, _ := st.ListAcceptedRisks(ctx)
+	if len(alerts) != 1 || alerts[0].AcceptedAt == nil || alerts[0].AcceptedUntil != nil {
+		t.Fatalf("accepted=%+v", alerts)
+	}
+	var notifications int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM notification_outbox WHERE alert_fingerprint=?`, signal.Fingerprint).Scan(&notifications); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 1 {
+		t.Fatalf("accepted risk queued extra notifications: %d", notifications)
+	}
+	if err := st.CancelAcceptedRisk(ctx, signal.Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := st.ListAlerts(ctx, false)
+	if len(active) != 1 || active[0].Status != "firing" {
+		t.Fatalf("cancelled acceptance=%+v", active)
+	}
+}
+
+func TestNotificationSettingsSuppressDisabledSeverity(t *testing.T) {
+	ctx := context.Background()
+	st, paired := testStoreDevice(t)
+	defer st.Close()
+	settings := DefaultNotificationSettings()
+	settings.WarningAlerts = false
+	if err := st.SetNotificationSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReconcileAlerts(ctx, []AlertSignal{{
+		Fingerprint: "warning-disabled", DeviceID: paired.DeviceID, DeviceName: "节点一",
+		Severity: "warning", Resource: "/", Message: "warning", ObservedAt: time.Now().UTC(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var notifications int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM notification_outbox WHERE alert_fingerprint='warning-disabled'`).Scan(&notifications); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 0 {
+		t.Fatalf("warning notification was queued: %d", notifications)
+	}
+}
+
 func TestInspectionEvidenceAndRetentionRollupAreIdempotent(t *testing.T) {
 	ctx := context.Background()
 	st, paired := testStoreDevice(t)

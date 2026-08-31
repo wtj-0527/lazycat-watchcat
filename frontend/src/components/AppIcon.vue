@@ -58,6 +58,10 @@ defineProps<{ name: string; size?: number }>()
       <path d="M10.3 3.7 2.8 17a2 2 0 0 0 1.8 3h14.8a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0Z" />
       <path d="M12 9v4M12 17h.01" />
     </template>
+    <template v-else-if="name === 'notifications'">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+      <path d="M10 21h4M16.5 4.5 19 2" />
+    </template>
     <template v-else-if="name === 'inspections'">
       <path d="M9 11l2 2 4-5" />
       <path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />

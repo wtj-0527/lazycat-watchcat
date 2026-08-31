@@ -195,6 +195,10 @@ func (s *Server) auditView(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
+	if !s.store.NotificationSettings(r.Context()).Enabled {
+		problem(w, http.StatusConflict, "notifications_disabled", "通知总开关已关闭")
+		return
+	}
 	key := fmt.Sprintf("test:%d", time.Now().UTC().UnixNano())
 	if err := s.store.QueueNotification(r.Context(), key, "WatchCat 测试通知", "LazyCat 系统通知渠道工作正常", "lzc://community.lazycat.app.watchcat/settings"); err != nil {
 		problem(w, 500, "notification_test_failed", err.Error())
@@ -202,6 +206,37 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.RecordAudit(r.Context(), "notification.test_queued", "notification", key, nil)
 	writeJSON(w, 202, map[string]any{"status": "queued"})
+}
+
+func (s *Server) notificationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		value := s.store.NotificationSettings(r.Context())
+		if decodeJSON(r, &value) != nil {
+			problem(w, 400, "invalid_notification_settings", "通知设置参数无效")
+			return
+		}
+		if err := s.store.SetNotificationSettings(r.Context(), value); err != nil {
+			problem(w, 400, "invalid_notification_settings", err.Error())
+			return
+		}
+		writeJSON(w, 200, value)
+		return
+	}
+	settings := s.store.NotificationSettings(r.Context())
+	summary, err := s.store.NotificationSummary(r.Context())
+	if err != nil {
+		problem(w, 500, "notification_summary_failed", err.Error())
+		return
+	}
+	accepted, err := s.store.ListAcceptedRisks(r.Context())
+	if err != nil {
+		problem(w, 500, "accepted_risks_failed", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"settings": settings, "summary": summary, "acceptedRisks": accepted,
+		"channel": "lazycat", "delivery": "outbox-retry", "updatedAt": time.Now().UTC(),
+	})
 }
 
 func (s *Server) bulkAcknowledgeAlerts(w http.ResponseWriter, r *http.Request) {
