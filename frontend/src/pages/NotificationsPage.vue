@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { usePolling } from '@/composables'
 import type { Alert } from '@/types'
@@ -17,6 +17,17 @@ interface NotificationSettings {
   quietHoursEnabled: boolean
   quietStart: string
   quietEnd: string
+  recipientMode: 'admins' | 'selected'
+  recipientKeys: string[]
+}
+interface NotificationRecipient {
+  key: string
+  deviceId: string
+  deviceName: string
+  userId: string
+  nickname: string
+  role: string
+  online: boolean
 }
 interface Payload {
   settings: NotificationSettings
@@ -24,21 +35,53 @@ interface Payload {
   acceptedRisks: Array<Alert & { acceptedAt?: string; acceptedUntil?: string }>
   channel: string
   delivery: string
+  recipients: NotificationRecipient[]
 }
 
 const emit = defineEmits<{ toast: [message: string] }>()
 const saving = ref(false)
 const testing = ref(false)
 const { data, loading, error, refresh } = usePolling(() => api<Payload>('/api/v1/notification-settings'))
+const effectiveRecipients = computed(() => {
+  if (!data.value) return []
+  return data.value.settings.recipientMode === 'admins'
+    ? data.value.recipients.filter((item) => item.role === 'admin')
+    : data.value.recipients.filter((item) => data.value?.settings.recipientKeys.includes(item.key))
+})
+const recipientGroups = computed(() => {
+  const groups = new Map<string, { id: string; name: string; users: NotificationRecipient[] }>()
+  for (const recipient of data.value?.recipients || []) {
+    const current = groups.get(recipient.deviceId) || { id: recipient.deviceId, name: recipient.deviceName || recipient.deviceId, users: [] }
+    current.users.push(recipient)
+    groups.set(recipient.deviceId, current)
+  }
+  return [...groups.values()]
+})
 
 function toggle(key: keyof NotificationSettings) {
   if (!data.value || typeof data.value.settings[key] !== 'boolean') return
   ;(data.value.settings[key] as boolean) = !(data.value.settings[key] as boolean)
 }
+function selectRecipientMode(mode: 'admins' | 'selected') {
+  if (!data.value) return
+  data.value.settings.recipientMode = mode
+  if (mode === 'selected' && !data.value.settings.recipientKeys.length) {
+    data.value.settings.recipientKeys = data.value.recipients.filter((item) => item.role === 'admin').map((item) => item.key)
+  }
+}
+function toggleRecipient(key: string) {
+  if (!data.value) return
+  const keys = data.value.settings.recipientKeys
+  data.value.settings.recipientKeys = keys.includes(key) ? keys.filter((item) => item !== key) : [...keys, key]
+}
 async function save() {
   if (!data.value || saving.value) return
   saving.value = true
   try {
+    if (data.value.settings.recipientMode === 'selected' && !data.value.settings.recipientKeys.length) {
+      emit('toast', '请至少选择一位通知接收人')
+      return
+    }
     await api('/api/v1/notification-settings', { method: 'PUT', body: JSON.stringify(data.value.settings) })
     await refresh()
     emit('toast', '通知设置已保存')
@@ -83,11 +126,46 @@ async function cancelAccepted(alert: Alert) {
       </section>
 
       <div class="notification-summary-grid">
-        <div><span>发送渠道</span><b>LazyCat 系统通知</b><small>持久队列失败自动重试</small></div>
+        <div><span>通知接收人</span><b>{{ effectiveRecipients.length }} 人</b><small>{{ data.settings.recipientMode === 'admins' ? '仅通知各设备管理员' : '仅通知已选择的用户' }}</small></div>
         <div><span>等待发送</span><b>{{ data.summary.pending }}</b><small>关闭总开关后不会继续发送</small></div>
         <div><span>已发送</span><b>{{ data.summary.sent }}</b><small>历史累计成功投递</small></div>
         <div><span>发送失败</span><b>{{ data.summary.failed }}</b><StatusPill :status="data.summary.failed ? 'warning' : 'healthy'" /></div>
       </div>
+
+      <section class="notification-section notification-recipient-section">
+        <div class="section-title">
+          <div><h2>通知接收人</h2><p>通知只发送给对应用户的在线终端，不再向设备上的所有用户广播。</p></div>
+          <b>{{ effectiveRecipients.length }} 人</b>
+        </div>
+        <div class="recipient-mode-switch" role="group" aria-label="通知接收范围">
+          <button :class="{ active: data.settings.recipientMode === 'admins' }" @click="selectRecipientMode('admins')"><b>仅管理员</b><small>自动通知每台设备的管理员</small></button>
+          <button :class="{ active: data.settings.recipientMode === 'selected' }" @click="selectRecipientMode('selected')"><b>指定用户</b><small>按设备精确选择通知对象</small></button>
+        </div>
+        <div v-if="data.settings.recipientMode === 'selected'" class="notification-recipient-groups">
+          <article v-for="group in recipientGroups" :key="group.id">
+            <header><div><b>{{ group.name }}</b><small>{{ group.users.length }} 位用户</small></div></header>
+            <div>
+              <button
+                v-for="recipient in group.users"
+                :key="recipient.key"
+                class="notification-recipient"
+                :class="{ selected: data.settings.recipientKeys.includes(recipient.key) }"
+                :aria-pressed="data.settings.recipientKeys.includes(recipient.key)"
+                @click="toggleRecipient(recipient.key)"
+              >
+                <i>{{ (recipient.nickname || recipient.userId).slice(0, 1).toUpperCase() }}</i>
+                <span><b>{{ recipient.nickname || recipient.userId }}</b><small>{{ recipient.userId }} · {{ recipient.role === 'admin' ? '管理员' : '普通用户' }}</small></span>
+                <em :class="{ online: recipient.online }">{{ recipient.online ? '在线' : '离线' }}</em>
+                <strong><span /></strong>
+              </button>
+            </div>
+          </article>
+          <div v-if="!recipientGroups.length" class="inline-empty">尚未采集到用户信息，请先在“用户”页面刷新设备用户。</div>
+        </div>
+        <div v-else class="recipient-admin-note">
+          <span>✓</span><div><b>管理员自动同步</b><small>新增或调整管理员后会自动更新接收范围；普通用户不会收到通知。</small></div>
+        </div>
+      </section>
 
       <div class="notification-settings-layout">
         <section class="notification-section">

@@ -5,19 +5,23 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strings"
 	"time"
 )
 
 type NotificationSettings struct {
-	Enabled               bool   `json:"enabled"`
-	CriticalAlerts        bool   `json:"criticalAlerts"`
-	WarningAlerts         bool   `json:"warningAlerts"`
-	RecoveryNotifications bool   `json:"recoveryNotifications"`
-	InspectionResults     bool   `json:"inspectionResults"`
-	CooldownMinutes       int    `json:"cooldownMinutes"`
-	QuietHoursEnabled     bool   `json:"quietHoursEnabled"`
-	QuietStart            string `json:"quietStart"`
-	QuietEnd              string `json:"quietEnd"`
+	Enabled               bool     `json:"enabled"`
+	CriticalAlerts        bool     `json:"criticalAlerts"`
+	WarningAlerts         bool     `json:"warningAlerts"`
+	RecoveryNotifications bool     `json:"recoveryNotifications"`
+	InspectionResults     bool     `json:"inspectionResults"`
+	CooldownMinutes       int      `json:"cooldownMinutes"`
+	QuietHoursEnabled     bool     `json:"quietHoursEnabled"`
+	QuietStart            string   `json:"quietStart"`
+	QuietEnd              string   `json:"quietEnd"`
+	RecipientMode         string   `json:"recipientMode"`
+	RecipientKeys         []string `json:"recipientKeys"`
 }
 
 func DefaultNotificationSettings() NotificationSettings {
@@ -25,18 +29,22 @@ func DefaultNotificationSettings() NotificationSettings {
 		Enabled: true, CriticalAlerts: true, WarningAlerts: true,
 		RecoveryNotifications: true, InspectionResults: true,
 		CooldownMinutes: 10, QuietStart: "22:00", QuietEnd: "08:00",
+		RecipientMode: "admins", RecipientKeys: []string{},
 	}
 }
 
 func (s *Store) NotificationSettings(ctx context.Context) NotificationSettings {
 	result := DefaultNotificationSettings()
 	_, _ = s.GetSystemState(ctx, "notification.settings", &result)
+	normalizeNotificationSettings(&result)
 	return result
 }
 
 func (s *Store) SetNotificationSettings(ctx context.Context, value NotificationSettings) error {
+	normalizeNotificationSettings(&value)
 	if value.CooldownMinutes < 1 || value.CooldownMinutes > 1440 ||
-		!validClock(value.QuietStart) || !validClock(value.QuietEnd) {
+		!validClock(value.QuietStart) || !validClock(value.QuietEnd) ||
+		(value.RecipientMode == "selected" && len(value.RecipientKeys) == 0) {
 		return errors.New("invalid notification settings")
 	}
 	if err := s.SetSystemState(ctx, "notification.settings", value); err != nil {
@@ -57,7 +65,88 @@ func notificationSettingsTx(ctx context.Context, tx *sql.Tx) NotificationSetting
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM system_state WHERE name='notification.settings'`).Scan(&raw); err == nil {
 		_ = json.Unmarshal([]byte(raw), &result)
 	}
+	normalizeNotificationSettings(&result)
 	return result
+}
+
+func notificationRecipientKey(deviceID, userID string) string {
+	return strings.TrimSpace(deviceID) + "::" + strings.TrimSpace(userID)
+}
+
+func normalizeNotificationSettings(value *NotificationSettings) {
+	if value.RecipientMode != "selected" {
+		value.RecipientMode = "admins"
+	}
+	seen := map[string]bool{}
+	keys := make([]string, 0, len(value.RecipientKeys))
+	for _, key := range value.RecipientKeys {
+		key = strings.TrimSpace(key)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	value.RecipientKeys = keys
+}
+
+type NotificationRecipient struct {
+	Key        string              `json:"key"`
+	DeviceID   string              `json:"deviceId"`
+	DeviceName string              `json:"deviceName"`
+	UserID     string              `json:"userId"`
+	Nickname   string              `json:"nickname"`
+	Role       string              `json:"role"`
+	Online     bool                `json:"online"`
+	EndDevices []RuntimeUserDevice `json:"-"`
+}
+
+func (s *Store) ListNotificationRecipients(ctx context.Context) ([]NotificationRecipient, error) {
+	users, err := s.ListRuntimeUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	devices, err := s.ListDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	deviceNames := map[string]string{}
+	for _, device := range devices {
+		deviceNames[device.ID] = device.Name
+	}
+	result := make([]NotificationRecipient, 0, len(users))
+	for _, user := range users {
+		result = append(result, NotificationRecipient{
+			Key: notificationRecipientKey(user.DeviceID, user.UserID), DeviceID: user.DeviceID,
+			DeviceName: deviceNames[user.DeviceID], UserID: user.UserID, Nickname: user.Nickname,
+			Role: user.Role, Online: user.Online, EndDevices: append([]RuntimeUserDevice{}, user.Devices...),
+		})
+	}
+	return result, nil
+}
+
+func (s *Store) SelectedNotificationRecipients(ctx context.Context, targetDeviceID string) ([]NotificationRecipient, error) {
+	settings := s.NotificationSettings(ctx)
+	recipients, err := s.ListNotificationRecipients(ctx)
+	if err != nil {
+		return nil, err
+	}
+	selected := map[string]bool{}
+	for _, key := range settings.RecipientKeys {
+		selected[key] = true
+	}
+	out := make([]NotificationRecipient, 0, len(recipients))
+	for _, recipient := range recipients {
+		if targetDeviceID != "" && recipient.DeviceID != targetDeviceID {
+			continue
+		}
+		if settings.RecipientMode == "admins" && recipient.Role == "admin" ||
+			settings.RecipientMode == "selected" && selected[recipient.Key] {
+			out = append(out, recipient)
+		}
+	}
+	return out, nil
 }
 
 func validClock(value string) bool {

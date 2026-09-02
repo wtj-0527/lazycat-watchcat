@@ -47,8 +47,6 @@ const { data: fleet } = usePolling(async () => {
   return { ...result, devices: result.devices || [], alerts: result.alerts || [] }
 }, globalPollingInterval)
 const toastMessage = ref('')
-const globalQuery = ref('')
-const searchNonce = ref(0)
 const themeMode = ref<ThemeMode>(storedTheme())
 const deviceDark = ref(false)
 let deviceThemeQuery: MediaQueryList | undefined
@@ -78,7 +76,7 @@ const hasCriticalAlert = computed(() => activeAlerts.value.some((alert) => alert
 const themes: Array<{ mode: ThemeMode; label: string; symbol: string }> = [
   { mode: 'light', label: '白天', symbol: '☀' },
   { mode: 'dark', label: '夜晚', symbol: '☾' },
-  { mode: 'device', label: '设备', symbol: '◐' },
+  { mode: 'device', label: '跟随系统', symbol: '◐' },
 ]
 const currentTheme = computed(() => themes.find((item) => item.mode === themeMode.value) || themes[2])
 const nextTheme = computed(() => themes[(themes.findIndex((item) => item.mode === themeMode.value) + 1) % themes.length])
@@ -116,16 +114,6 @@ async function checkVersion() {
   } catch {
     if (version.value === '—') version.value = '—'
   }
-}
-function submitGlobalSearch() {
-  const value = globalQuery.value.trim().toLowerCase()
-  if (!value) return
-  sessionStorage.setItem('watchcatSearch', globalQuery.value.trim())
-  if (value.includes('告警') || value.includes('alert')) navigate('alerts')
-  else if (value.includes('应用') || value.includes('app')) navigate('apps')
-  else navigate('devices')
-  searchNonce.value++
-  toast(`正在搜索“${globalQuery.value.trim()}”`)
 }
 function selectTheme(mode: ThemeMode) {
   themeMode.value = mode
@@ -207,10 +195,6 @@ onBeforeUnmount(() => {
           :title="globalRealtime ? '关闭全局实时模式并恢复每 30 秒刷新' : '所有页面每 5 秒读取最新数据，10 分钟后自动关闭'"
           @click="toggleGlobalRealtime"
         ><i />{{ globalRealtime ? '实时 · 5 秒' : '实时' }}</button>
-        <form class="global-search" role="search" @submit.prevent="submitGlobalSearch">
-          <AppIcon name="search" :size="16" />
-          <input v-model="globalQuery" aria-label="全局搜索" placeholder="搜索设备、应用、告警...">
-        </form>
         <button
           class="theme-toggle"
           type="button"
@@ -232,7 +216,7 @@ onBeforeUnmount(() => {
     </header>
     <section id="content" :class="`page-${page}`">
       <Transition name="page" mode="out-in">
-        <div :key="`${page}-${searchNonce}`" class="page-view">
+        <div :key="page" class="page-view">
           <component :is="pageComponent" v-bind="pageProps" @toast="toast" />
         </div>
       </Transition>

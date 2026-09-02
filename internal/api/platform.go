@@ -233,9 +233,15 @@ func (s *Server) notificationSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "accepted_risks_failed", err.Error())
 		return
 	}
+	recipients, err := s.store.ListNotificationRecipients(r.Context())
+	if err != nil {
+		problem(w, 500, "notification_recipients_failed", err.Error())
+		return
+	}
 	writeJSON(w, 200, map[string]any{
 		"settings": settings, "summary": summary, "acceptedRisks": accepted,
-		"channel": "lazycat", "delivery": "outbox-retry", "updatedAt": time.Now().UTC(),
+		"recipients": recipients,
+		"channel":    "lazycat", "delivery": "outbox-retry", "updatedAt": time.Now().UTC(),
 	})
 }
 

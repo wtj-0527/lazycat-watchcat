@@ -9,7 +9,6 @@ import (
 	"time"
 
 	gohelper "gitee.com/linakesi/lzc-sdk/lang/go"
-	"gitee.com/linakesi/lzc-sdk/lang/go/common"
 	"gitee.com/linakesi/lzc-sdk/lang/go/localdevice"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -39,7 +38,7 @@ func (n *LazyCat) ProcessPending(ctx context.Context, limit int) {
 			n.logger.Warn("read notification outbox", "error", err)
 			return
 		}
-		err = n.send(ctx, item.Title, item.Body, item.Deeplink)
+		err = n.send(ctx, item.TargetDeviceID, item.Title, item.Body, item.Deeplink)
 		if err == nil {
 			_ = n.store.MarkNotificationSent(ctx, item.ID)
 			n.logger.Info("lazycat notification delivered", "alert", item.AlertFingerprint, "transition", item.Transition)
@@ -51,31 +50,24 @@ func (n *LazyCat) ProcessPending(ctx context.Context, limit int) {
 	}
 }
 
-func (n *LazyCat) send(ctx context.Context, title, body, deeplink string) error {
+func (n *LazyCat) send(ctx context.Context, targetDeviceID, title, body, deeplink string) error {
 	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	gateway, err := gohelper.NewAPIGateway(callCtx)
+	recipients, err := n.store.SelectedNotificationRecipients(callCtx, targetDeviceID)
 	if err != nil {
-		return fmt.Errorf("open LazyCat API gateway: %w", err)
-	}
-	defer gateway.Close()
-	uids, err := gateway.Users.ListUIDs(callCtx, &common.ListUIDsRequest{})
-	if err != nil {
-		return fmt.Errorf("list LazyCat users: %w", err)
+		return fmt.Errorf("list notification recipients: %w", err)
 	}
 	sent := 0
 	var lastErr error
-	for _, uid := range uids.GetUids() {
-		devices, err := gateway.Devices.ListEndDevices(callCtx, &common.ListEndDeviceRequest{Uid: uid})
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		for _, device := range devices.GetDevices() {
-			if device == nil || !device.GetIsOnline() {
+	seenEndpoints := map[string]bool{}
+	for _, recipient := range recipients {
+		for _, device := range recipient.EndDevices {
+			endpoint := strings.TrimSpace(device.DeviceAPIURL)
+			if !device.Online || endpoint == "" || seenEndpoints[endpoint] {
 				continue
 			}
-			if err := notifyDevice(callCtx, device.GetDeviceApiUrl(), title, body, deeplink); err != nil {
+			seenEndpoints[endpoint] = true
+			if err := notifyDevice(callCtx, endpoint, title, body, deeplink); err != nil {
 				lastErr = err
 				continue
 			}
@@ -86,7 +78,7 @@ func (n *LazyCat) send(ctx context.Context, title, body, deeplink string) error 
 		if lastErr != nil {
 			return fmt.Errorf("no notification delivered: %w", lastErr)
 		}
-		return fmt.Errorf("no online LazyCat client")
+		return fmt.Errorf("no online client for configured notification recipients")
 	}
 	return nil
 }

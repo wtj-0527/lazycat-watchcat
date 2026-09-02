@@ -11,6 +11,7 @@ import (
 type PendingNotification struct {
 	ID               int64
 	AlertFingerprint string
+	TargetDeviceID   string
 	Transition       string
 	Title            string
 	Body             string
@@ -56,8 +57,10 @@ func (s *Store) NextNotification(ctx context.Context) (PendingNotification, erro
 	if !s.NotificationSettings(ctx).Enabled {
 		return n, sql.ErrNoRows
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT id,alert_fingerprint,transition,title,body,deeplink,attempts FROM notification_outbox WHERE status='pending' AND next_attempt_at<=? ORDER BY id LIMIT 1`, time.Now().UTC().Format(time.RFC3339Nano)).
-		Scan(&n.ID, &n.AlertFingerprint, &n.Transition, &n.Title, &n.Body, &n.Deeplink, &n.Attempts)
+	err := s.db.QueryRowContext(ctx, `SELECT n.id,n.alert_fingerprint,COALESCE(a.device_id,''),n.transition,n.title,n.body,n.deeplink,n.attempts
+		FROM notification_outbox n LEFT JOIN alert_instances a ON a.fingerprint=n.alert_fingerprint
+		WHERE n.status='pending' AND n.next_attempt_at<=? ORDER BY n.id LIMIT 1`, time.Now().UTC().Format(time.RFC3339Nano)).
+		Scan(&n.ID, &n.AlertFingerprint, &n.TargetDeviceID, &n.Transition, &n.Title, &n.Body, &n.Deeplink, &n.Attempts)
 	return n, err
 }
 

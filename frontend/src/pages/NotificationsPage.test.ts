@@ -13,7 +13,12 @@ describe('NotificationsPage', () => {
         settings: {
           enabled: true, criticalAlerts: true, warningAlerts: true, recoveryNotifications: true,
           inspectionResults: true, cooldownMinutes: 10, quietHoursEnabled: false, quietStart: '22:00', quietEnd: '08:00',
+          recipientMode: 'admins', recipientKeys: [],
         },
+        recipients: [
+          { key: 'device-1::admin', deviceId: 'device-1', deviceName: 'nasw', userId: 'admin', nickname: '管理员', role: 'admin', online: true },
+          { key: 'device-1::member', deviceId: 'device-1', deviceName: 'nasw', userId: 'member', nickname: '成员', role: 'normal', online: true },
+        ],
         summary: { pending: 1, sent: 8, failed: 0, total: 9 },
         acceptedRisks: [{
           fingerprint: 'risk-1', deviceName: 'nasw', severity: 'warning', resource: '/dev/sda',
@@ -34,6 +39,8 @@ describe('NotificationsPage', () => {
     expect(wrapper.text()).toContain('通知设置')
     expect(wrapper.text()).toContain('严重告警')
     expect(wrapper.text()).toContain('免打扰时段')
+    expect(wrapper.text()).toContain('仅管理员')
+    expect(wrapper.text()).toContain('1 人')
     expect(wrapper.text()).toContain('已接受风险')
     expect(wrapper.text()).toContain('Btrfs 设备错误')
 
